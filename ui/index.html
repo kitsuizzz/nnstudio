@@ -2469,6 +2469,83 @@ function bxWeightedBox(n) {
     return ((n.inner && n.inner.nodes) || []).some(x => bxWeightedBox(x));
   return false;
 }
+function bxTrainFill(pane, n) {              // the training display: loss, step,
+  pane.innerHTML = "";                        // samples — and the controls
+  const st = (BXRUN.trainState || {})[n.id] || {};
+  const head = mk("div", { class: "bxlogrow" });
+  head.appendChild(mk("b", { text: n.task_id ? "training · " + n.task_id.slice(-6) : "training · no task" }));
+  pane.appendChild(head);
+  const strip = mk("div", { class: "panehint" });
+  strip.textContent = "step " + (st.step != null ? st.step : "—")
+      + (st.loss != null ? "  ·  loss " + Number(st.loss).toFixed(4) : "")
+      + (st.saved_at ? "  ·  saved " + String(st.saved_at).split("/").slice(-1)[0] : "");
+  pane.appendChild(strip);
+  const hist = (BXRUN.trainHist || {})[n.id] || [];
+  if (hist.length > 1) {                       // the loss curve, as it happens
+    const w = 220, h = 54, max = Math.max(...hist), min = Math.min(...hist);
+    const span = Math.max(max - min, 1e-6);
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+    svg.setAttribute("style", "width:100%;height:" + h + "px");
+    const pts = hist.map((v, i) => (i / (hist.length - 1) * w).toFixed(1) + "," +
+                                   (h - 3 - (v - min) / span * (h - 6)).toFixed(1)).join(" ");
+    const pl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    pl.setAttribute("points", pts);
+    pl.setAttribute("fill", "none");
+    pl.setAttribute("stroke", "#f97316");
+    pl.setAttribute("stroke-width", "1.5");
+    svg.appendChild(pl);
+    pane.appendChild(svg);
+  }
+  const row = mk("div", { class: "rrow" });
+  const btn = (label, cmd, title) => {
+    const b = mk("span", { class: "chip tiny", text: label, title: title || "" });
+    b.addEventListener("click", () => bxTrainCmd(n, cmd));
+    return b;
+  };
+  row.appendChild(btn("save now", "save", "land a checkpoint where it stands"));
+  row.appendChild(btn("detach", "detach", "checkpoint and let the gpu go — resume later"));
+  row.appendChild(btn("resume", "resume", "pick up from the last checkpoint"));
+  row.appendChild(btn("hold", "pause", "stop stepping, keep the gpu"));
+  pane.appendChild(row);
+  if (st.error) pane.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + st.error }));
+}
+function bxTrainCmd(n, cmd) {
+  if (typeof fetch !== "function" || !n.task_id) return;
+  fetch("/api/tasks/cmd", { method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ task: n.task_id, cmd }) })
+    .then(r => r.json())
+    .then(() => { bxTrainPoll(true); })
+    .catch(() => {});
+}
+function bxTrainPoll(force) {                  // one poller for every train box
+  const boxes = [];
+  bxEveryBox(x => { if (x.kind === "train" && x.task_id) boxes.push(x); });
+  if (!boxes.length) return;
+  const seen = BXRUN.trainSeen = BXRUN.trainSeen || {};
+  for (const n of boxes) {
+    if (typeof fetch !== "function") continue;
+    fetch("/api/tasks/state?task=" + encodeURIComponent(n.task_id), { cache: "no-store" })
+      .then(r => r.json())
+      .then(d => {
+        const st = d && d.state;
+        if (!st) return;
+        BXRUN.trainState = BXRUN.trainState || {};
+        BXRUN.trainState[n.id] = st;
+        if (st.step != null && seen[n.id] !== st.step) {
+          seen[n.id] = st.step;
+          BXRUN.trainHist = BXRUN.trainHist || {};
+          const hist = BXRUN.trainHist[n.id] = BXRUN.trainHist[n.id] || [];
+          if (st.loss != null) {
+            hist.push(st.loss);
+            if (hist.length > 200) hist.shift();
+          }
+        }
+        bxRender();
+      })
+      .catch(() => {});
+  }
+}
 function bxEveryBox(fn) {                      // every box, at every nesting level
   const walk = (nodes) => {
     for (const n of nodes || []) {
@@ -2646,7 +2723,8 @@ function bxApplyOffload(key) {                 // write the plan into the places
 // a nested design.
 const BX_JSON_VERSION = 1;
 const BX_KINDS = ["input", "embed", "layer", "act", "op", "norm", "script",
-                  "tokenize", "detokenize", "sample", "hf", "agent", "custom", "output"];
+                  "tokenize", "detokenize", "sample", "hf", "agent", "custom", "output",
+                  "dataset", "loss", "reward", "train"];
 function bxJSONNode(n) {
   const o = { id: n.id, kind: n.kind, name: n.name, x: Math.round(n.x), y: Math.round(n.y) };
   if (n.kind === "embed") {
@@ -2721,11 +2799,28 @@ function bxJSONNode(n) {
     if (n.temperature != null) o.temperature = n.temperature;
     if (n.sample_seed != null) o.sample_seed = n.sample_seed;
   }
-  else if (n.kind === "agent") {
+  else if (n.kind === "agent" || n.kind === "train") {
     if (n.task_id) o.task_id = n.task_id;
     if (n.box) o.box = { w: Math.round(n.box.w || 480), h: Math.round(n.box.h || 320) };
     if (n.panel) o.panel = n.panel;      // {lines, autoscroll, debug, expand}
     if (n.collapsed) o.collapsed = true;
+  }
+  else if (n.kind === "dataset") {
+    if (n.text) o.text = n.text;
+    if (n.file) o.file = n.file;
+    if (n.repo) o.repo = n.repo;
+    if (n.vocab) o.vocab = n.vocab;
+    if (n.rows != null) o.rows = n.rows;
+  }
+  else if (n.kind === "reward") {
+    if (n.reward) o.reward = n.reward;      // python | exact | regex | length
+    if (n.expr) o.expr = n.expr;
+    if (n.pattern) o.pattern = n.pattern;
+    if (n.match) o.match = n.match;
+    if (n.limit != null) o.limit = n.limit;
+  }
+  else if (n.kind === "loss") {
+    if (n.loss) o.loss = n.loss;
   }
   else if (n.kind === "custom") {
     o.inner = bxJSONDoc((n.inner && n.inner.nodes) || [], (n.inner && n.inner.edges) || [], "nested");
@@ -3004,7 +3099,26 @@ function bxJSONNodeFrom(o) {
     const sd = bxSize(o.sample_seed);
     if (sd != null && sd >= 0) n.sample_seed = sd;
   }
-  else if (o.kind === "agent") {
+  else if (o.kind === "dataset") {
+    if (typeof o.text === "string") n.text = bxClip(o.text, 200000);
+    if (typeof o.file === "string" && o.file) n.file = bxClip(o.file, 300);
+    if (typeof o.repo === "string" && o.repo) n.repo = bxClip(o.repo, 200);
+    if (typeof o.vocab === "string") n.vocab = bxClip(o.vocab, 4096);
+    const rw = bxSize(o.rows);
+    if (rw) n.rows = rw;
+  }
+  else if (o.kind === "reward") {
+    if (["python", "exact", "regex", "length"].indexOf(o.reward) >= 0) n.reward = o.reward;
+    if (typeof o.expr === "string") n.expr = bxClip(o.expr, 20000);
+    if (typeof o.pattern === "string") n.pattern = bxClip(o.pattern, 200);
+    if (typeof o.match === "string") n.match = bxClip(o.match, 200);
+    const lm = bxSize(o.limit);
+    if (lm) n.limit = lm;
+  }
+  else if (o.kind === "loss") {
+    if (typeof o.loss === "string") n.loss = o.loss;
+  }
+  else if (o.kind === "agent" || o.kind === "train") {
     if (typeof o.task_id === "string" && o.task_id) n.task_id = o.task_id;
     if (o.box && typeof o.box === "object")
       n.box = { w: bxSize(o.box.w, 480), h: bxSize(o.box.h, 320) };
@@ -3190,12 +3304,12 @@ function bxRemoveEdge(from, to, fromPort, toPort) {
 }
 // where a box's ports sit (one port is centred, several are spread evenly)
 function bxNodeW(n) {
-  if (n && n.kind === "agent")                 // the AI box is as wide as its display
+  if (n && (n.kind === "agent" || n.kind === "train"))                 // the AI box is as wide as its display
     return Math.max(320, Number((n.box || {}).w) || 480);
   return BXW;
 }
 function bxNodeH(n) {
-  if (n && n.kind === "agent")                 // …and as tall: the content lives in it
+  if (n && (n.kind === "agent" || n.kind === "train"))                 // …and as tall: the content lives in it
     return Math.max(160, Number((n.box || {}).h) || 320);
   const p = Math.max(bxPortDefs(n, "in").length, bxPortDefs(n, "out").length);
   return p > 2 ? 40 * Math.ceil((30 + 16 * p) / 40) : BXH;   // whole cells, always
@@ -3555,13 +3669,14 @@ function bxCard(n) {
     g.appendChild(svgText(cx, cy + 4,
                           Math.round(100 * bxTaskFraction(task)) + "%", "dringnum"));
   }
-  if (n.kind === "agent" && !preview) {      // the display lives inside the box
-    const fo = svg("foreignObject",
+  if ((n.kind === "agent" || n.kind === "train") && !preview) {
+    const fo = svg("foreignObject",       // the display lives inside the box
                    { x: n.x + 5, y: n.y + 40, width: Math.max(80, w - 10),
                      height: Math.max(40, h - 46), class: "bxlogfo" });
     const pane = mk("div", { class: "bxlogpane" });
     pane.setAttribute("data-agent", n.id);
-    bxAgentFill(pane, n);
+    if (n.kind === "train") bxTrainFill(pane, n);
+    else bxAgentFill(pane, n);
     fo.appendChild(pane);
     g.appendChild(fo);
   }
@@ -4764,6 +4879,7 @@ function bxtRunGo() {
     });
 }
 function fetchBackend() {                      // the stateful channel, from the app's view
+  if (typeof bxTrainPoll === "function") bxTrainPoll();
   if (typeof fetch !== "function") return;
   fetch("/api/backend", { cache: "no-store" })
     .then(r => (r.ok ? r.json() : null))
@@ -6032,6 +6148,17 @@ function bxForm(kind, ev, node, mode) {
   } else if (mode === "sample") {
     f.temp = numField("temperature", node ? node.temperature : null);
     f.seed = numField("seed", node ? node.sample_seed : null);
+  } else if ((mode === "add" && kind === "dataset") || mode === "dataset") {
+    f.name = nameField(bxDefaultName(kind));
+    f.text = textField("rows", node ? node.text || "" : "", "prompt<TAB>completion — one pair per line");
+    f.repo = hfField(node ? node.repo || "" : "");
+  } else if ((mode === "add" && kind === "reward") || mode === "reward") {
+    f.name = nameField(bxDefaultName(kind));
+    f.expr = textField("reward expr", node ? node.expr || "" : "1.0", "python over prompt/output");
+    f.pattern = textField("regex (optional)", node ? node.pattern || "" : "");
+    f.match = textField("exact match (optional)", node ? node.match || "" : "");
+  } else if (mode === "train") {
+    f.name = nameField(bxDefaultName(kind));
   } else {                                   // "resize" (or adding an output)
     if (kind === "input") f.a = numField("size", node ? node.dout : null);
     else if (kind === "output") f.a = numField("size", node ? node.din : null);
@@ -6081,6 +6208,10 @@ function bxForm(kind, ev, node, mode) {
     }
     if (f.text) v.text = f.text.value;
     if (f.temp) v.temperature = f.temp.value;
+  if (f.text) v.text = f.text.value;
+  if (f.expr) v.expr = f.expr.value;
+  if (f.pattern) v.pattern = f.pattern.value;
+  if (f.match) v.match = f.match.value;
     if (f.seed) v.sample_seed = f.seed.value;
     if (f.code) v.script = f.code.value;
     if (mode !== "add" && mode !== "resize") return v;   // settings forms carry no sizes
@@ -6272,7 +6403,7 @@ function bxDblClick(ev) {
   const id = onBox && onBox.getAttribute ? onBox.getAttribute("data-id") : null;
   const n = id ? bxNode(id) : null;
   if (n && n.kind === "custom") { ev.preventDefault(); bxEnter(n.id); return; }
-  if (n && n.kind === "agent") {
+  if (n && (n.kind === "agent" || n.kind === "train")) {
     ev.preventDefault();                       // the agent box: expand / shrink
     const p = n.panel || (n.panel = {});
     p.expand = !p.expand;

@@ -850,6 +850,20 @@ class Box(nn.Module):
             scale = self.node.get("embed_scale")
             if scale is not None:
                 out = out * float(scale)
+        elif k == "dataset":
+            # its labels ride to the loss box; a training run sets `batch`
+            out = getattr(self, "batch", None)
+            if out is None:
+                raise CanvasError(self.name, "no rows were given to train on — "
+                                             "it carries the labels a loss box reads")
+        elif k == "loss":
+            if len(xs) < 2:
+                raise CanvasError(self.name, "wants the logits and the dataset's labels")
+            out = _cross_entropy(xs[0], xs[1])
+        elif k == "logprobs":
+            if len(xs) < 2:
+                raise CanvasError(self.name, "wants the logits and the picked ids")
+            out = _gather_logprobs(xs[0], xs[1])
         elif k == "norm":
             if not xs:
                 raise CanvasError(self.name, "an input dot is not wired")
@@ -1603,7 +1617,7 @@ class Graph(nn.Module):
         vals = {}
         for nid in self.order:
             box = self.boxes[nid]
-            if box.loose or box.off or box.kind == "agent":
+            if box.loose or box.off or box.kind in ("agent", "reward"):
                 vals[nid] = None               # drawn, not run / off / an agent box
                 continue
             ins = []
@@ -1647,6 +1661,13 @@ class Graph(nn.Module):
                 v = feeds[nid]
                 if torch.is_tensor(v):
                     v = v.to(dev)
+            elif box.kind == "dataset":        # its labels are the run's, not a wire's
+                try:
+                    v = box()
+                except CanvasError as e:
+                    if e.nid is None:
+                        e.nid = nid
+                    raise
             elif box.kind == "custom":
                 box._on_node = self.on_node    # the inside reports its own nodes too
                 v = box(*ins)                    # its inside moves what it needs
@@ -2362,3 +2383,268 @@ def _find(doc, nid):
             if hit:
                 return hit
     return None
+
+
+# ---------------------------------------------------------------- training
+def dataset_rows(node):
+    """A dataset box's rows: its own text or its file, one row per line —
+    JSON objects ({prompt, completion} or {prompt, chosen, rejected}), or
+    `prompt<TAB>completion`. Blank lines are skipped."""
+    text = node.get("text") or ""
+    f = node.get("file")
+    if f:
+        p = _resolve(f)
+        if not p or not os.path.isfile(p):
+            raise CanvasError(node.get("name") or "dataset",
+                              "its rows are not on disk: %s" % (f,))
+        with open(p, encoding="utf-8") as fh:
+            text = fh.read()
+    rows = []
+    for line in str(text).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("{"):
+            try:
+                rows.append(json.loads(line))
+                continue
+            except ValueError:
+                pass
+        a, sep, b = line.partition("\t")
+        rows.append({"prompt": a, "completion": b if sep else ""})
+    return rows
+
+
+def _ds_encode(node, text):
+    """A dataset's own tokenizer: its huggingface repo, else its char vocab."""
+    repo = str(node.get("repo") or "").strip()
+    if repo:
+        return list(hf_text_tokenizer(repo, node.get("name") or "dataset")
+                    .encode(str(text)).ids)
+    chars = list(str(node.get("vocab") or ""))
+    look = {ch: i for i, ch in enumerate(chars)}
+    return [look[ch] for ch in str(text) if ch in look]
+
+
+def dataset_batch(node, rows, start, size):
+    """One batch: ids = prompt+completion, labels = the same ids with the
+    prompt masked to -100 (the loss reads completion only). Padded right."""
+    want = rows[start:start + size]
+    if not want:
+        want = rows[:size]
+    seqs, labs = [], []
+    for r in want:
+        prompt = str(r.get("prompt") or "")
+        comp = str(r.get("completion") if r.get("completion") is not None
+                   else r.get("output") or "")
+        p = _ds_encode(node, prompt)
+        c = _ds_encode(node, comp)
+        seqs.append(p + c)
+        labs.append([-100] * len(p) + list(c))
+    width = max((len(s) for s in seqs), default=1)
+    ids = torch.zeros(len(seqs), width, dtype=torch.long)
+    y = torch.full((len(seqs), width), -100, dtype=torch.long)
+    for i, (s, l) in enumerate(zip(seqs, labs)):
+        ids[i, :len(s)] = torch.tensor(s, dtype=torch.long)
+        y[i, :len(l)] = torch.tensor(l, dtype=torch.long)
+    return ids, y
+
+
+def reward_eval(node, prompt, output):
+    """A reward box's deterministic score: its python `expr` over the row
+    (prompt/output are names), or one of the named recipes. Pure by contract —
+    no clock, no randomness: the same pair always earns the same score."""
+    kind = str(node.get("reward") or "python")
+    if kind == "exact":
+        return 1.0 if str(output).strip() == str(node.get("match") or "").strip() else 0.0
+    if kind == "regex":
+        return 1.0 if re.search(str(node.get("pattern") or ""), str(output)) else 0.0
+    if kind == "length":
+        n = len(str(output).split())
+        cap = int(node.get("limit") or 64)
+        return 1.0 if n <= cap else max(0.0, 1.0 - (n - cap) / max(cap, 1))
+    expr = str(node.get("expr") or "1.0")
+    try:
+        return float(eval(expr, {"__builtins__": {}},   # noqa: S307 — the design's own reward
+                          {"prompt": prompt, "output": output,
+                           "len": len, "abs": abs, "min": min, "max": max,
+                           "str": str, "float": float, "int": int}))
+    except Exception as e:  # noqa: BLE001
+        raise CanvasError(node.get("name") or "reward",
+                          "its reward failed to score: %s" % e)
+
+
+def _cross_entropy(logits, labels):
+    """Next-token cross entropy, prompt positions masked away (labels carry
+    -100 there); the shift lives here so the design stays declarative."""
+    lg = logits.float()
+    lb = labels.long()
+    if lg.dim() == 2:
+        lg = lg.unsqueeze(0)
+    if lb.dim() == 1:
+        lb = lb.unsqueeze(0)
+    tgt = torch.full(lb.shape, -100, dtype=torch.long, device=lb.device)
+    if lb.shape[-1] > 1:
+        tgt[:, :-1] = lb[:, 1:]
+    return F.cross_entropy(lg.reshape(-1, lg.shape[-1]).contiguous(),
+                           tgt.reshape(-1), ignore_index=-100)
+
+
+def _gather_logprobs(logits, ids):
+    """log p(id at t | its prefix) for every position — the quantity every
+    policy-gradient loss multiplies by its advantage."""
+    lg = logits.float()
+    lb = ids.long()
+    if lg.dim() == 2:
+        lg = lg.unsqueeze(0)
+    if lb.dim() == 1:
+        lb = lb.unsqueeze(0)
+    lp = F.log_softmax(lg, dim=-1)
+    out = torch.zeros(lb.shape, dtype=torch.float32, device=lb.device)
+    if lb.shape[-1] > 1:
+        out[:, 1:] = lp[:, :-1].gather(-1, lb[:, 1:].unsqueeze(-1)).squeeze(-1)
+    return out
+
+
+class DesignTrainer:
+    """Training on a design: a dataset box's rows in, a loss box's scalar out,
+    one optimizer step per batch. Trainable boxes are those not `frozen`; the
+    compile is `native=False` (trainable masters stay f16/f32). Checkpoints are
+    named-parameter state + optimizer + step — pause (detach) lands one and
+    exits; resume picks up exactly where it stopped."""
+
+    def __init__(self, canvas, cfg=None, device="cpu", checkpoint=None):
+        cfg = dict(cfg or {})
+        self.canvas = canvas
+        self.cfg = cfg
+        self.device = device
+        self.graph = compile_canvas(canvas, device=device, native=False)
+        self.graph.train()
+        self.input_id = cfg.get("input") or _find_kind(canvas, "input")
+        self.loss_id = cfg.get("loss") or _find_kind(canvas, "loss")
+        ds_id = cfg.get("dataset") or _find_kind(canvas, "dataset")
+        if not self.input_id or not self.loss_id or not ds_id:
+            raise CanvasError("", "training needs a dataset box wired to a loss, "
+                                  "and an input the model reads")
+        self.dataset_box = self._box(ds_id)
+        self.rows = dataset_rows(self.dataset_box.node)
+        if not self.rows:
+            raise CanvasError("dataset", "it has no rows — paste or point it at a file")
+        self.trainable = [(n, p) for n, p in self.graph.named_parameters()
+                          if p.requires_grad]
+        if not self.trainable:
+            raise CanvasError("", "nothing to train — unfreeze a box first")
+        self.optim = torch.optim.AdamW(
+            [p for _, p in self.trainable],
+            lr=float(cfg.get("lr") or 3e-4),
+            weight_decay=float(cfg.get("weight_decay") or 0.0))
+        self.batch_size = max(1, int(cfg.get("batch") or 4))
+        self.step = 0
+        self.history = []
+        self.checkpoint_root = cfg.get("checkpoints") or "checkpoints"
+        self.name = cfg.get("name") or "design"
+        self._pos = 0
+        if checkpoint:
+            self.load(checkpoint)
+
+    def _box(self, nid):
+        if nid in self.graph.boxes:
+            return self.graph.boxes[nid]
+        for b in self.graph.modules():
+            if isinstance(b, Box) and b.node.get("id") == nid:
+                return b
+        return None
+
+    def _batch(self):
+        ids, labels = dataset_batch(self.dataset_box.node, self.rows,
+                                    self._pos, self.batch_size)
+        self._pos = (self._pos + self.batch_size) % max(len(self.rows), 1)
+        return ids.to(self.device), labels.to(self.device)
+
+    def run(self, steps=1, on_event=None, command=None):
+        """One training session. `command()` may answer 'save' or 'detach';
+        detach is graceful — it lands a checkpoint before it returns."""
+        say = on_event or (lambda e: None)
+        for _ in range(int(steps)):
+            cmd = command() if command else None
+            if cmd == "save":
+                say({"type": "checkpoint", "path": self.save()})
+                continue
+            if cmd == "detach":
+                path = self.save()
+                say({"type": "checkpoint", "path": path, "detached": True})
+                return {"state": "detached", "step": self.step, "checkpoint": path}
+            ids, labels = self._batch()
+            self.dataset_box.batch = labels
+            vals = self.graph(feeds={self.input_id: ids})
+            loss = vals.get(self.loss_id)
+            if loss is None:
+                raise CanvasError("loss", "the design produced no loss")
+            self.optim.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [p for _, p in self.trainable], float(self.cfg.get("clip") or 1.0))
+            self.optim.step()
+            self.step += 1
+            self.history.append(float(loss.detach()))
+            self.history = self.history[-400:]
+            say({"type": "loss", "step": self.step, "loss": float(loss.detach())})
+            if self.step % max(1, int(self.cfg.get("save_every") or 50)) == 0:
+                say({"type": "checkpoint", "path": self.save()})
+        return {"state": "ok", "step": self.step,
+                "loss": self.history[-1] if self.history else None}
+
+    def save(self, path=None):
+        """A named-parameter checkpoint: trainable tensors, the optimizer,
+        the step — enough to resume bit-for-bit."""
+        path = path or os.path.join(self.checkpoint_root,
+                                    self.name, "step-%06d" % self.step)
+        os.makedirs(path, exist_ok=True)
+        state = {"step": self.step, "config": dict(self.cfg),
+                 "trainable": {n: p.detach().cpu() for n, p in self.trainable},
+                 "optim": self.optim.state_dict()}
+        torch.save(state, os.path.join(path, "state.pt"))
+        with open(os.path.join(path, "meta.json"), "w", encoding="utf-8") as fh:
+            json.dump({"step": self.step,
+                       "loss": self.history[-1] if self.history else None,
+                       "rows": len(self.rows),
+                       "params": sum(p.numel() for _, p in self.trainable),
+                       "saved_at": time.time()}, fh)
+        latest = os.path.join(self.checkpoint_root, self.name, "latest.json")
+        os.makedirs(os.path.dirname(latest), exist_ok=True)
+        with open(latest, "w", encoding="utf-8") as fh:
+            json.dump({"checkpoint": path, "step": self.step}, fh)
+        return path
+
+    def load(self, path):
+        """Resume: the trainable tensors, the optimizer and the step come back
+        where they were — including the row position."""
+        if os.path.isdir(path) and os.path.isfile(os.path.join(path, "latest.json")):
+            with open(os.path.join(path, "latest.json"), encoding="utf-8") as fh:
+                path = json.load(fh).get("checkpoint") or path
+        f = os.path.join(path, "state.pt")
+        if not os.path.isfile(f):
+            raise CanvasError("", "no checkpoint at %s" % path)
+        state = torch.load(f, map_location=self.device, weights_only=False)
+        own = dict(self.trainable)
+        for name, t in (state.get("trainable") or {}).items():
+            if name in own:
+                own[name].data.copy_(t.to(self.device))
+        if state.get("optim"):
+            self.optim.load_state_dict(state["optim"])
+        self.step = int(state.get("step") or 0)
+        self._pos = self.step * self.batch_size % max(len(self.rows), 1)
+        return path
+
+
+def _find_kind(canvas, kind):
+    def walk(nodes):
+        for n in nodes or []:
+            if n.get("kind") == kind:
+                return n.get("id")
+            if isinstance(n.get("inner"), dict):
+                hit = walk((n.get("inner") or {}).get("nodes"))
+                if hit:
+                    return hit
+        return None
+    return walk((canvas or {}).get("nodes"))

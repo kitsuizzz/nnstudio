@@ -1513,6 +1513,51 @@ def shared_namespaces_load_one_copy():
 
 check("one namespace, one copy: shared weights load once", shared_namespaces_load_one_copy)
 
+def design_training_and_checkpoints():
+    ds = {"id": "d", "kind": "dataset", "name": "rows", "x": -400, "y": 0,
+          "text": "a\tc\nb\td", "vocab": "abcd"}
+    c = canvas([ds,
+                n("input", "i", dout=1),
+                n("embed", "e", vocab=4, dout=8),
+                n("layer", "l", din=8, dout=4),
+                {"id": "L", "kind": "loss", "name": "loss", "x": 400, "y": 0}],
+               [{"from": "i", "to": "e"}, {"from": "e", "to": "l"},
+                {"from": "l", "to": "L", "fromPort": 0, "toPort": 0},
+                {"from": "d", "to": "L", "fromPort": 0, "toPort": 1}])
+    import shutil, tempfile
+    d = tempfile.mkdtemp()
+    try:
+        tr = T.DesignTrainer(c, {"batch": 2, "lr": 0.05, "name": "toy",
+                                 "checkpoints": d, "save_every": 10**9})
+        events = []
+        res = tr.run(steps=30, on_event=events.append)
+        losses = [e["loss"] for e in events if e.get("type") == "loss"]
+        assert len(losses) == 30 and losses[-1] < losses[0], \
+            "the loss falls: %.4f -> %.4f" % (losses[0], losses[-1])
+        path = tr.save()
+        assert os.path.isfile(os.path.join(path, "state.pt")), path
+        want = {k: v.detach().clone() for k, v in tr.trainable[:1]}
+        tr.step = 0
+        for _, p in tr.trainable[:1]:
+            p.data.add_(1.0)                       # wreck it on purpose
+        tr2 = T.DesignTrainer(c, {"batch": 2, "lr": 0.05, "checkpoints": d,
+                                  "name": "toy", "save_every": 10**9},
+                              checkpoint=os.path.join(d, "toy"))
+        k, v = tr2.trainable[0]
+        assert torch.allclose(v, want[k]), "resume restores the trained weights"
+        assert tr2.step == 30, "…and the step: %s" % tr2.step
+        cmds = iter(["save", "detach"])
+        r = tr2.run(steps=4, command=lambda: next(cmds, None))
+        assert r["state"] == "detached" and os.path.isfile(
+            os.path.join(r["checkpoint"], "state.pt")), r
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+check("a design trains: the loss falls, checkpoints land, resume continues",
+      design_training_and_checkpoints)
+
 if FAILED:
+    print("nn_torch_test: %d failure(s): %s" % (len(FAILED), ", ".join(FAILED)))
     sys.exit(1)
 print("nn_torch_test: all assertions passed")

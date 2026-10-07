@@ -45,7 +45,7 @@ import time
 import nn_arc
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-TASK_TYPES = ("reverse", "python")            # the agent types the app offers
+TASK_TYPES = ("reverse", "python", "train")    # the agent types the app offers
 STATUSES = ("running", "paused", "cancelled", "done")
 _OUTCOMES = ("exact", "approximate", "failed")
 

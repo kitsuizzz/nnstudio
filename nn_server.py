@@ -422,6 +422,40 @@ def _fire_agent(task):
     return True, None
 
 
+def _fire_train(task):
+    """The training driver: a design on disk in, checkpointed steps out."""
+    p = task.get("params") or {}
+    design = str(p.get("design") or "")
+    if not design or not os.path.isfile(design):
+        why = "the task has no design to train"
+        nn_tasks.update(task["id"], status="done", outcome="failed",
+                        finished=time.time(),
+                        meta=dict(task.get("meta") or {}, error=why))
+        return False, why
+    log = task.get("log") or nn_tasks.log_file(task["id"])
+    cmd = [sys.executable, os.path.join(HERE, "tools", "train_job.py"),
+           "--task", task["id"], "--design", design,
+           "--name", str(p.get("name") or task["id"])]
+    for flag, key in (("--checkpoint", "checkpoint"), ("--batch", "batch"),
+                      ("--lr", "lr"), ("--steps", "steps"),
+                      ("--save-every", "save_every")):
+        if p.get(key) not in (None, ""):
+            cmd += [flag, str(p[key])]
+    try:
+        _spawn_detached(cmd, log, "train-" + task["id"])
+    except OSError as e:
+        nn_tasks.update(task["id"], status="done", outcome="failed",
+                        finished=time.time(),
+                        meta=dict(task.get("meta") or {},
+                                  error="could not start the job: %s" % e))
+        return False, "could not start the job: %s" % e
+    return True, None
+
+
+def _train_cmd_file(task_id):
+    return os.path.join(HERE, "agents", task_id + ".cmd")
+
+
 def _fire_task(task):
     """Turn one task row into a running job — the only firing path there is."""
     t = (task or {}).get("type")
@@ -429,6 +463,8 @@ def _fire_task(task):
         return _fire_reverse(task)
     if t == "python":
         return _fire_agent(task)
+    if t == "train":
+        return _fire_train(task)
     return False, "unknown task type: %s" % t
 
 
@@ -566,6 +602,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/tasks":
             self._tasks_list()
+            return
+        if path == "/api/tasks/state":
+            q = parse_qs(urlparse(self.path).query)
+            tid = str((q.get("task") or [""])[0]).strip()
+            try:
+                with open(os.path.join(HERE, "agents", tid + ".state.json"),
+                          encoding="utf-8") as fh:
+                    self._json({"ok": True, "state": json.load(fh)})
+            except (OSError, ValueError):
+                self._json({"ok": True, "state": None})
             return
         if path == "/api/tasks/log":
             q = parse_qs(urlparse(self.path).query)
@@ -808,6 +854,16 @@ class Handler(BaseHTTPRequestHandler):
     def _tasks_create(self, data):
         t = str(data.get("type") or "reverse").strip()
         params = data.get("params") if isinstance(data.get("params"), dict) else {}
+        if t == "train":
+            design = data.get("design")
+            if isinstance(design, dict) and design.get("nodes"):
+                os.makedirs(os.path.join(HERE, "agents"), exist_ok=True)
+                dpath = os.path.join(HERE, "agents",
+                                     "train-design-%d.json" % int(time.time() * 1000))
+                with open(dpath, "w", encoding="utf-8") as fh:
+                    json.dump(design, fh)
+                params = dict(params, design=dpath,
+                              name=str(data.get("name") or t))
         if t == "reverse":
             repo = nn_arc.canonical(str(params.get("repo") or "").strip())
             if not repo:
@@ -878,6 +934,37 @@ class Handler(BaseHTTPRequestHandler):
             meta["reason"] = str(data.get("reason") or "stopped by you")
             task = nn_tasks.update(tid, status="cancelled", meta=meta,
                                    finished=time.time())
+        elif cmd in ("save", "detach") and task.get("type") == "train":
+            try:
+                with open(_train_cmd_file(tid), "w", encoding="utf-8") as fh:
+                    json.dump({"cmd": cmd}, fh)
+            except OSError as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+                return
+            task = nn_tasks.get(tid)
+        elif cmd == "resume" and task.get("type") == "train":
+            state = {}
+            try:
+                with open(os.path.join(HERE, "agents", tid + ".state.json"),
+                          encoding="utf-8") as fh:
+                    state = json.load(fh)
+            except (OSError, ValueError):
+                pass
+            ckpt = state.get("saved_at")
+            if not ckpt:
+                self._json({"ok": False, "error": "no checkpoint to resume from"}, 400)
+                return
+            meta.pop("reason", None)
+            meta.pop("error", None)
+            params = dict(task.get("params") or {}, checkpoint=ckpt)
+            task = nn_tasks.update(tid, status="running", outcome=None,
+                                   phase="queued", finished=None, pid=None,
+                                   agent_pid=None, meta=meta, params=params)
+            ok, why = _fire_train(task)
+            if not ok:
+                self._json({"ok": False, "error": why, "task": nn_tasks.get(tid)}, 400)
+                return
+            task = nn_tasks.get(tid)
         elif cmd == "restart":
             if live:
                 _signal_task(task, signal.SIGCONT)
