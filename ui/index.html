@@ -285,43 +285,45 @@
   .bxlogpane { position: relative; width: 100%; height: 100%; display: flex;
                flex-direction: column; background: #14171a; border: 1px solid #2a2f34;
                border-radius: 8px; overflow: hidden; font-size: 12px; color: #c9ced3; }
-  /* the dataset box's table: a pandas-style dataframe grid — flat cells,
-     square corners, every border drawn */
+  /* the dataset box's table: nothing but straight lines, like a sheet —
+     no rounded pane, no text-box chrome; the gridlines are the table */
+  .bxflat { border: 0 !important; border-radius: 0 !important; }
+  .bxflat .bxchip, .bxflat .bxbbtn { border-radius: 0; }
   .bxsheet { overflow: auto; }
-  .bxgrid { border-collapse: collapse; width: 100%; font-size: 11.5px;
-            table-layout: fixed; }
-  .bxgrid th, .bxgrid td {
-    border: 1px solid #2a2f34; padding: 0; height: 22px;
+  .bxdf { border-collapse: collapse; width: 100%; font-size: 11.5px;
+          table-layout: fixed; border-radius: 0; }
+  .bxdf th, .bxdf td {
+    border: 1px solid #2f353b; padding: 0; height: 22px;
+    border-radius: 0;
     overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   }
-  .bxgrid .bxcorner { background: #1b1f23; width: 34px; border-color: #23282d; }
-  .bxgrid .bxletter { background: #1b1f23; color: #6b7280; text-align: center;
-                      font-family: var(--mono); font-size: 10px; font-weight: 600; }
+  .bxdf .bxcorner { background: #1b1f23; width: 34px; border-color: #262b30; }
+  .bxdf .bxletter { background: #1b1f23; color: #6b7280; text-align: center;
+                    font-family: var(--mono); font-size: 10px; font-weight: 600; }
   .bxletter .bxcolbtn { visibility: hidden; cursor: pointer; padding: 0 3px;
                         color: #8a8a8a; }
   .bxletter:hover .bxcolbtn { visibility: visible; }
   .bxletter .bxcolbtn:hover { color: #f97316; }
-  .bxgrid .bxname { background: #1b1f23; position: relative; padding: 0; }
-  .bxcolname { width: 100%; border: 0; background: transparent; color: #e5e5e5;
-               font: 600 11px/1.4 var(--mono); padding: 4px 4px; outline: none;
-               border-radius: 0; }
+  .bxdf .bxname { background: #1b1f23; position: relative; padding: 0; }
+  .bxcolname { width: 100%; border: 0; border-radius: 0; background: transparent;
+               color: #e5e5e5; font: 600 11px/1.4 var(--mono); padding: 4px 4px;
+               outline: none; appearance: none; -webkit-appearance: none; }
   .bxcolname::placeholder { color: #4b5563; font-weight: 400; }
   .bxdtype { position: absolute; right: 8px; top: 3px; font-size: 9px;
-             color: #6b7280; background: rgba(255,255,255,.05);
-             padding: 1px 5px; border: 1px solid #2a2f34; cursor: pointer;
-             font-family: var(--mono); }
-  .bxdtype:hover { color: #f97316; border-color: #f97316; }
+             color: #6b7280; background: transparent;
+             padding: 0 4px; border: 0; border-left: 1px solid #2f353b;
+             cursor: pointer; font-family: var(--mono); border-radius: 0; }
+  .bxdtype:hover { color: #f97316; }
   .bxcolgrip { position: absolute; right: -3px; top: 0; width: 7px; height: 100%;
                cursor: col-resize; z-index: 2; }
-  .bxgrid .bxrowno { background: #1b1f23; color: #6b7280; text-align: center;
-                     font-family: var(--mono); font-size: 10px; width: 34px;
-                     user-select: none; }
-  .bxgrid tr:nth-child(even) td { background: rgba(255,255,255,.022); }
-  .bxcell { width: 100%; border: 0; background: transparent; color: #c9ced3;
-            font: 11.5px/1.6 var(--mono); padding: 3px 6px; outline: none;
-            border-radius: 0; }
-  .bxcell:focus { background: rgba(249,115,22,.14);
-                  box-shadow: inset 0 0 0 1px #f97316; }
+  .bxdf .bxrowno { background: #1b1f23; color: #6b7280; text-align: center;
+                   font-family: var(--mono); font-size: 10px; width: 34px;
+                   user-select: none; }
+  .bxcell { width: 100%; height: 100%; border: 0; border-radius: 0;
+            background: transparent; color: #c9ced3;
+            font: 11.5px/1.6 var(--mono); padding: 3px 6px;
+            outline: none; appearance: none; -webkit-appearance: none; }
+  .bxcell:focus { box-shadow: inset 0 0 0 2px #f97316; }  /* a straight ring */
   .bxnum { text-align: right; }
   .bxdel { cursor: pointer; color: #6b7280; text-align: center; width: 22px; }
   .bxdel:hover { color: #f87171; }
@@ -2803,6 +2805,7 @@ function bxDatasetFill(pane, n) {              // the dataframe, in the box
     if (e && e.preventDefault) e.preventDefault();
     if (e && e.stopPropagation) e.stopPropagation();
   };
+  if (pane.classList) pane.classList.add("bxflat");   // straight lines only
   const file = String(n.file || "").trim();
   let t = null, readOnly = false, note = null;
   if (file) {                                  // rows live in a file: preview it
@@ -2853,7 +2856,7 @@ function bxDatasetFill(pane, n) {              // the dataframe, in the box
 
   const CAP = 200;
   const scroll = mk("div", { class: "bxpbody bxsheet" });
-  const table = mk("table", { class: "bxgrid" });
+  const table = mk("table", { class: "bxdf" });   // gridlines are the table
   const cg = mk("colgroup", {});
   cg.appendChild(mk("col", { style: "width:34px" }));
   cols.forEach((_, i) => {
