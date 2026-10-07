@@ -215,6 +215,7 @@ globalThis.__t = {
   bxTaskFraction, bxArcPath, bxTaskSupersede,
   bxTasksFetch, bxTaskLogFetch, bxTasksApply, bxLogApply, bxLogState,
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
+  bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand,
   get BXTASKS() { return BXTASKS; }, set BXTASKS(v) { BXTASKS = v; },
   bxMarkAudit, bxAuditClear, get bxAudit() { return bxAudit; },
   get bxFlowSet() { return bxFlowSet; }, get bxFlowNow() { return bxFlowNow; },
@@ -3378,6 +3379,62 @@ check("the weight registry travels with the design", () => {
   ok(back && back.weights && back.weights["m.gguf::blk.0.w"],
      "…and an import brings it back");
   __t.BX.weights = null;
+});
+
+check("the dataset sheet: rows round-trip and the cells edit", () => {
+  const parse = __t.bxRowsParse, text = __t.bxRowsText;
+  const rows = parse("a\tc\n{\"prompt\":\"b\",\"completion\":\"d\",\"chosen\":\"x\"}\ne");
+  eql(rows.map(r => r.p), ["a", "b", "e"], "tsv and jsonl rows side by side");
+  eql(rows.map(r => r.c), ["c", "d", ""], "…prompt/completion read out of both");
+  eql(rows[1].x, { chosen: "x" }, "…jsonl extra keys travel along");
+  const out = text(rows);
+  ok(out.indexOf("a\tc") === 0, "back to text: tab pairs as tab pairs");
+  ok(out.indexOf('{"prompt":"b","completion":"d","chosen":"x"}') > 0,
+     "…json stays json, extras intact");
+  eql(parse(out).map(r => r.p + "/" + r.c), ["a/c", "b/d", "e/"],
+     "…and the round trip is exact");
+  eql(__t.bxRowsFormat(rows), "jsonl", "the sheet knows its format");
+
+  const n = __t.bxAdd("dataset", 0, 0, {});
+  n.text = "a\tc\nb\td";
+  const pane = document.createElement("div");
+  __t.bxDatasetFill(pane, n);
+  eql(pane.querySelectorAll(".bxth").map(t => t.textContent),
+    ["#", "prompt", "completion", ""], "the sheet wears a header row");
+  let cells = pane.querySelectorAll(".bxcell");
+  eql(cells.length, 4, "two rows by two columns");
+  cells[0].value = "A";
+  cells[0].dispatchEvent({ type: "change" });
+  ok(String(n.text).indexOf("A\tc") === 0, "a typed cell writes back into the rows");
+
+  const plus = pane.querySelectorAll(".bxbbtn").filter(b => b.textContent === "+ row")[0];
+  plus.dispatchEvent({ type: "click" });
+  eql(__t.bxRowsParse(n.text).length, 3, "+ row appends a row");
+  __t.bxDatasetFill(pane, n);
+  cells = pane.querySelectorAll(".bxcell");
+  cells[4].value = "Z";
+  cells[4].dispatchEvent({ type: "change" });
+  ok(String(n.text).indexOf("\nZ") >= 0, "…and the fresh row accepts typing");
+
+  __t.bxDatasetFill(pane, n);
+  pane.querySelectorAll(".bxdel")[1].dispatchEvent({ type: "click" });
+  eql(__t.bxRowsParse(n.text).map(r => r.p), ["A", "Z"], "× removes its row");
+
+  // a block copied from a spreadsheet fills from the focused cell
+  __t.bxDatasetFill(pane, n);
+  cells = pane.querySelectorAll(".bxcell");
+  cells[2].dispatchEvent({ type: "focus" });        // row 2, prompt
+  pane.querySelectorAll(".bxsheet")[0].dispatchEvent({
+    type: "paste", preventDefault() {},
+    clipboardData: { getData: () => "X\tY\nZ\tW" } });
+  eql(__t.bxRowsParse(n.text).map(r => r.p + "/" + r.c),
+    ["A/c", "X/Y", "Z/W"], "a pasted block lands in one go");
+
+  // the sheet grows, and its size travels with the design
+  __t.bxDatasetExpand(n);
+  eql([n.box.w, n.box.h], [860, 520], "expand grows the sheet");
+  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(n));
+  eql([back.box.w, back.box.h], [860, 520], "…and the size survives the JSON round trip");
 });
 
 if (failed) { console.log("ui_boot: " + failed + " failure(s)"); process.exit(1); }

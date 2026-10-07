@@ -588,6 +588,43 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, body, "text/html; charset=utf-8")
             return
+        if path == "/api/dataset":
+            q = parse_qs(urlparse(self.path).query)
+            f = str((q.get("path") or [""])[0]).strip()
+            if not f:
+                self._json({"ok": False, "error": "a file path is required"}, 400)
+                return
+            p = f if os.path.isabs(f) else os.path.join(HERE, f)
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    raw = fh.read(2_000_000)     # a preview, not the whole file
+            except OSError as e:
+                self._json({"ok": False, "error": "cannot read %s: %s" % (f, e)}, 404)
+                return
+            rows = []
+            more = False
+            for line in raw.splitlines():
+                if not line.strip():
+                    continue
+                if len(rows) >= 500:
+                    more = True
+                    break
+                if line.strip().startswith("{"):
+                    try:
+                        o = json.loads(line)
+                    except ValueError:
+                        o = None
+                    if isinstance(o, dict):
+                        comp = o.get("completion")
+                        if comp is None:
+                            comp = o.get("output")
+                        rows.append({"prompt": str(o.get("prompt") or ""),
+                                     "completion": "" if comp is None else str(comp)})
+                        continue
+                a, sep, b = line.partition("\t")
+                rows.append({"prompt": a, "completion": b if sep else ""})
+            self._json({"ok": True, "file": f, "rows": rows, "more": more})
+            return
         if path in ("/docs", "/docs.html"):
             try:
                 with open(DOCS, "rb") as f:

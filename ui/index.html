@@ -285,6 +285,25 @@
   .bxlogpane { position: relative; width: 100%; height: 100%; display: flex;
                flex-direction: column; background: #14171a; border: 1px solid #2a2f34;
                border-radius: 8px; overflow: hidden; font-size: 12px; color: #c9ced3; }
+  /* the dataset box's sheet: its rows as a little spreadsheet */
+  .bxsheet { overflow: auto; }
+  .bxgrid { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+  .bxgrid .bxth { position: sticky; top: 0; background: #1b1f23; color: #8a8a8a;
+                  text-align: left; font-weight: 600; padding: 3px 8px;
+                  border-bottom: 1px solid #2a2f34; }
+  .bxgrid td { border-bottom: 1px solid rgba(255,255,255,.05); padding: 0; }
+  .bxgrid tr:nth-child(even) td { background: rgba(255,255,255,.03); }
+  .bxrowno { color: #6b7280; width: 30px; text-align: center;
+             font-family: var(--mono); padding: 3px 6px; cursor: default;
+             user-select: none; }
+  .bxdel { cursor: pointer; }
+  .bxdel:hover { color: #f87171; }
+  .bxcell { width: 100%; border: 0; background: transparent; color: #c9ced3;
+            font: inherit; padding: 4px 8px; outline: none; }
+  .bxcell:focus { background: rgba(249,115,22,.12);
+                  box-shadow: inset 0 0 0 1px rgba(249,115,22,.55); }
+  .bxhint2 { padding: 4px 10px; color: #8a8a8a; font-size: 11px; }
+  .bxhint2.warn { color: #fbbf24; }
   .bxgrip { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px;
             cursor: nwse-resize;
             background: linear-gradient(135deg, transparent 45%, #3b4248 45%,
@@ -2518,6 +2537,222 @@ function bxWeightedBox(n) {
     return ((n.inner && n.inner.nodes) || []).some(x => bxWeightedBox(x));
   return false;
 }
+// ---- the dataset sheet: its rows as a little spreadsheet --------------------
+// Rows round-trip exactly: TSV lines stay TSV (`prompt<TAB>completion`), JSONL
+// lines stay JSON — their extra keys travel untouched. The sheet edits the two
+// columns the trainer reads: prompt and completion.
+function bxRowsParse(text) {
+  const rows = [];
+  for (const line of String(text || "").split("\n")) {
+    if (line === "" || line === "\r") continue;
+    const s = line.trim();
+    if (!s && line.indexOf("\t") < 0) continue;
+    if (s.charAt(0) === "{") {
+      let o = null;
+      try { o = JSON.parse(s); } catch (e) { o = null; }
+      if (o && typeof o === "object") {
+        const extra = {};
+        for (const k of Object.keys(o))
+          if (k !== "prompt" && k !== "completion" && k !== "output") extra[k] = o[k];
+        rows.push({ p: String(o.prompt == null ? "" : o.prompt),
+                    c: String(o.completion != null ? o.completion
+                             : (o.output != null ? o.output : "")),
+                    ck: o.output != null && o.completion == null ? "output" : "completion",
+                    k: "j", x: Object.keys(extra).length ? extra : null });
+        continue;
+      }
+    }
+    const i = line.indexOf("\t");
+    rows.push(i < 0 ? { p: line, c: "", k: "t", x: null }
+                    : { p: line.slice(0, i), c: line.slice(i + 1), k: "t", x: null });
+  }
+  return rows;
+}
+function bxRowsText(rows) {                    // back into the design's rows field
+  return (rows || []).map(r => {
+    if (r.k === "j") {
+      const o = { prompt: r.p };
+      o[r.ck || "completion"] = r.c;
+      if (r.x) for (const k of Object.keys(r.x)) if (!(k in o)) o[k] = r.x[k];
+      return JSON.stringify(o);
+    }
+    return r.p + "\t" + r.c;
+  }).join("\n");
+}
+function bxRowsFormat(rows) {                  // what the sheet is holding
+  return (rows || []).some(r => r.k === "j") ? "jsonl" : "tsv";
+}
+function bxDatasetExpand(n) {                  // the sheet, small or big
+  const p = n.panel || (n.panel = {});
+  p.expand = !p.expand;
+  n.box = p.expand ? { w: 860, h: 520 } : { w: 440, h: 300 };
+}
+function bxDatasetFill(pane, n) {              // the sheet itself
+  if (!pane) return;
+  pane.innerHTML = "";
+  bxBehaveInside(pane);
+  let view = bxRowsParse(n.text || "");
+  let readOnly = false, note = null;
+  const file = String(n.file || "").trim();
+  if (file) {                                  // its rows live in a file: preview
+    const cache = BX.dsCache || (BX.dsCache = {});
+    const hit = cache[file];
+    note = "rows come from " + file;
+    if (!hit) {
+      note = "reading " + file + " \u2026";
+      if (typeof fetch === "function")
+        fetch("/api/dataset?path=" + encodeURIComponent(file))
+          .then(r => r.json())
+          .then(d => { cache[file] = (d && d.ok) ? d : { ok: false, rows: [] }; bxRender(); })
+          .catch(() => { cache[file] = { ok: false, rows: [] }; bxRender(); });
+    } else if (!hit.ok) {
+      note = "cannot read " + file;
+    } else {
+      view = (hit.rows || []).map(r => ({ p: String(r.prompt == null ? "" : r.prompt),
+                                          c: String(r.completion == null ? "" : r.completion),
+                                          k: "t", x: null }));
+      readOnly = true;
+      if (hit.more) note = "rows come from " + file + " \u2014 showing the first " + view.length;
+    }
+  }
+  const noTok = !(String(n.repo || "").trim() || String(n.vocab || "").length);
+  const head = mk("div", { class: "bxphead" });
+  head.appendChild(mk("span", { class: "bxptitle", text: n.name || "dataset" }));
+  head.appendChild(mk("span", { class: "bxchip ok", text: view.length + " rows" }));
+  const btn = (label, fn, title) => {
+    const b = mk("span", { class: "bxbbtn", text: label });
+    if (title) b.title = title;
+    b.addEventListener("mousedown", (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      if (e && e.stopPropagation) e.stopPropagation();
+    });
+    b.addEventListener("click", fn);
+    return b;
+  };
+  if (!readOnly)
+    head.appendChild(btn("+ row", () => {
+      const all = bxRowsParse(n.text || "");
+      all.push({ p: "", c: "",
+                 k: all.some(r => r.k === "j") ? "j" : (all.length ? all[0].k : "t"),
+                 x: null });
+      n.text = bxRowsText(all);
+      bxCommit();
+      bxRender();
+    }, "add a row at the bottom"));
+  head.appendChild(btn("\u2197", () => { bxDatasetExpand(n); bxRender(); },
+                       "expand / shrink the sheet"));
+  pane.appendChild(head);
+  if (!view.length && !readOnly)
+    pane.appendChild(mk("div", { class: "bxhint2",
+      text: "no rows yet \u2014 add one, or paste a block from a spreadsheet" }));
+  const scroll = mk("div", { class: "bxpbody bxsheet" });
+  const table = mk("table", { class: "bxgrid" });
+  const thead = mk("thead");
+  const hr = mk("tr");
+  hr.appendChild(mk("th", { class: "bxth bxrowno", text: "#" }));
+  hr.appendChild(mk("th", { class: "bxth", text: "prompt" }));
+  hr.appendChild(mk("th", { class: "bxth", text: "completion" }));
+  hr.appendChild(mk("th", { class: "bxth bxrowno" }));
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = mk("tbody");
+  const CAP = 200;
+  const cells = {};
+  let cur = { r: 0, c: 0 };
+  const commitCell = (ri, ci, val) => {
+    const all = bxRowsParse(n.text || "");
+    while (all.length <= ri) all.push({ p: "", c: "", k: "t", x: null });
+    if (ci === 0) all[ri].p = val; else all[ri].c = val;
+    n.text = bxRowsText(all) || null;
+    bxCommit();
+  };
+  view.slice(0, CAP).forEach((r, ri) => {
+    const tr = mk("tr");
+    tr.appendChild(mk("td", { class: "bxrowno", text: String(ri + 1) }));
+    for (const ci of [0, 1]) {
+      const td = mk("td", {});
+      const inp = mk("input", { class: "bxcell", type: "text",
+                                value: ci === 0 ? r.p : r.c, disabled: readOnly || null });
+      inp._r = ri;
+      inp._c = ci;
+      td.appendChild(inp);
+      tr.appendChild(td);
+      cells[ri + ":" + ci] = inp;
+      inp.addEventListener("focus", () => { cur = { r: ri, c: ci }; });
+      inp.addEventListener("change", () => commitCell(ri, ci, inp.value));
+      inp.addEventListener("keydown", (e) => {
+        const k = (e && e.key) || "";
+        if (k === "Enter") {
+          if (e.preventDefault) e.preventDefault();
+          const t = cells[(ri + (e.shiftKey ? -1 : 1)) + ":" + ci];
+          if (t && t.focus) t.focus();
+        } else if (k === "Escape") {
+          inp.value = ci === 0 ? r.p : r.c;    // back to what the row held
+        }
+      });
+    }
+    const del = mk("td", { class: "bxrowno bxdel", text: "\u00d7" });
+    if (!readOnly) {
+      del.title = "remove this row";
+      del.addEventListener("mousedown", (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        if (e && e.stopPropagation) e.stopPropagation();
+      });
+      del.addEventListener("click", () => {
+        const all = bxRowsParse(n.text || "");
+        all.splice(ri, 1);
+        n.text = bxRowsText(all) || null;
+        bxCommit();
+        bxRender();
+      });
+    }
+    tr.appendChild(del);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  scroll.appendChild(table);
+  if (!readOnly)                             // a block from excel lands at once
+    scroll.addEventListener("paste", (e) => {
+      const cd = e && e.clipboardData;
+      const txt = cd && cd.getData ? cd.getData("text/plain") : null;
+      if (txt == null) return;
+      if (e.preventDefault) e.preventDefault();
+      const all = bxRowsParse(n.text || "");
+      const json = all.some(r => r.k === "j");
+      const lines = String(txt).replace(/\r/g, "").split("\n");
+      while (lines.length && !lines[lines.length - 1]) lines.pop();
+      lines.forEach((line, i) => {
+        const parts = line.split("\t");
+        let row = all[cur.r + i];
+        if (!row) {
+          row = { p: "", c: "", k: json ? "j" : (all.length ? all[0].k : "t"), x: null };
+          all.push(row);
+        }
+        parts.forEach((part, j) => {
+          const col = cur.c + j;
+          if (col === 0) row.p = part;
+          else if (col === 1) row.c = part;
+        });
+      });
+      n.text = bxRowsText(all) || null;
+      bxCommit();
+      bxRender();
+    });
+  pane.appendChild(scroll);
+  if (view.length > CAP)
+    pane.appendChild(mk("div", { class: "bxhint2",
+                                text: "showing " + CAP + " of " + view.length + " rows" }));
+  const strip = mk("div", { class: "bxhint2" + (noTok ? " warn" : "") });
+  strip.textContent = view.length + " rows \u00b7 " + bxRowsFormat(view)
+    + (n.repo ? " \u00b7 " + String(n.repo).split("/").pop()
+      : n.vocab ? " \u00b7 vocab " + String(n.vocab).length
+      : " \u00b7 no tokenizer");
+  pane.appendChild(strip);
+  if (note) pane.appendChild(mk("div", { class: "bxhint2", text: note }));
+  const grip = mk("div", { class: "bxgrip" });
+  grip.addEventListener("mousedown", (ev) => bxAgentGrip(ev, n));
+  pane.appendChild(grip);
+}
 function bxTrainFill(pane, n) {              // the training display: loss, step,
   pane.innerHTML = "";                        // samples — and the controls
   const st = (BXRUN.trainState || {})[n.id] || {};
@@ -2860,6 +3095,9 @@ function bxJSONNode(n) {
     if (n.repo) o.repo = n.repo;
     if (n.vocab) o.vocab = n.vocab;
     if (n.rows != null) o.rows = n.rows;
+    if (n.box) o.box = { w: Math.round(n.box.w || 440), h: Math.round(n.box.h || 300) };
+    if (n.panel) o.panel = n.panel;      // {expand} — small sheet or big one
+    if (n.collapsed) o.collapsed = true;
   }
   else if (n.kind === "reward") {
     if (n.reward) o.reward = n.reward;      // python | exact | regex | length
@@ -3155,6 +3393,10 @@ function bxJSONNodeFrom(o) {
     if (typeof o.vocab === "string") n.vocab = bxClip(o.vocab, 4096);
     const rw = bxSize(o.rows);
     if (rw) n.rows = rw;
+    if (o.box && typeof o.box === "object")
+      n.box = { w: Math.round(Number(o.box.w) || 440), h: Math.round(Number(o.box.h) || 300) };
+    if (o.panel && typeof o.panel === "object") n.panel = o.panel;
+    if (o.collapsed) n.collapsed = true;
   }
   else if (o.kind === "reward") {
     if (["python", "exact", "regex", "length"].indexOf(o.reward) >= 0) n.reward = o.reward;
@@ -3355,11 +3597,15 @@ function bxRemoveEdge(from, to, fromPort, toPort) {
 function bxNodeW(n) {
   if (n && (n.kind === "agent" || n.kind === "train"))                 // the AI box is as wide as its display
     return Math.max(320, Number((n.box || {}).w) || 480);
+  if (n && n.kind === "dataset")           // …and so is the dataset's sheet
+    return Math.max(320, Number((n.box || {}).w) || 440);
   return BXW;
 }
 function bxNodeH(n) {
   if (n && (n.kind === "agent" || n.kind === "train"))                 // …and as tall: the content lives in it
     return Math.max(160, Number((n.box || {}).h) || 320);
+  if (n && n.kind === "dataset")
+    return Math.max(180, Number((n.box || {}).h) || 300);
   const p = Math.max(bxPortDefs(n, "in").length, bxPortDefs(n, "out").length);
   return p > 2 ? 40 * Math.ceil((30 + 16 * p) / 40) : BXH;   // whole cells, always
 }
@@ -3718,13 +3964,15 @@ function bxCard(n) {
     g.appendChild(svgText(cx, cy + 4,
                           Math.round(100 * bxTaskFraction(task)) + "%", "dringnum"));
   }
-  if ((n.kind === "agent" || n.kind === "train") && !preview) {
+  if ((n.kind === "agent" || n.kind === "train" || n.kind === "dataset") && !preview) {
     const fo = svg("foreignObject",       // the display lives inside the box
-                   { x: n.x + 5, y: n.y + 40, width: Math.max(80, w - 10),
+                   { x: n.x + 5, y: n.y + 40,
+                     width: Math.max(80, w - (n.kind === "dataset" ? 24 : 10)),
                      height: Math.max(40, h - 46), class: "bxlogfo" });
     const pane = mk("div", { class: "bxlogpane" });
     pane.setAttribute("data-agent", n.id);
-    if (n.kind === "train") bxTrainFill(pane, n);
+    if (n.kind === "dataset") bxDatasetFill(pane, n);
+    else if (n.kind === "train") bxTrainFill(pane, n);
     else bxAgentFill(pane, n);
     fo.appendChild(pane);
     g.appendChild(fo);
@@ -3971,7 +4219,14 @@ function bxMenuBuild(mode, id, ev) {
       else if (n.kind === "hf")
         mine.push(["set the model …", () => bxForm(n.kind, null, n, "hf")]);
       else if (n.kind === "sample") mine.push(["set the sample …", () => bxForm(n.kind, null, n, "sample")]);
-      else if (n.kind === "dataset") mine.push(["set the rows …", () => bxForm(n.kind, null, n, "dataset")]);
+      else if (n.kind === "dataset") {
+        mine.push(["set the rows …", () => bxForm(n.kind, null, n, "dataset")]);
+        mine.push(["expand / shrink the sheet", () => {
+          bxMenuClose();
+          bxDatasetExpand(n);
+          bxRender();
+        }]);
+      }
       else if (n.kind === "reward") mine.push(["set the reward …", () => bxForm(n.kind, null, n, "reward")]);
       else if (n.kind === "input") {
         mine.push(["set input", () => bxForm(n.kind, null, n, "matrix")]);
@@ -6474,11 +6729,14 @@ function bxDblClick(ev) {
   const id = onBox && onBox.getAttribute ? onBox.getAttribute("data-id") : null;
   const n = id ? bxNode(id) : null;
   if (n && n.kind === "custom") { ev.preventDefault(); bxEnter(n.id); return; }
-  if (n && (n.kind === "agent" || n.kind === "train")) {
-    ev.preventDefault();                       // the agent box: expand / shrink
-    const p = n.panel || (n.panel = {});
-    p.expand = !p.expand;
-    n.box = p.expand ? { w: 800, h: 480 } : { w: 480, h: 320 };
+  if (n && (n.kind === "agent" || n.kind === "train" || n.kind === "dataset")) {
+    ev.preventDefault();                       // a display box: expand / shrink
+    if (n.kind === "dataset") bxDatasetExpand(n);
+    else {
+      const p = n.panel || (n.panel = {});
+      p.expand = !p.expand;
+      n.box = p.expand ? { w: 800, h: 480 } : { w: 480, h: 320 };
+    }
     bxRender();
     return;
   }
