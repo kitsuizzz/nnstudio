@@ -57,14 +57,17 @@ class P(HTMLParser):
         if not self.stack: self.errors.append("stray </%s>" % tag); return
         top, pos = self.stack.pop()
         if top != tag: self.errors.append("</%s> closes <%s> at %s" % (tag, top, pos))
-p = P(); p.feed(open('ui/index.html', encoding='utf-8').read())
-if p.stack: p.errors.append("unclosed: " + ", ".join("<%s>" % t for t, _ in p.stack))
-raise SystemExit(1 if p.errors else 0)
+for f in ('ui/index.html', 'ui/docs.html'):
+    p = P(); p.feed(open(f, encoding='utf-8').read())
+    if p.stack: p.errors.append(f + " unclosed: " + ", ".join("<%s>" % t for t, _ in p.stack))
+    if p.errors:
+        print("\n".join(f + ": " + e for e in p.errors))
+        raise SystemExit(1)
 PY
 [ $? -eq 0 ] && ok || bad
 
 step "py_compile"
-$PY -m py_compile nn_engine.py nn_server.py nn_arc.py tools/reverse_job.py tools/reverse_model.py tools/backend_check.py agent/nnstudio_agent.py agent/nn_torch.py agent/nn_quant.py && ok || bad
+$PY -m py_compile nn_engine.py nn_server.py nn_arc.py tools/reverse_job.py tools/reverse_model.py tools/train_job.py tools/backend_check.py agent/nnstudio_agent.py agent/nn_torch.py agent/nn_quant.py && ok || bad
 
 if [ "${1:-}" = "--live" ]; then
   step "live app"

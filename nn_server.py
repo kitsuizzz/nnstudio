@@ -33,6 +33,7 @@ import nn_tasks                # agent_tasks: what the AI agents are doing
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui", "index.html")
+DOCS = os.path.join(HERE, "ui", "docs.html")
 MODELS_DIR = os.path.join(HERE, "models")
 AGENT_DIR = os.path.join(HERE, "agent")
 WEIGHTS_DIR = os.path.join(HERE, "weights")
@@ -581,6 +582,15 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             try:
                 with open(UI, "rb") as f:
+                    body = f.read()
+            except OSError as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+                return
+            self._send(200, body, "text/html; charset=utf-8")
+            return
+        if path in ("/docs", "/docs.html"):
+            try:
+                with open(DOCS, "rb") as f:
                     body = f.read()
             except OSError as e:
                 self._json({"ok": False, "error": str(e)}, 500)

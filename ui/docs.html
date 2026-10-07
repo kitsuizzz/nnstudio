@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nnstudio — the handbook</title>
+<style>
+  :root {
+    --bg: #141414;
+    --panel: rgba(255,255,255,.05);
+    --panel-brd: rgba(255,255,255,.12);
+    --ink: #f2f2f2;
+    --ink-dim: #a3a3a3;
+    --ink-faint: #8a8a8a;
+    --accent: #f97316;
+    --warm: #fbbf24;
+    --err: #f87171;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    font: 15.5px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background:
+      radial-gradient(900px 500px at 12% -10%, rgba(249,115,22,.10), transparent 60%),
+      radial-gradient(800px 500px at 100% 0%, rgba(255,255,255,.04), transparent 55%),
+      var(--bg);
+  }
+  header {
+    max-width: 1180px; margin: 0 auto; padding: 34px 20px 10px;
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  .logo { font-weight: 700; font-size: 26px; letter-spacing: -.02em; }
+  .logo span { color: var(--accent); }
+  .sub { color: var(--ink-dim); font-size: 13.5px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 14px 20px 80px;
+          display: grid; grid-template-columns: 232px 1fr; gap: 28px; }
+  nav {
+    position: sticky; top: 18px; align-self: start;
+    background: var(--panel); border: 1px solid var(--panel-brd);
+    border-radius: 18px; padding: 16px 14px;
+    backdrop-filter: blur(14px);
+    box-shadow: 0 18px 50px -30px rgba(0,0,0,.8);
+  }
+  nav .ntitle { font-size: 10px; text-transform: uppercase; letter-spacing: .12em;
+                color: var(--ink-faint); margin: 12px 4px 4px; }
+  nav a { display: block; color: var(--ink-dim); text-decoration: none;
+          font-size: 13px; padding: 4px 8px; border-radius: 8px; }
+  nav a:hover { color: var(--ink); background: rgba(249,115,22,.12); }
+  article { min-width: 0; }
+  section.card {
+    background: var(--panel); border: 1px solid var(--panel-brd);
+    border-radius: 18px; padding: 24px 28px; margin-bottom: 20px;
+    backdrop-filter: blur(14px);
+    box-shadow: 0 18px 50px -30px rgba(0,0,0,.8);
+    scroll-margin-top: 18px;
+  }
+  h1 { font-size: 25px; letter-spacing: -.02em; margin: 2px 0 8px; }
+  h2 { font-size: 20px; letter-spacing: -.01em; margin: 26px 0 10px;
+       padding-top: 18px; border-top: 1px solid var(--panel-brd); }
+  h2:first-of-type { border-top: 0; padding-top: 0; }
+  h3 { font-size: 15.5px; margin: 22px 0 6px; color: var(--ink); }
+  p { margin: 10px 0; color: var(--ink); }
+  .dim { color: var(--ink-dim); }
+  code, .m {
+    font-family: var(--mono); font-size: .88em;
+    background: rgba(249,115,22,.12); color: #fdba74;
+    padding: 1px 6px; border-radius: 6px;
+  }
+  pre {
+    background: rgba(0,0,0,.32); border: 1px solid var(--panel-brd);
+    border-radius: 12px; padding: 12px 14px; overflow-x: auto;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+    color: #e5e5e5;
+  }
+  pre code { background: none; color: inherit; padding: 0; }
+  ul, ol { margin: 10px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  .try {
+    border-left: 3px solid var(--accent);
+    background: rgba(249,115,22,.09);
+    border-radius: 0 12px 12px 0;
+    padding: 10px 16px; margin: 14px 0;
+    font-size: 14.5px;
+  }
+  .try b { color: var(--accent); letter-spacing: .01em; }
+  .note {
+    border-left: 3px solid var(--warm);
+    background: rgba(251,191,36,.08);
+    border-radius: 0 12px 12px 0;
+    padding: 10px 16px; margin: 14px 0; font-size: 14px;
+    color: var(--ink);
+  }
+  .figure { margin: 18px 0; text-align: center; }
+  .figure svg { max-width: 100%; height: auto; }
+  .figure .cap { color: var(--ink-faint); font-size: 12.5px; margin-top: 6px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13.5px; }
+  th { text-align: left; color: var(--ink-faint); font-weight: 600;
+       text-transform: uppercase; letter-spacing: .1em; font-size: 10px;
+       padding: 6px 10px; border-bottom: 1px solid var(--panel-brd); }
+  td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,.06);
+       vertical-align: top; }
+  td:first-child { white-space: nowrap; }
+  .pill {
+    display: inline-block; font-family: var(--mono); font-size: 11px;
+    padding: 1px 8px; border-radius: 999px; margin-right: 4px;
+    border: 1px solid rgba(249,115,22,.5); color: #fdba74;
+    background: rgba(249,115,22,.10);
+  }
+  .pill.grey { border-color: var(--panel-brd); color: var(--ink-dim);
+               background: rgba(255,255,255,.04); }
+  .boxref { display: grid; grid-template-columns: 150px 1fr; gap: 0 18px;
+            padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,.07); }
+  .boxref:last-child { border-bottom: 0; }
+  .boxref .bname { font-family: var(--mono); font-size: 13.5px; color: var(--accent); }
+  .boxref .bwires { color: var(--ink-faint); font-size: 12px; margin-top: 3px; }
+  .boxref .bdet p { margin: 4px 0; }
+  .boxref .bfields { color: var(--ink-dim); font-size: 13px; }
+  .kbd {
+    font-family: var(--mono); font-size: 11px; color: var(--ink);
+    border: 1px solid var(--panel-brd); border-bottom-width: 2px;
+    border-radius: 6px; padding: 1px 6px; background: rgba(0,0,0,.3);
+  }
+  a { color: var(--accent); }
+  @media (max-width: 860px) {
+    .wrap { grid-template-columns: 1fr; }
+    nav { position: static; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">nn<span>·</span>studio</div>
+  <div class="sub">the handbook — what this app is, how to use the boxes, and just enough theory to make them click</div>
+</header>
+
+<div class="wrap">
+<nav>
+  <div class="ntitle">the app</div>
+  <a href="#what">What nnstudio is</a>
+  <a href="#canvas">The canvas: using it</a>
+  <a href="#boxes">The boxes: reference</a>
+  <a href="#recipes">Recipes</a>
+  <div class="ntitle">just enough theory</div>
+  <a href="#nn">How a network works</a>
+  <a href="#training">How training works</a>
+  <div class="ntitle">housekeeping</div>
+  <a href="#weights">Weights &amp; saving</a>
+  <a href="#first">Your first session</a>
+</nav>
+
+<article>
+
+<!-- ============================================================ what -->
+<section class="card" id="what">
+  <h1>What nnstudio is</h1>
+  <p>
+    nnstudio is a workbench for neural networks. You <b>compose a network on a canvas
+    out of boxes</b> — each box is one piece (an embedding table, a matrix multiply,
+    an activation, a tokenizer…), and <b>wires between boxes carry the data</b>.
+    When you run the canvas, numbers flow along the wires, box by box, and whatever
+    comes out of the last box is the answer.
+  </p>
+  <p>
+    The same canvas does both jobs: it <b>runs</b> a network (feed it text or numbers,
+    watch the outputs) and <b>trains</b> one (give it a dataset and a loss, and it
+    improves its boxes). A canvas is stored as plain JSON — a <b>design</b> — so you
+    can save it, share it, and load it back exactly as it was.
+  </p>
+  <p>Three things make the app practical rather than toy:</p>
+  <ul>
+    <li><b>Real models.</b> Point a GGUF box at a <code>.gguf</code> file (or an
+        <code>hf</code> box at a Hugging Face repo) and the app builds the whole
+        network for you — hundreds of boxes, wired exactly like the model's original
+        implementation. You can then look inside it, change it, or train on top of it.</li>
+    <li><b>A real backend.</b> The heavy maths runs on a backend service (your GPU,
+        CPU, or a remote machine) — the browser only draws and edits. The
+        <span class="pill grey">Backend ▾</span> menu connects them.</li>
+    <li><b>Tasks.</b> Long work — training, big jobs — runs as a <b>task</b> managed
+        through the agent box: it shows progress live, and can be paused, detached
+        (checkpointed and stopped), and resumed later.</li>
+  </ul>
+  <div class="note">
+    The rest of this handbook is two halves: everything about <b>using the app</b>
+    (the canvas, the boxes, recipes), then two short theory sections — how networks
+    work and how training works — written just deep enough for the boxes to make
+    sense. If you already know what a loss is, skim them.
+  </div>
+</section>
+
+<!-- ============================================================ canvas -->
+<section class="card" id="canvas">
+  <h1>The canvas: using it</h1>
+  <p class="dim">
+    The toolbar strip above the canvas has five menus:
+    <span class="pill grey">Files ▾</span> <span class="pill grey">Palette ▾</span>
+    <span class="pill grey">Backend ▾</span> <span class="pill grey">Run ▾</span>
+    <span class="pill grey">VRAM ▾</span>
+  </p>
+
+  <h2>Moving around</h2>
+  <ul>
+    <li><b>Add a box</b> — open <span class="pill grey">Palette ▾</span>, expand a
+        category, and drag a card onto the canvas. Categories follow the boxes'
+        jobs: containers, data, compute, results, system.</li>
+    <li><b>Move / resize</b> — drag a box by its body; drag its corner to resize
+        (boxes with displays, like the agent box, resize with their display).</li>
+    <li><b>Wire two boxes</b> — drag from a box's <b>right dot</b> (its output) to
+        another box's <b>left dot</b> (its input). Right-click a wire to reshape or
+        remove it.</li>
+    <li><b>Edit a box</b> — right-click it. Its menu renames it, changes its
+        settings (the activation, the operation, the embedding…), and offers
+        <b>freeze</b> (keep its weights fixed) and <b>off</b> (skip it on runs).</li>
+    <li><b>Step inside a nested box</b> — double-click a
+        <span class="pill">custom</span> box. A nested box is a whole network of
+        its own — that's the "nested" in nnstudio. Double-clicking again goes
+        deeper; the strip above the canvas shows where you are and takes you back.</li>
+    <li><b>Run it</b> — connect <span class="pill grey">Backend ▾</span> first, then
+        <span class="pill grey">Run ▾</span>. Each run leaves its numbers on the
+        boxes (click a box to see the values that passed through it).</li>
+    <li><b>Price it</b> — <span class="pill grey">VRAM ▾</span> shows how much
+        memory the design's weights need and where they will live (GPU or system).
+        Freeze nothing, move everything, see it change.</li>
+  </ul>
+
+  <div class="figure">
+    <svg viewBox="0 0 720 190" width="720" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3.2"
+                orient="auto"><path d="M0,0 L7,3.2 L0,6.4 z" fill="#f97316"/></marker>
+      </defs>
+      <!-- boxes -->
+      <g font-family="ui-monospace, Menlo, monospace" font-size="12">
+        <g>
+          <rect x="18" y="62" width="118" height="56" rx="12"
+                fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.14)"/>
+          <text x="77" y="86" fill="#f2f2f2" text-anchor="middle">input</text>
+          <text x="77" y="103" fill="#8a8a8a" text-anchor="middle" font-size="10">text / numbers</text>
+        </g>
+        <g>
+          <rect x="196" y="62" width="118" height="56" rx="12"
+                fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.14)"/>
+          <text x="255" y="86" fill="#f2f2f2" text-anchor="middle">embed</text>
+          <text x="255" y="103" fill="#8a8a8a" text-anchor="middle" font-size="10">ids → vectors</text>
+        </g>
+        <g>
+          <rect x="374" y="62" width="118" height="56" rx="12"
+                fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.14)"/>
+          <text x="433" y="86" fill="#f2f2f2" text-anchor="middle">layer</text>
+          <text x="433" y="103" fill="#8a8a8a" text-anchor="middle" font-size="10">× weights</text>
+        </g>
+        <g>
+          <rect x="552" y="62" width="150" height="56" rx="12"
+                fill="rgba(249,115,22,.10)" stroke="rgba(249,115,22,.55)"/>
+          <text x="627" y="86" fill="#f2f2f2" text-anchor="middle">output</text>
+          <text x="627" y="103" fill="#8a8a8a" text-anchor="middle" font-size="10">the answer</text>
+        </g>
+      </g>
+      <!-- wires -->
+      <g stroke="#f97316" stroke-width="1.8" fill="none" marker-end="url(#ah)">
+        <path d="M136 90 L190 90"/>
+        <path d="M314 90 L368 90"/>
+        <path d="M492 90 L546 90"/>
+      </g>
+      <!-- ports -->
+      <g fill="rgba(22,22,22,.95)" stroke="#f97316" stroke-width="1.6">
+        <circle cx="196" cy="90" r="4.4"/><circle cx="136" cy="90" r="4.4"/>
+        <circle cx="374" cy="90" r="4.4"/><circle cx="314" cy="90" r="4.4"/>
+        <circle cx="552" cy="90" r="4.4"/><circle cx="492" cy="90" r="4.4"/>
+      </g>
+      <!-- labels -->
+      <g font-size="10.5" fill="#a3a3a3" font-family="system-ui, sans-serif">
+        <text x="150" y="70">drag right dot</text>
+        <text x="150" y="132">→ left dot</text>
+        <text x="18" y="30" fill="#8a8a8a">a wire carries one tensor: [batch, tokens, dims]</text>
+      </g>
+    </svg>
+    <div class="cap">The whole idea, in one line: boxes hold the pieces, wires carry the numbers.</div>
+  </div>
+
+  <h2>Designs, saving, sharing</h2>
+  <p>
+    Everything on the canvas is a <b>design</b> — plain JSON.
+    <span class="pill grey">Files ▾</span> exports it (a <code>.json</code> file),
+    imports one back, and lists what's saved. Design JSON nests: a nested box
+    carries its own network inside the file, so one file can hold a whole model.
+    The canvas also auto-saves in the browser — reload and your work is still there.
+  </p>
+</section>
+
+<!-- ============================================================ boxes -->
+<section class="card" id="boxes">
+  <h1>The boxes: reference</h1>
+  <p class="dim">
+    Every box shows its name, its shape (what comes in and goes out), and — if it
+    holds weights — its weight count. Below: what each box does, the fields you can
+    set (right-click → <i>set …</i>), and what wires into or out of it.
+  </p>
+
+  <h2>Data boxes — getting things in</h2>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">input</div>
+      <div class="bwires">0 in · 1 out</div>
+    </div>
+    <div class="bdet">
+      <p>Where data enters the network: text, numbers you type, or generated values.
+      An input box is what a run feeds — one per thing you want to test.</p>
+      <p class="bfields"><b>Fields:</b> width <code>dout</code>; mode
+      <code>input_mode</code> — <code>text</code> (type a prompt), <code>python</code>
+      (a small expression for the values), or <code>random</code>; the text or code
+      itself; <code>input_rows</code> for batches.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">tokenize</div>
+      <div class="bwires">1 in (text) · 1 out (ids)</div>
+    </div>
+    <div class="bdet">
+      <p>Turns text into token ids — the numbers a network actually reads. With a
+      wire in, it tokenizes whatever arrives; without one, its own <code>text</code>.</p>
+      <p class="bfields"><b>Fields:</b> <code>repo</code> (a Hugging Face tokenizer)
+      or <code>vocab</code> (a simple one-character-per-token vocabulary, great for
+      teaching); optional default <code>text</code>.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">dataset</div>
+      <div class="bwires">0 in · 1 out (labels → loss)</div>
+    </div>
+    <div class="bdet">
+      <p>Your training data. Each row is a <code>prompt</code> and a
+      <code>completion</code> — what the model reads, and what it should learn to
+      write. A training run feeds its rows to the <span class="pill">loss</span> box;
+      the prompt part of each row is masked out of the loss (the model learns to
+      produce the completion, not to parrot the prompt).</p>
+      <p class="bfields"><b>Fields:</b> <code>text</code> (rows typed in) or
+      <code>file</code> (a JSONL file path on the backend machine); tokenizer
+      <code>repo</code>/<code>vocab</code>, like the tokenize box. One row per line:
+      JSON like <code>{"prompt": "…", "completion": "…"}</code>, or
+      <code>prompt&lt;TAB&gt;completion</code>.</p>
+    </div>
+  </div>
+
+  <h2>Compute boxes — the network itself</h2>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">embed</div>
+      <div class="bwires">1 in (ids) · 1 out (vectors)</div>
+    </div>
+    <div class="bdet">
+      <p>A lookup table: every token id becomes a learned vector. It is the bridge
+      from discrete tokens to the continuous numbers the rest of the network works
+      in. (Word embeddings are <i>the</i> classic "what does this word mean as a
+      direction in space" representation.)</p>
+      <p class="bfields"><b>Fields:</b> <code>vocab</code> (table rows),
+      <code>din</code>/<code>dout</code> (vector width),
+      <code>embed_scale</code> (Gemma-style scaling); the weight binding
+      <code>t</code> and <code>dtype</code>.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">layer</div>
+      <div class="bwires">1 in · 1 out</div>
+    </div>
+    <div class="bdet">
+      <p>The workhorse: multiply the incoming numbers by this box's weight matrix
+      (plus a bias). Stack enough layers and the network can fit very complicated
+      patterns. This is where nearly all of a model's weights live.</p>
+      <p class="bfields"><b>Fields:</b> <code>din</code>/<code>dout</code>;
+      weight binding <code>t</code>; <code>dtype</code>. Uncheck nothing — a
+      layer not <b>frozen</b> is trainable.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">act</div>
+      <div class="bwires">1 in · 1 out</div>
+    </div>
+    <div class="bdet">
+      <p>An activation — a small bend applied to every number. Without one, a stack
+      of layers collapses into a single layer; activations are what give depth its
+      power. Attention scores also pass through here.</p>
+      <p class="bfields"><b>Fields:</b> the function <code>act</code>
+      (<code>silu</code>, <code>relu</code>, <code>tanh</code>, softmax…);
+      <code>gain</code> (a scaling factor, e.g. attention's 1/√d);
+      <code>causal</code> (a "never look at future tokens" mask).</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">norm</div>
+      <div class="bwires">1 in · 1 out</div>
+    </div>
+    <div class="bdet">
+      <p>Keeps the numbers flowing through the network on a sane scale (deep
+      networks drift into huge or tiny values otherwise). Every modern model
+      sprinkles these between its compute boxes.</p>
+      <p class="bfields"><b>Fields:</b> <code>norm</code> — <code>rms</code> or
+      <code>layer</code>; <code>eps</code>; <code>size</code>; <code>zc</code>.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">op</div>
+      <div class="bwires">1–2 in · 1 out</div>
+    </div>
+    <div class="bdet">
+      <p>One mathematical operation — anything else the network needs. Two-input
+      ops (add, matmul, concat…) take wires into both dots; one-input ops take one.</p>
+      <p class="bfields"><b>Fields:</b> the operation <code>op</code>:
+      <code>transpose</code>, <code>dot product</code>, <code>matmul</code>,
+      <code>concat</code>, <code>add</code>, <code>subtract</code>,
+      <code>multiply</code>, <code>divide</code>, <code>rope</code>,
+      <code>scale</code>, <code>topk</code>, <code>conv1d</code>, <code>scan</code>,
+      <code>reshape</code>, <code>permute</code>, <code>repeat</code>,
+      <code>mask</code>, <code>slice</code>, <code>zeros</code>; plus each op's own
+      settings (<code>dims</code>, <code>axes</code>, <code>theta</code>,
+      <code>window</code>, head geometry for attention…).</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">script</div>
+      <div class="bwires">1 in · 1 out</div>
+    </div>
+    <div class="bdet">
+      <p>A box you program yourself: a short Python expression over its input
+      (<code>x</code>) returning a tensor. The escape hatch for anything the other
+      boxes don't cover. The code travels inside the design file.</p>
+      <p class="bfields"><b>Fields:</b> <code>script</code>.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">custom</div>
+      <div class="bwires">its own · 1 in · 1 out</div>
+    </div>
+    <div class="bdet">
+      <p>A nested box: a whole network inside one box. Double-click to step in and
+      edit its insides; from outside it behaves like a single box. This is how large
+      models stay legible — a 27-billion-parameter model is one GGUF box that you
+      can open into blocks, each block open into its attention and MLP.</p>
+      <p class="bfields"><b>Fields:</b> its <code>inner</code> network; when it was
+      built from a model file: <code>gguf</code> and the source <code>repo</code>.
+      A <b>GGUF box</b> (Palette ▾ → containers) is a custom box that loads a whole
+      <code>.gguf</code> model — right-click → <i>Load GGUF …</i>.</p>
+    </div>
+  </div>
+
+  <h2>Result boxes — getting things out</h2>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">output</div>
+      <div class="bwires">1 in · 0 out</div>
+    </div>
+    <div class="bdet">
+      <p>The end of the line: whatever reaches it is shown as the run's result. Name
+      outputs after what they are (<code>logits</code>, <code>hidden</code>) — runs
+      report per output name.</p>
+      <p class="bfields"><b>Fields:</b> <code>din</code>, its name.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">detokenize</div>
+      <div class="bwires">1 in (ids) · 1 out (text)</div>
+    </div>
+    <div class="bdet">
+      <p>Token ids back into text — the inverse of the tokenize box. Put it after a
+      sample box to read what the model produced.</p>
+      <p class="bfields"><b>Fields:</b> <code>repo</code>/<code>vocab</code> — must
+      match the tokenize box that fed the model.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">sample</div>
+      <div class="bwires">1 in (logits) · 1 out (ids)</div>
+    </div>
+    <div class="bdet">
+      <p>Picks the next token from the model's scores (logits). This one box is the
+      difference between "a network that computes" and "a model that writes":
+      generation is sampling a token, feeding it back in, and repeating.</p>
+      <p class="bfields"><b>Fields:</b> <code>temperature</code> (0 = always take
+      the best token; higher = more adventurous), <code>sample_seed</code>
+      (reproducible picks).</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">loss</div>
+      <div class="bwires">2 in (logits, labels) · 1 out (scalar)</div>
+    </div>
+    <div class="bdet">
+      <p>Measures how wrong the model is — one number, lower is better. It compares
+      the model's scores against a <span class="pill">dataset</span> box's labels.
+      During training this is the number that falls. Its output is a plain scalar,
+      so you can wire it anywhere and watch it.</p>
+      <p class="bfields"><b>Fields:</b> <code>loss</code> (the kind — cross-entropy
+      for next-token prediction).</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">reward</div>
+      <div class="bwires">0 in · scores texts</div>
+    </div>
+    <div class="bdet">
+      <p>A deterministic score for a piece of text — "how good was this output?".
+      It doesn't run inside the dataflow; a training run applies it to generated
+      samples. The same pair of prompt and output always earns the same score:
+      <code>exact</code> match against a target, a <code>regex</code> pattern, a
+      <code>length</code> budget, or your own Python <code>expr</code> over
+      <code>prompt</code> and <code>output</code>. This is the hook for
+      reinforcement learning: the reward says how good, the training raises it.</p>
+      <p class="bfields"><b>Fields:</b> <code>reward</code>
+      (<code>python</code>/<code>exact</code>/<code>regex</code>/<code>length</code>),
+      <code>expr</code>, <code>pattern</code>, <code>match</code>, <code>limit</code>.</p>
+    </div>
+  </div>
+
+  <h2>System boxes — models and long work</h2>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">hf</div>
+      <div class="bwires">0 in · text result</div>
+    </div>
+    <div class="bdet">
+      <p>A complete Hugging Face model, run by the backend as a whole — no wires
+      needed. The quick way to get a baseline answer (or a reference for your own
+      canvas to match).</p>
+      <p class="bfields"><b>Fields:</b> <code>repo</code>, a prompt
+      <code>text</code>, <code>temperature</code>.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">agent</div>
+      <div class="bwires">none — a window, not maths</div>
+    </div>
+    <div class="bdet">
+      <p>A live window onto a <b>task</b> — a long-running job managed by the
+      backend agent (research, big jobs). It shows the task's stream as it works,
+      with its progress ring on the card. This is the app's one surface for firing
+      and managing tasks: start one here, pause it, cancel it, read what it did.
+      Double-click the box to grow or shrink its display.</p>
+      <p class="bfields"><b>Fields:</b> <code>task_id</code> (its task), display
+      <code>box</code> size, <code>panel</code> options (lines, autoscroll, debug).</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">train</div>
+      <div class="bwires">none — a display, not maths</div>
+    </div>
+    <div class="bdet">
+      <p>The training window: step counter, live loss and its curve, the latest
+      checkpoint, and the controls that matter when a GPU's clock is ticking —
+      <b>save now</b> (land a checkpoint where it stands), <b>detach</b> (checkpoint
+      and stop cleanly, freeing the GPU), <b>resume</b> (continue exactly where it
+      stopped), <b>hold</b> (stop stepping but keep the machine). Bind it to a
+      training task's <code>task_id</code> and it follows that run.</p>
+      <p class="bfields"><b>Fields:</b> <code>task_id</code>, display
+      <code>box</code> size, <code>panel</code> options.</p>
+    </div>
+  </div>
+
+  <h2>Weight bindings — <code>t</code> namespaces</h2>
+  <p>
+    Every box that holds weights carries a binding like
+    <code>t = "models/my.gguf::blk.0.attn_qkv.weight"</code> — a file, and the
+    tensor inside it. This is called a <b>namespace</b>, and two boxes bound to the
+    same namespace share <b>one</b> copy of the weights in memory (the UI marks them
+    with a <code>shared ×N</code> chip). When you load a GGUF, every box is bound
+    for you. When you build by hand, type a name — a free namespace just means the
+    box trains its own weights.
+  </p>
+</section>
+
+<!-- ============================================================ recipes -->
+<section class="card" id="recipes">
+  <h1>Recipes</h1>
+
+  <h2>Run a GGUF model</h2>
+  <ol>
+    <li><span class="pill grey">Palette ▾</span> → containers → <b>GGUF box</b>
+        (a whole model loads at the top level).</li>
+    <li>Right-click it → <b>Load GGUF …</b> → pick your <code>.gguf</code> file.
+        <span class="dim">(The first click arms the overwrite — click again to
+        confirm.)</span> The box fills with the model's blocks, wired exactly like
+        the original implementation.</li>
+    <li><span class="pill grey">Backend ▾</span> → connect.
+        <span class="pill grey">Run ▾</span> → type a prompt → run.</li>
+    <li>Double-click the GGUF box to look inside; click boxes to see the numbers
+        that flowed through them.</li>
+  </ol>
+
+  <h2>Train a network on your own data</h2>
+  <ol>
+    <li>Build the network: <span class="pill">input</span> →
+        <span class="pill">embed</span> → one or more
+        <span class="pill">layer</span> boxes → whatever produces scores over the
+        vocabulary (a layer sized to the vocab).</li>
+    <li>Add a <span class="pill">dataset</span> box; give it rows
+        (<code>prompt&lt;TAB&gt;completion</code> or JSONL).</li>
+    <li>Add a <span class="pill">loss</span> box. Wire the model's scores into its
+        <b>first</b> dot, the dataset box into its <b>second</b>.</li>
+    <li>Add a <span class="pill">train</span> box.</li>
+    <li>Start a training task with this design — ask the agent box to do it, or
+        POST it to the tasks API (below). The train box shows the step count, the
+        loss, and the curve as it happens.</li>
+    <li>Let it run. <b>Detach</b> whenever — the run checkpoints itself and the GPU
+        is free. Days later, <b>resume</b>: same step, same learning rate, same
+        place in the data. This is how you train on monthly GPU credits.</li>
+  </ol>
+  <pre><code>POST /api/tasks
+{ "type": "train", "name": "my-run",
+  "params": { "batch": 8, "lr": 3e-4, "save_every": 200 },
+  "design": { … your canvas as JSON … } }
+
+POST /api/tasks/cmd   { "task": "t_…", "cmd": "save" }     // checkpoint now
+POST /api/tasks/cmd   { "task": "t_…", "cmd": "detach" }   // checkpoint + stop
+POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly</code></pre>
+
+  <h2>Score outputs with a reward</h2>
+  <ol>
+    <li>Add a <span class="pill">reward</span> box; pick its kind and write it —
+        e.g. <code>expr = "1.0 if output.strip().endswith('.') else 0.0"</code>.</li>
+    <li>Training runs score generated samples with it. The score is deterministic —
+        the same output always earns the same reward, so runs are reproducible.</li>
+    <li>Watch rewards climb alongside the loss on the train box. Higher reward is
+        the reinforcement-learning objective; lower loss is the supervised one.</li>
+  </ol>
+</section>
+
+<!-- ============================================================ nn -->
+<section class="card" id="nn">
+  <h1>How a network works — just enough</h1>
+  <p>
+    A neural network is a <b>function from numbers to numbers</b>. Text goes in
+    (converted to token ids by the tokenize box), numbers come out (scores for
+    every possible next token). Everything in between is multiplication, addition,
+    and small bends.
+  </p>
+
+  <div class="figure">
+    <svg viewBox="0 0 720 210" width="720" xmlns="http://www.w3.org/2000/svg">
+      <!-- inputs -->
+      <g font-family="ui-monospace, Menlo, monospace" font-size="12">
+        <circle cx="80" cy="60" r="15" fill="rgba(255,255,255,.06)" stroke="#a3a3a3"/>
+        <text x="80" y="64" fill="#f2f2f2" text-anchor="middle">x₁</text>
+        <circle cx="80" cy="150" r="15" fill="rgba(255,255,255,.06)" stroke="#a3a3a3"/>
+        <text x="80" y="154" fill="#f2f2f2" text-anchor="middle">x₂</text>
+        <!-- weights -->
+        <text x="175" y="82" fill="#fdba74" text-anchor="middle">× w₁</text>
+        <text x="175" y="172" fill="#fdba74" text-anchor="middle">× w₂</text>
+        <!-- sum -->
+        <circle cx="320" cy="105" r="26" fill="rgba(249,115,22,.12)" stroke="#f97316"/>
+        <text x="320" y="111" fill="#f2f2f2" text-anchor="middle" font-size="17">Σ</text>
+        <!-- activation -->
+        <rect x="410" y="79" width="92" height="52" rx="12"
+              fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.14)"/>
+        <text x="456" y="100" fill="#f2f2f2" text-anchor="middle">bend</text>
+        <text x="456" y="117" fill="#8a8a8a" text-anchor="middle" font-size="10">activation</text>
+        <!-- out -->
+        <circle cx="600" cy="105" r="15" fill="rgba(249,115,22,.16)" stroke="#f97316"/>
+        <text x="600" y="109" fill="#f2f2f2" text-anchor="middle">y</text>
+      </g>
+      <g stroke="#f97316" stroke-width="1.8" fill="none" marker-end="url(#ah)">
+        <path d="M95 60 L300 95"/>
+        <path d="M95 150 L300 116"/>
+        <path d="M346 105 L404 105"/>
+        <path d="M502 105 L585 105"/>
+      </g>
+      <g font-family="system-ui, sans-serif" font-size="10.5" fill="#8a8a8a">
+        <text x="240" y="52" fill="#fdba74" text-anchor="middle">the weights — the part training changes</text>
+        <text x="456" y="152" text-anchor="middle">a small non-linearity: silu, relu, tanh…</text>
+      </g>
+    </svg>
+    <div class="cap">One neuron: multiply, add up, bend. A layer is a row of these; a network is layers stacked.</div>
+  </div>
+
+  <p>
+    Three ideas cover the rest:
+  </p>
+  <ul>
+    <li><b>Layers and depth.</b> A <span class="pill">layer</span> box is a grid of
+        these neurons working on the whole incoming row of numbers at once. Stacked
+        layers make increasingly abstract features — edges, then shapes, then
+        objects; or word patterns, then grammar, then meaning.</li>
+    <li><b>Embeddings.</b> Tokens are just ids — <code>52</code> says nothing about
+        meaning. The <span class="pill">embed</span> box turns each id into a vector,
+        a position in a space where "related words live nearby".</li>
+    <li><b>Logits and sampling.</b> The network's final output is a score (a
+        <b>logit</b>) for every token in the vocabulary. The
+        <span class="pill">sample</span> box turns scores into one chosen token —
+        feed it back in, repeat, and the model writes.</li>
+  </ul>
+  <div class="note">
+    Attention — what makes modern language models work — is just these same boxes
+    doing something clever: <i>look at the other tokens, and copy what's relevant</i>
+    (ops like matmul, scale, mask and softmax, right there in the palette). When you
+    load a GGUF model you can see every piece of it.
+  </div>
+</section>
+
+<!-- ============================================================ training -->
+<section class="card" id="training">
+  <h1>How training works — just enough</h1>
+  <p>
+    Training is a loop with four moves. Everything else is detail.
+  </p>
+
+  <div class="figure">
+    <svg viewBox="0 0 720 240" width="720" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ah2" markerWidth="9" markerHeight="9" refX="7" refY="3.2"
+                orient="auto"><path d="M0,0 L7,3.2 L0,6.4 z" fill="#f97316"/></marker>
+      </defs>
+      <g font-family="ui-monospace, Menlo, monospace" font-size="12">
+        <rect x="30" y="30" width="150" height="54" rx="12"
+              fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.14)"/>
+        <text x="105" y="53" fill="#f2f2f2" text-anchor="middle">1 · predict</text>
+        <text x="105" y="70" fill="#8a8a8a" text-anchor="middle" font-size="10">run the boxes</text>
+
+        <rect x="290" y="30" width="150" height="54" rx="12"
+              fill="rgba(249,115,22,.10)" stroke="rgba(249,115,22,.55)"/>
+        <text x="365" y="53" fill="#f2f2f2" text-anchor="middle">2 · score</text>
+        <text x="365" y="70" fill="#8a8a8a" text-anchor="middle" font-size="10">the loss box</text>
+
+        <rect x="550" y="30" width="150" height="54" rx="12"
+              fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.14)"/>
+        <text x="625" y="53" fill="#f2f2f2" text-anchor="middle">3 · nudge</text>
+        <text x="625" y="70" fill="#8a8a8a" text-anchor="middle" font-size="10">change every weight a little</text>
+
+        <rect x="290" y="150" width="150" height="54" rx="12"
+              fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.14)"/>
+        <text x="365" y="173" fill="#f2f2f2" text-anchor="middle">4 · repeat</text>
+        <text x="365" y="190" fill="#8a8a8a" text-anchor="middle" font-size="10">next batch of rows</text>
+      </g>
+      <g stroke="#f97316" stroke-width="1.8" fill="none" marker-end="url(#ah2)">
+        <path d="M180 57 L284 57"/>
+        <path d="M440 57 L544 57"/>
+        <path d="M625 84 L625 177 L446 177"/>
+        <path d="M290 177 L108 177 L108 90"/>
+      </g>
+      <g font-family="system-ui, sans-serif" font-size="10.5" fill="#8a8a8a">
+        <text x="365" y="225" text-anchor="middle">one trip around = one step. A run is thousands of steps.</text>
+      </g>
+    </svg>
+    <div class="cap">Predict, score, nudge, repeat — the whole of training.</div>
+  </div>
+
+  <h2>The vocabulary of training</h2>
+  <ul>
+    <li><b>Loss</b> — one number saying how wrong the model was on this batch. The
+        <span class="pill">loss</span> box computes it: compare the model's scores
+        with what the <span class="pill">dataset</span> box says <i>should</i> have
+        come out.</li>
+    <li><b>Gradient</b> — for every weight: if this weight were a little higher,
+        would the loss go up or down, and by how much? Computed automatically
+        (backpropagation) from the loss.</li>
+    <li><b>Step</b> — nudge every weight in the direction that lowers the loss.
+        The <b>learning rate</b> (<code>lr</code>) is the size of the nudge: too
+        small crawls, too large thrashes. Step counts on the train box are literally
+        this.</li>
+    <li><b>Batch</b> — the handful of rows scored per step. Bigger batches give
+        steadier nudges; smaller ones move faster per wall-clock minute.</li>
+  </ul>
+
+  <div class="figure">
+    <svg viewBox="0 0 720 220" width="720" xmlns="http://www.w3.org/2000/svg">
+      <!-- axes -->
+      <g stroke="rgba(255,255,255,.18)" stroke-width="1">
+        <path d="M70 20 L70 180 L660 180"/>
+      </g>
+      <!-- healthy curve -->
+      <path d="M70 40 C 160 120, 210 150, 300 158 C 380 165, 430 162, 480 164"
+            fill="none" stroke="#f97316" stroke-width="2.2"/>
+      <!-- flat continuation -->
+      <path d="M480 164 L650 166" fill="none" stroke="#f97316" stroke-width="2.2"
+            stroke-dasharray="5 6"/>
+      <g font-family="system-ui, sans-serif" font-size="11">
+        <text x="36" y="26" fill="#a3a3a3" transform="rotate(-90 36 26)">loss</text>
+        <text x="640" y="198" fill="#a3a3a3">steps →</text>
+        <text x="215" y="120" fill="#f2f2f2">it falls fast,</text>
+        <text x="330" y="140" fill="#a3a3a3">then settles</text>
+        <text x="510" y="150" fill="#8a8a8a">flat = converged</text>
+        <text x="90" y="58" fill="#fdba74">early steps</text>
+      </g>
+    </svg>
+    <div class="cap">A healthy loss curve: steep at first, then flattening. If it rises, the learning rate is too big; if it never moves, too small.</div>
+  </div>
+
+  <h2>Checkpoints: pause and continue</h2>
+  <p>
+    A training run is long, and GPU time is billed by the hour — so the app treats
+    stopping as a first-class move. A <b>checkpoint</b> is a saved snapshot: the
+    trainable weights, the optimizer's state, and the step counter.
+  </p>
+  <ul>
+    <li><b>Save now</b> — land a checkpoint where the run stands.</li>
+    <li><b>Detach</b> — checkpoint and stop <i>cleanly</i>. The GPU is free.
+        (Distinct from <b>hold</b>, which stops stepping but keeps the machine.)</li>
+    <li><b>Resume</b> — load the checkpoint and continue: same step, same learning
+        rate, same place in the data. To the loss curve, nothing happened.</li>
+  </ul>
+
+  <div class="figure">
+    <svg viewBox="0 0 720 120" width="720" xmlns="http://www.w3.org/2000/svg">
+      <g stroke="#f97316" stroke-width="2.2">
+        <path d="M40 60 L290 60"/>
+        <path d="M430 60 L680 60"/>
+      </g>
+      <g stroke="rgba(255,255,255,.25)" stroke-width="2.2" stroke-dasharray="3 8">
+        <path d="M290 60 L430 60"/>
+      </g>
+      <g fill="rgba(22,22,22,.95)" stroke="#f97316" stroke-width="1.8">
+        <circle cx="165" cy="60" r="7"/>
+        <circle cx="290" cy="60" r="7"/>
+        <circle cx="430" cy="60" r="7"/>
+        <circle cx="555" cy="60" r="7"/>
+      </g>
+      <g font-family="system-ui, sans-serif" font-size="11" text-anchor="middle">
+        <text x="165" y="42" fill="#a3a3a3">save</text>
+        <text x="290" y="42" fill="#f2f2f2">detach</text>
+        <text x="430" y="42" fill="#f2f2f2">resume</text>
+        <text x="555" y="42" fill="#a3a3a3">save</text>
+        <text x="360" y="88" fill="#8a8a8a">GPU off — hours or days</text>
+        <text x="165" y="88" fill="#8a8a8a">training</text>
+        <text x="555" y="88" fill="#8a8a8a">training</text>
+      </g>
+    </svg>
+    <div class="cap">Detach frees the GPU; resume continues bit for bit. This is how a run survives monthly credit limits.</div>
+  </div>
+
+  <h2>Three ways to train</h2>
+  <ul>
+    <li><b>Supervised</b> — you hold the answers: dataset rows of prompt +
+        completion. The loss measures distance from your answers. Simplest, and the
+        right first thing to try.</li>
+    <li><b>Reinforcement (RL)</b> — no answers, only a score. The model produces
+        outputs, the <span class="pill">reward</span> box scores them, and training
+        nudges the model toward higher scores. Use it when "good" is easy to check
+        but hard to write out (passes the tests, ends with a period, matches the
+        schema).</li>
+    <li><b>RLHF</b> — reinforcement learning from <i>human</i> feedback: people
+        compare outputs (this one better than that one), and training treats those
+        comparisons as the reward. For when "good" is a matter of judgment.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ weights -->
+<section class="card" id="weights">
+  <h1>Weights &amp; saving</h1>
+  <ul>
+    <li><b>A design is not its weights.</b> The JSON describes the boxes and their
+        wiring. Weights live separately: in a model file you loaded
+        (<code>.gguf</code>, safetensors), or created by training (checkpoints).</li>
+    <li><b>Namespaces bind them.</b> Each weighted box's <code>t</code> says which
+        file and tensor its weights come from. Boxes sharing a namespace share one
+        in-memory copy — that's how a 27B model fits sensibly.</li>
+    <li><b>Frozen boxes may run quantized</b> (smaller, faster, numerically exact
+        to the reference). <b>Boxes you train stay full precision</b> (f16/f32) —
+        training on quantized weights is how models quietly rot.</li>
+    <li><b>Checkpoints are portable.</b> A checkpoint directory holds the trainable
+        weights, the optimizer state, and metadata; copy it between machines and
+        resume works there.</li>
+  </ul>
+  <p class="dim">
+    The backend's HTTP API — runs, models, tasks — is documented in
+    <code>docs/backend.md</code> in the repository.
+  </p>
+</section>
+
+<!-- ============================================================ first -->
+<section class="card" id="first">
+  <h1>Your first session</h1>
+  <p>Fifteen minutes, no GPU required (CPU is fine for this one):</p>
+  <ol>
+    <li><b>Meet the canvas</b> — open <span class="pill grey">Palette ▾</span>,
+        drag out an <span class="pill">input</span>, an
+        <span class="pill">embed</span> (vocab 64, dout 16), a
+        <span class="pill">layer</span> (din 16, dout 64), and a
+        <span class="pill">detokenize</span>. Wire them in that order.</li>
+    <li><b>Teach it a tiny language</b> — add a
+        <span class="pill">dataset</span> box with a handful of rows, e.g.
+        <code>a	c</code> / <code>b	d</code> / <code>c	d</code>
+        (type them as <code>prompt&lt;TAB&gt;completion</code>), with
+        <code>vocab</code> <code>abcd</code>.</li>
+    <li><b>Add the loss</b> — a <span class="pill">loss</span> box; wire the
+        layer's output into dot one, the dataset into dot two.</li>
+    <li><b>Watch it learn</b> — add a <span class="pill">train</span> box, then
+        start a training task with the design (ask the agent box:
+        "train the current design"). The curve on the train box should fall within
+        seconds — the network has learned that <code>a</code> is followed by
+        <code>c</code>.</li>
+    <li><b>Detach, then resume</b> — press <b>detach</b>; watch it checkpoint and
+        stop. Press <b>resume</b>; the step counter continues where it stopped.</li>
+  </ol>
+  <div class="try">
+    <b>Then go big.</b> Drop a <b>GGUF box</b> on the canvas, load a real model
+    (<span class="dim">click the overwrite twice</span>), connect the backend, and
+    run a prompt. Double-click into the model and find the boxes you now
+    understand: embeds, layers, norms, ops — same vocabulary, billion-scale.
+  </div>
+</section>
+
+</article>
+</div>
+</body>
+</html>
