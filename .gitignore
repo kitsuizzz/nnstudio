@@ -1,0 +1,25 @@
+# nnstudio — what stays out of git
+
+# secrets and machine-local settings
+.env
+.opencode/
+
+# environments and caches
+.venv/
+__pycache__/
+*.pyc
+
+# weights and models (tens of GB, never in git)
+models
+models/
+weights
+weights/
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.bin
+
+# runtime output: task streams and logs
+agents/
+*.log

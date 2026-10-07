@@ -1,0 +1,138 @@
+{
+  "family": "llama",
+  "about": "The Llama-family decoder: RMSNorm, half-split RoPE, GQA (repeat_kv), causal mask, SwiGLU MLP. Verified stage by stage against transformers' eager path.",
+  "match": {"model_type": ["llama"]},
+  "verified": {
+    "transformers": "5.18.0",
+    "date": "2026-10-03",
+    "by": "reverse-model agent",
+    "check": "tests/spec_conformance_test.py llama",
+    "note": "embedding, q/k/v projections, every block output and the logits match the eager library run"
+  },
+  "config": {
+    "d_model": {"keys": ["hidden_size"]},
+    "blocks": {"keys": ["num_hidden_layers"]},
+    "heads": {"keys": ["num_attention_heads"]},
+    "kv_heads": {"keys": ["num_key_value_heads"], "from": "heads"},
+    "head_dim": {"keys": ["head_dim"], "expr": "d_model / heads"},
+    "intermediate": {"keys": ["intermediate_size"]},
+    "vocab": {"keys": ["vocab_size"]},
+    "rope": {"keys": ["rope_theta"], "default": 10000.0},
+    "eps": {"keys": ["rms_norm_eps", "layer_norm_eps"], "default": 1e-5},
+    "act": {"keys": ["hidden_act"], "default": "silu"}
+  },
+  "weights": {
+    "embed": "model.embed_tokens.weight",
+    "final_norm": "model.norm.weight",
+    "head": "lm_head.weight"
+  },
+  "block": {
+    "label": "blk {i} · llama",
+    "nodes": [
+      {"id": "in", "kind": "input", "name": "in", "pos": [0, 0], "dout": "d_model"},
+
+      {"id": "attn_norm", "kind": "norm", "name": "attn_norm", "pos": [240, 0],
+       "norm": "rms", "eps": "eps", "param": "input_layernorm.weight"},
+
+      {"id": "q", "kind": "layer", "name": "q proj", "pos": [480, -160],
+       "din": "d_model", "dout": "heads*head_dim", "param": "self_attn.q_proj.weight"},
+      {"id": "k", "kind": "layer", "name": "k proj", "pos": [480, 0],
+       "din": "d_model", "dout": "kv_heads*head_dim", "param": "self_attn.k_proj.weight"},
+      {"id": "v", "kind": "layer", "name": "v proj", "pos": [480, 160],
+       "din": "d_model", "dout": "kv_heads*head_dim", "param": "self_attn.v_proj.weight"},
+
+      {"id": "q_reshape", "kind": "op", "name": "q heads", "pos": [700, -160],
+       "op": "reshape", "dims": ["-1", "heads", "head_dim"]},
+      {"id": "q_perm", "kind": "op", "name": "q [h]", "pos": [920, -160],
+       "op": "permute", "axes": [1, 0, 2]},
+      {"id": "qn", "kind": "norm", "name": "q norm", "pos": [1140, -160],
+       "norm": "rms", "eps": "eps", "size": "head_dim",
+       "param": "self_attn.q_norm.weight", "optional": true},
+      {"id": "rope_q", "kind": "op", "name": "rope", "pos": [1360, -160],
+       "op": "rope", "theta": "rope"},
+
+      {"id": "k_reshape", "kind": "op", "name": "k heads", "pos": [700, 0],
+       "op": "reshape", "dims": ["-1", "kv_heads", "head_dim"]},
+      {"id": "k_perm", "kind": "op", "name": "k [g]", "pos": [920, 0],
+       "op": "permute", "axes": [1, 0, 2]},
+      {"id": "kn", "kind": "norm", "name": "k norm", "pos": [1140, 0],
+       "norm": "rms", "eps": "eps", "size": "head_dim",
+       "param": "self_attn.k_norm.weight", "optional": true},
+      {"id": "rope_k", "kind": "op", "name": "rope", "pos": [1360, 0],
+       "op": "rope", "theta": "rope"},
+      {"id": "k_rep", "kind": "op", "name": "k repeat", "pos": [1580, 0],
+       "op": "repeat", "repeats": "heads // kv_heads", "dim": 0,
+       "if": "heads != kv_heads"},
+      {"id": "kT", "kind": "op", "name": "k\u1d40", "pos": [1800, 0],
+       "op": "transpose"},
+
+      {"id": "v_reshape", "kind": "op", "name": "v heads", "pos": [700, 160],
+       "op": "reshape", "dims": ["-1", "kv_heads", "head_dim"]},
+      {"id": "v_perm", "kind": "op", "name": "v [g]", "pos": [920, 160],
+       "op": "permute", "axes": [1, 0, 2]},
+      {"id": "v_rep", "kind": "op", "name": "v repeat", "pos": [1140, 160],
+       "op": "repeat", "repeats": "heads // kv_heads", "dim": 0,
+       "if": "heads != kv_heads"},
+
+      {"id": "scores", "kind": "op", "name": "q\u00b7k\u1d40 scores", "pos": [2020, -80],
+       "op": "matmul"},
+      {"id": "scale", "kind": "op", "name": "scale 1/\u221ad", "pos": [2240, -80],
+       "op": "scale", "factor": "1 / (head_dim ** 0.5)"},
+      {"id": "mask", "kind": "op", "name": "causal mask", "pos": [2460, -80],
+       "op": "mask", "mode": "causal"},
+      {"id": "softmax", "kind": "act", "name": "softmax", "pos": [2680, -80],
+       "act": "softmax"},
+      {"id": "attn_v", "kind": "op", "name": "scores\u00b7v", "pos": [2900, -80],
+       "op": "matmul"},
+      {"id": "merge_perm", "kind": "op", "name": "merge [t]", "pos": [3120, -80],
+       "op": "permute", "axes": [1, 0, 2]},
+      {"id": "merge_reshape", "kind": "op", "name": "merge heads", "pos": [3340, -80],
+       "op": "reshape", "dims": ["-1", "heads*head_dim"]},
+      {"id": "out_proj", "kind": "layer", "name": "out proj", "pos": [3560, -80],
+       "din": "heads*head_dim", "dout": "d_model", "param": "self_attn.o_proj.weight"},
+
+      {"id": "add1", "kind": "op", "name": "add", "pos": [3780, -80], "op": "add"},
+      {"id": "ffn_norm", "kind": "norm", "name": "ffn_norm", "pos": [4000, -80],
+       "norm": "rms", "eps": "eps", "param": "post_attention_layernorm.weight"},
+      {"id": "gate", "kind": "layer", "name": "ffn_gate", "pos": [4220, -160],
+       "din": "d_model", "dout": "intermediate", "param": "mlp.gate_proj.weight"},
+      {"id": "up", "kind": "layer", "name": "ffn_up", "pos": [4220, 0],
+       "din": "d_model", "dout": "intermediate", "param": "mlp.up_proj.weight"},
+      {"id": "act", "kind": "act", "name": "ffn_act", "pos": [4440, -160], "act": "act"},
+      {"id": "mul", "kind": "op", "name": "mul", "pos": [4660, -160], "op": "multiply"},
+      {"id": "down", "kind": "layer", "name": "ffn_down", "pos": [4880, -160],
+       "din": "intermediate", "dout": "d_model", "param": "mlp.down_proj.weight"},
+      {"id": "add2", "kind": "op", "name": "add", "pos": [5100, -160], "op": "add"},
+      {"id": "out", "kind": "output", "name": "out", "pos": [5320, -160], "din": "d_model"}
+    ],
+    "edges": [
+      ["in", "attn_norm"],
+      ["attn_norm", "q"], ["attn_norm", "k"], ["attn_norm", "v"],
+
+      ["q", "q_reshape"], ["q_reshape", "q_perm"], ["q_perm", "qn"], ["qn", "rope_q"],
+      ["k", "k_reshape"], ["k_reshape", "k_perm"], ["k_perm", "kn"], ["kn", "rope_k"],
+      ["v", "v_reshape"], ["v_reshape", "v_perm"], ["v_perm", "v_rep"],
+      ["rope_k", "k_rep"], ["k_rep", "kT"],
+
+      ["rope_q", "scores", 0, 0], ["kT", "scores", 0, 1],
+      ["scores", "scale"], ["scale", "mask"], ["mask", "softmax"],
+      ["softmax", "attn_v", 0, 0], ["v_rep", "attn_v", 0, 1],
+      ["attn_v", "merge_perm"], ["merge_perm", "merge_reshape"],
+      ["merge_reshape", "out_proj"],
+
+      ["out_proj", "add1", 0, 0], ["in", "add1", 0, 1],
+      ["add1", "ffn_norm"], ["ffn_norm", "gate"], ["ffn_norm", "up"],
+      ["gate", "act"], ["act", "mul", 0, 0], ["up", "mul", 0, 1], ["mul", "down"],
+      ["down", "add2", 0, 0], ["add1", "add2", 0, 1], ["add2", "out"]
+    ]
+  },
+  "test": {
+    "model_type": "llama",
+    "config": {
+      "vocab_size": 64, "hidden_size": 32, "intermediate_size": 64,
+      "num_hidden_layers": 2, "num_attention_heads": 4, "num_key_value_heads": 2,
+      "max_position_embeddings": 64, "rms_norm_eps": 1e-5, "rope_theta": 10000.0,
+      "tie_word_embeddings": false
+    }
+  }
+}

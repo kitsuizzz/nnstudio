@@ -1,0 +1,1181 @@
+{
+ "family": "qwen3_5",
+ "about": "Qwen3.5's hybrid decoder: a per-layer token mixer that is either full attention (per-head q/k RMSNorm, doubled q_proj split into query + output gate, partial half-split RoPE, GQA, causal mask) or Gated DeltaNet linear attention (causal conv1d, gated delta recurrence, gated RMSNorm), then a zero-centered RMSNorm + SwiGLU MLP. RoPE theta/partial factor live under rope_parameters.",
+ "match": {
+  "model_type": [
+   "qwen3_5",
+   "qwen3_5_text"
+  ]
+ },
+ "verified": {
+  "transformers": "5.18.0",
+  "date": "2026-10-06",
+  "by": "reverse-model agent",
+  "check": "tests/spec_conformance_test.py qwen3_5",
+  "note": "embedding, full-attention q/k/v projections, every block output and the logits match the eager library run (max|diff| <= 3e-08; the full-attention projections are 0.0). The tiny gate config carries both layer types (['full_attention', 'linear_attention']), so the linear_attention branch is exercised too: its causal conv1d + gated delta rule (in_proj_qkv/z/b/a, conv1d, A_log+dt_bias, gated RMSNorm, out_proj) runs in the torch engine and its block output matches. The scan node binds HF's raw `A_log` and is marked `a_log`, so the decay is `-exp(A_log) * softplus(a + dt)`; a GGUF's `ssm_a` (already `-exp(A_log)`) is bound unchanged. This family spec covers the language decoder of a multimodal Qwen3_5ForConditionalGeneration; block params bind both the plain `model.layers.{i}.` and the multimodal `model.language_model.layers.{i}.` prefixes. For Qwen/Qwen3.8-27B the vision tower (model.visual.*, 333 tensors) and the MTP head (mtp.*, 15 tensors) stay unbound; on the NVFP4 variants the quant metadata (*_scale/*_global_scale) and the packed MLP weights stay unbound / bind the weight_packed candidate. Cloudflare/clef is a Qwen3.8-27B finetune whose backbone binds identically under `model.language_model.*` (1184 tensors; 851 bound, audit clean, 1976 boxes); its 333 vision-tower tensors (model.visual.*) and its separate custom joint schema head (joint_head.safetensors, not part of the HF model) stay unbound. simonlehmann/clef-NVFP4 is the llm-compressor mixed-precision quant of Cloudflare/clef sharing that layout: 1920 tensors, 851 bound, 1976 boxes, audit clean. Its MLP layers 0-55 bind the packed `mlp.{gate,up,down}_proj.weight_packed` (u8, two weights/byte), layers 56-63 bind the FP8 `mlp.*.weight` (f8_e4m3), and the full-/linear-attention projections bind their f8_e4m3 `weight`; the `*_scale`/`*_global_scale`/`input_global_scale` quant metadata, the 333 model.visual.* tensors and joint_head.safetensors stay unbound. lm_head binds model-00002 lm_head.weight (bf16, untied)."
+ },
+ "final_norm_zc": true,
+ "config": {
+  "d_model": {
+   "keys": [
+    "hidden_size"
+   ]
+  },
+  "blocks": {
+   "keys": [
+    "num_hidden_layers"
+   ]
+  },
+  "heads": {
+   "keys": [
+    "num_attention_heads"
+   ]
+  },
+  "kv_heads": {
+   "keys": [
+    "num_key_value_heads"
+   ],
+   "from": "heads"
+  },
+  "head_dim": {
+   "keys": [
+    "head_dim"
+   ],
+   "expr": "d_model / heads"
+  },
+  "intermediate": {
+   "keys": [
+    "intermediate_size"
+   ]
+  },
+  "vocab": {
+   "keys": [
+    "vocab_size"
+   ]
+  },
+  "rope": {
+   "keys": [
+    "rope_parameters.rope_theta",
+    "rope_theta"
+   ],
+   "default": 10000000.0
+  },
+  "eps": {
+   "keys": [
+    "rms_norm_eps",
+    "layer_norm_eps"
+   ],
+   "default": 1e-06
+  },
+  "act": {
+   "keys": [
+    "hidden_act"
+   ],
+   "default": "silu"
+  },
+  "partial": {
+   "keys": [
+    "rope_parameters.partial_rotary_factor",
+    "partial_rotary_factor"
+   ],
+   "default": 0.25
+  },
+  "layer_types": {
+   "keys": [
+    "layer_types"
+   ],
+   "default": []
+  },
+  "lin_k_heads": {
+   "keys": [
+    "linear_num_key_heads"
+   ],
+   "default": 16
+  },
+  "lin_v_heads": {
+   "keys": [
+    "linear_num_value_heads"
+   ],
+   "default": 32
+  },
+  "lin_k_dim": {
+   "keys": [
+    "linear_key_head_dim"
+   ],
+   "default": 128
+  },
+  "lin_v_dim": {
+   "keys": [
+    "linear_value_head_dim"
+   ],
+   "default": 128
+  },
+  "lin_conv": {
+   "keys": [
+    "linear_conv_kernel_dim"
+   ],
+   "default": 4
+  }
+ },
+ "weights": {
+  "embed": [
+   "model.embed_tokens.weight",
+   "model.language_model.embed_tokens.weight"
+  ],
+  "final_norm": [
+   "model.norm.weight",
+   "model.language_model.norm.weight"
+  ],
+  "head": "lm_head.weight"
+ },
+ "block": {
+  "label": "blk {i} · qwen3_5",
+  "nodes": [
+   {
+    "id": "in",
+    "kind": "input",
+    "name": "in",
+    "pos": [
+     0,
+     0
+    ],
+    "dout": "d_model"
+   },
+   {
+    "id": "attn_norm",
+    "kind": "norm",
+    "name": "attn_norm",
+    "pos": [
+     220,
+     0
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "zc": true,
+    "param": "input_layernorm.weight"
+   },
+   {
+    "id": "q",
+    "kind": "layer",
+    "name": "q proj",
+    "pos": [
+     460,
+     -220
+    ],
+    "din": "d_model",
+    "dout": "heads*head_dim*2",
+    "param": "self_attn.q_proj.weight",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "q_reshape",
+    "kind": "op",
+    "name": "q heads [q|gate]",
+    "pos": [
+     680,
+     -220
+    ],
+    "op": "reshape",
+    "dims": [
+     "-1",
+     "heads",
+     "2",
+     "head_dim"
+    ],
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "q_sel",
+    "kind": "op",
+    "name": "query",
+    "pos": [
+     900,
+     -260
+    ],
+    "op": "slice",
+    "axis": 2,
+    "index": 0,
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "g_sel",
+    "kind": "op",
+    "name": "gate",
+    "pos": [
+     900,
+     -120
+    ],
+    "op": "slice",
+    "axis": 2,
+    "index": 1,
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "q_norm",
+    "kind": "norm",
+    "name": "q norm",
+    "pos": [
+     1120,
+     -260
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "zc": true,
+    "size": "head_dim",
+    "param": "self_attn.q_norm.weight",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "q_perm",
+    "kind": "op",
+    "name": "q [h]",
+    "pos": [
+     1340,
+     -260
+    ],
+    "op": "permute",
+    "axes": [
+     1,
+     0,
+     2
+    ],
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "q_rope",
+    "kind": "op",
+    "name": "rope (¼)",
+    "pos": [
+     1560,
+     -260
+    ],
+    "op": "rope",
+    "theta": "rope",
+    "dim": "partial * head_dim",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "k",
+    "kind": "layer",
+    "name": "k proj",
+    "pos": [
+     460,
+     0
+    ],
+    "din": "d_model",
+    "dout": "kv_heads*head_dim",
+    "param": "self_attn.k_proj.weight",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "k_reshape",
+    "kind": "op",
+    "name": "k heads",
+    "pos": [
+     680,
+     0
+    ],
+    "op": "reshape",
+    "dims": [
+     "-1",
+     "kv_heads",
+     "head_dim"
+    ],
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "k_norm",
+    "kind": "norm",
+    "name": "k norm",
+    "pos": [
+     900,
+     0
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "zc": true,
+    "size": "head_dim",
+    "param": "self_attn.k_norm.weight",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "k_perm",
+    "kind": "op",
+    "name": "k [g]",
+    "pos": [
+     1120,
+     0
+    ],
+    "op": "permute",
+    "axes": [
+     1,
+     0,
+     2
+    ],
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "k_rope",
+    "kind": "op",
+    "name": "rope (¼)",
+    "pos": [
+     1340,
+     0
+    ],
+    "op": "rope",
+    "theta": "rope",
+    "dim": "partial * head_dim",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "k_rep",
+    "kind": "op",
+    "name": "k repeat",
+    "pos": [
+     1560,
+     0
+    ],
+    "op": "repeat",
+    "repeats": "heads // kv_heads",
+    "dim": 0,
+    "if": "layer_types[i] == 'full_attention' and heads != kv_heads"
+   },
+   {
+    "id": "kT",
+    "kind": "op",
+    "name": "kᵀ",
+    "pos": [
+     1780,
+     0
+    ],
+    "op": "transpose",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "v",
+    "kind": "layer",
+    "name": "v proj",
+    "pos": [
+     460,
+     200
+    ],
+    "din": "d_model",
+    "dout": "kv_heads*head_dim",
+    "param": "self_attn.v_proj.weight",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "v_reshape",
+    "kind": "op",
+    "name": "v heads",
+    "pos": [
+     680,
+     200
+    ],
+    "op": "reshape",
+    "dims": [
+     "-1",
+     "kv_heads",
+     "head_dim"
+    ],
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "v_perm",
+    "kind": "op",
+    "name": "v [g]",
+    "pos": [
+     900,
+     200
+    ],
+    "op": "permute",
+    "axes": [
+     1,
+     0,
+     2
+    ],
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "v_rep",
+    "kind": "op",
+    "name": "v repeat",
+    "pos": [
+     1120,
+     200
+    ],
+    "op": "repeat",
+    "repeats": "heads // kv_heads",
+    "dim": 0,
+    "if": "layer_types[i] == 'full_attention' and heads != kv_heads"
+   },
+   {
+    "id": "scores",
+    "kind": "op",
+    "name": "q·kᵀ scores",
+    "pos": [
+     2000,
+     -80
+    ],
+    "op": "matmul",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "scale",
+    "kind": "op",
+    "name": "scale 1/√d",
+    "pos": [
+     2220,
+     -80
+    ],
+    "op": "scale",
+    "factor": "1 / (head_dim ** 0.5)",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "mask",
+    "kind": "op",
+    "name": "causal mask",
+    "pos": [
+     2440,
+     -80
+    ],
+    "op": "mask",
+    "mode": "causal",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "softmax",
+    "kind": "act",
+    "name": "softmax",
+    "pos": [
+     2660,
+     -80
+    ],
+    "act": "softmax",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "attn_v",
+    "kind": "op",
+    "name": "scores·v",
+    "pos": [
+     2880,
+     -80
+    ],
+    "op": "matmul",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "merge_perm",
+    "kind": "op",
+    "name": "merge [t]",
+    "pos": [
+     3100,
+     -80
+    ],
+    "op": "permute",
+    "axes": [
+     1,
+     0,
+     2
+    ],
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "merge_reshape",
+    "kind": "op",
+    "name": "merge heads",
+    "pos": [
+     3320,
+     -80
+    ],
+    "op": "reshape",
+    "dims": [
+     "-1",
+     "heads*head_dim"
+    ],
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "g_reshape",
+    "kind": "op",
+    "name": "gate heads",
+    "pos": [
+     3320,
+     -320
+    ],
+    "op": "reshape",
+    "dims": [
+     "-1",
+     "heads*head_dim"
+    ],
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "g_sig",
+    "kind": "act",
+    "name": "sigmoid",
+    "pos": [
+     3540,
+     -320
+    ],
+    "act": "sigmoid",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "g_mul",
+    "kind": "op",
+    "name": "× gate",
+    "pos": [
+     3760,
+     -80
+    ],
+    "op": "multiply",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "out_proj",
+    "kind": "layer",
+    "name": "out proj",
+    "pos": [
+     3980,
+     -80
+    ],
+    "din": "heads*head_dim",
+    "dout": "d_model",
+    "param": "self_attn.o_proj.weight",
+    "if": "layer_types[i] == 'full_attention'"
+   },
+   {
+    "id": "lin_qkv",
+    "kind": "layer",
+    "name": "in_proj_qkv",
+    "pos": [
+     460,
+     420
+    ],
+    "din": "d_model",
+    "dout": "lin_k_heads*lin_k_dim*2 + lin_v_heads*lin_v_dim",
+    "param": "linear_attn.in_proj_qkv.weight",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_qkv_t",
+    "kind": "op",
+    "name": "transpose",
+    "pos": [
+     680,
+     420
+    ],
+    "op": "transpose",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_conv",
+    "kind": "op",
+    "name": "causal conv1d",
+    "pos": [
+     900,
+     420
+    ],
+    "op": "conv1d",
+    "param": "linear_attn.conv1d.weight",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_conv_t",
+    "kind": "op",
+    "name": "transpose",
+    "pos": [
+     1120,
+     420
+    ],
+    "op": "transpose",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_z",
+    "kind": "layer",
+    "name": "in_proj_z",
+    "pos": [
+     680,
+     620
+    ],
+    "din": "d_model",
+    "dout": "lin_v_heads*lin_v_dim",
+    "param": "linear_attn.in_proj_z.weight",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_b",
+    "kind": "layer",
+    "name": "in_proj_b",
+    "pos": [
+     680,
+     760
+    ],
+    "din": "d_model",
+    "dout": "lin_v_heads",
+    "param": "linear_attn.in_proj_b.weight",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_a",
+    "kind": "layer",
+    "name": "in_proj_a",
+    "pos": [
+     680,
+     900
+    ],
+    "din": "d_model",
+    "dout": "lin_v_heads",
+    "param": "linear_attn.in_proj_a.weight",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_scan",
+    "kind": "op",
+    "name": "gated delta rule",
+    "pos": [
+     1400,
+     560
+    ],
+    "op": "scan",
+    "a_log": true,
+    "params": [
+     "linear_attn.A_log",
+     "linear_attn.dt_bias"
+    ],
+    "k_heads": "lin_k_heads",
+    "k_dim": "lin_k_dim",
+    "heads": "lin_v_heads",
+    "head_dim": "lin_v_dim",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_norm",
+    "kind": "norm",
+    "name": "gated norm",
+    "pos": [
+     1620,
+     560
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "size": "lin_v_dim",
+    "param": "linear_attn.norm.weight",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_zr",
+    "kind": "op",
+    "name": "z heads",
+    "pos": [
+     1400,
+     760
+    ],
+    "op": "reshape",
+    "dims": [
+     "lin_v_heads",
+     "lin_v_dim"
+    ],
+    "keep": 1,
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_act",
+    "kind": "act",
+    "name": "z gate",
+    "pos": [
+     1560,
+     760
+    ],
+    "act": "silu",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_mul",
+    "kind": "op",
+    "name": "gate",
+    "pos": [
+     1720,
+     620
+    ],
+    "op": "multiply",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_flat",
+    "kind": "op",
+    "name": "flatten heads",
+    "pos": [
+     1840,
+     760
+    ],
+    "op": "reshape",
+    "dims": [
+     "lin_v_heads*lin_v_dim"
+    ],
+    "keep": 1,
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "lin_out",
+    "kind": "layer",
+    "name": "out proj",
+    "pos": [
+     1840,
+     560
+    ],
+    "din": "lin_v_heads*lin_v_dim",
+    "dout": "d_model",
+    "param": "linear_attn.out_proj.weight",
+    "if": "layer_types[i] == 'linear_attention'"
+   },
+   {
+    "id": "zero",
+    "kind": "op",
+    "name": "elided branch → 0",
+    "pos": [
+     3980,
+     400
+    ],
+    "op": "zeros"
+   },
+   {
+    "id": "add1",
+    "kind": "op",
+    "name": "add",
+    "pos": [
+     4200,
+     -80
+    ],
+    "op": "add"
+   },
+   {
+    "id": "ffn_norm",
+    "kind": "norm",
+    "name": "ffn_norm",
+    "pos": [
+     4420,
+     -80
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "zc": true,
+    "param": "post_attention_layernorm.weight"
+   },
+   {
+    "id": "ffn_gate",
+    "kind": "layer",
+    "name": "ffn_gate",
+    "pos": [
+     4640,
+     -180
+    ],
+    "din": "d_model",
+    "dout": "intermediate",
+    "param": [
+     "mlp.gate_proj.weight",
+     "mlp.gate_proj.weight_packed"
+    ]
+   },
+   {
+    "id": "ffn_up",
+    "kind": "layer",
+    "name": "ffn_up",
+    "pos": [
+     4640,
+     20
+    ],
+    "din": "d_model",
+    "dout": "intermediate",
+    "param": [
+     "mlp.up_proj.weight",
+     "mlp.up_proj.weight_packed"
+    ]
+   },
+   {
+    "id": "ffn_act",
+    "kind": "act",
+    "name": "ffn_act",
+    "pos": [
+     4860,
+     -180
+    ],
+    "act": "act"
+   },
+   {
+    "id": "ffn_mul",
+    "kind": "op",
+    "name": "mul",
+    "pos": [
+     5080,
+     -180
+    ],
+    "op": "multiply"
+   },
+   {
+    "id": "ffn_down",
+    "kind": "layer",
+    "name": "ffn_down",
+    "pos": [
+     5300,
+     -180
+    ],
+    "din": "intermediate",
+    "dout": "d_model",
+    "param": [
+     "mlp.down_proj.weight",
+     "mlp.down_proj.weight_packed"
+    ]
+   },
+   {
+    "id": "add2",
+    "kind": "op",
+    "name": "add",
+    "pos": [
+     5520,
+     -180
+    ],
+    "op": "add"
+   },
+   {
+    "id": "out",
+    "kind": "output",
+    "name": "out",
+    "pos": [
+     5740,
+     -180
+    ],
+    "din": "d_model"
+   }
+  ],
+  "edges": [
+   [
+    "in",
+    "attn_norm"
+   ],
+   [
+    "in",
+    "zero"
+   ],
+   [
+    "in",
+    "add1",
+    0,
+    0
+   ],
+   [
+    "attn_norm",
+    "q"
+   ],
+   [
+    "q",
+    "q_reshape"
+   ],
+   [
+    "q_reshape",
+    "q_sel"
+   ],
+   [
+    "q_reshape",
+    "g_sel"
+   ],
+   [
+    "q_sel",
+    "q_norm"
+   ],
+   [
+    "q_norm",
+    "q_perm"
+   ],
+   [
+    "q_perm",
+    "q_rope"
+   ],
+   [
+    "attn_norm",
+    "k"
+   ],
+   [
+    "k",
+    "k_reshape"
+   ],
+   [
+    "k_reshape",
+    "k_norm"
+   ],
+   [
+    "k_norm",
+    "k_perm"
+   ],
+   [
+    "k_perm",
+    "k_rope"
+   ],
+   [
+    "k_rope",
+    "k_rep"
+   ],
+   [
+    "k_rep",
+    "kT"
+   ],
+   [
+    "attn_norm",
+    "v"
+   ],
+   [
+    "v",
+    "v_reshape"
+   ],
+   [
+    "v_reshape",
+    "v_perm"
+   ],
+   [
+    "v_perm",
+    "v_rep"
+   ],
+   [
+    "q_rope",
+    "scores",
+    0,
+    0
+   ],
+   [
+    "kT",
+    "scores",
+    0,
+    1
+   ],
+   [
+    "scores",
+    "scale"
+   ],
+   [
+    "scale",
+    "mask"
+   ],
+   [
+    "mask",
+    "softmax"
+   ],
+   [
+    "softmax",
+    "attn_v",
+    0,
+    0
+   ],
+   [
+    "v_rep",
+    "attn_v",
+    0,
+    1
+   ],
+   [
+    "attn_v",
+    "merge_perm"
+   ],
+   [
+    "merge_perm",
+    "merge_reshape"
+   ],
+   [
+    "g_sel",
+    "g_reshape"
+   ],
+   [
+    "g_reshape",
+    "g_sig"
+   ],
+   [
+    "merge_reshape",
+    "g_mul",
+    0,
+    0
+   ],
+   [
+    "g_sig",
+    "g_mul",
+    0,
+    1
+   ],
+   [
+    "g_mul",
+    "out_proj"
+   ],
+   [
+    "out_proj",
+    "add1",
+    0,
+    1
+   ],
+   [
+    "attn_norm",
+    "lin_qkv"
+   ],
+   [
+    "lin_qkv",
+    "lin_qkv_t"
+   ],
+   [
+    "lin_qkv_t",
+    "lin_conv"
+   ],
+   [
+    "lin_conv",
+    "lin_conv_t"
+   ],
+   [
+    "attn_norm",
+    "lin_z"
+   ],
+   [
+    "attn_norm",
+    "lin_b"
+   ],
+   [
+    "attn_norm",
+    "lin_a"
+   ],
+   [
+    "lin_conv_t",
+    "lin_scan",
+    0,
+    0
+   ],
+   [
+    "lin_b",
+    "lin_scan",
+    0,
+    1
+   ],
+   [
+    "lin_a",
+    "lin_scan",
+    0,
+    2
+   ],
+   [
+    "lin_scan",
+    "lin_norm"
+   ],
+   [
+    "lin_norm",
+    "lin_mul",
+    0,
+    0
+   ],
+   [
+    "lin_z",
+    "lin_zr"
+   ],
+   [
+    "lin_zr",
+    "lin_act"
+   ],
+   [
+    "lin_act",
+    "lin_mul",
+    0,
+    1
+   ],
+   [
+    "lin_mul",
+    "lin_flat"
+   ],
+   [
+    "lin_flat",
+    "lin_out"
+   ],
+   [
+    "lin_out",
+    "add1",
+    0,
+    2
+   ],
+   [
+    "zero",
+    "add1",
+    0,
+    3
+   ],
+   [
+    "add1",
+    "ffn_norm"
+   ],
+   [
+    "ffn_norm",
+    "ffn_gate"
+   ],
+   [
+    "ffn_norm",
+    "ffn_up"
+   ],
+   [
+    "ffn_gate",
+    "ffn_act"
+   ],
+   [
+    "ffn_act",
+    "ffn_mul",
+    0,
+    0
+   ],
+   [
+    "ffn_up",
+    "ffn_mul",
+    0,
+    1
+   ],
+   [
+    "ffn_mul",
+    "ffn_down"
+   ],
+   [
+    "add1",
+    "add2",
+    0,
+    0
+   ],
+   [
+    "ffn_down",
+    "add2",
+    0,
+    1
+   ],
+   [
+    "add2",
+    "out"
+   ]
+  ]
+ },
+ "test": {
+  "model_type": "qwen3_5_text",
+  "config": {
+   "vocab_size": 64,
+   "hidden_size": 32,
+   "intermediate_size": 64,
+   "num_hidden_layers": 2,
+   "num_attention_heads": 4,
+   "num_key_value_heads": 2,
+   "head_dim": 8,
+   "max_position_embeddings": 64,
+   "rms_norm_eps": 1e-06,
+   "layer_types": [
+    "full_attention",
+    "linear_attention"
+   ],
+   "linear_num_key_heads": 2,
+   "linear_key_head_dim": 8,
+   "linear_num_value_heads": 4,
+   "linear_value_head_dim": 8,
+   "linear_conv_kernel_dim": 4,
+   "rope_theta": 10000.0,
+   "tie_word_embeddings": false
+  }
+ }
+}

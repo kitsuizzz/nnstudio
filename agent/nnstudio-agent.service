@@ -1,0 +1,16 @@
+[Unit]
+Description=nnstudio agent — this pc as the canvas's backend (torch runner)
+After=network-online.target
+Wants=nnstudio.service
+
+[Service]
+# edit the paths below for the machine this runs on
+Type=simple
+WorkingDirectory=%h/nnstudio
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/nnstudio/.venv/bin/python %h/nnstudio/agent/nnstudio_agent.py --app 127.0.0.1:8125
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

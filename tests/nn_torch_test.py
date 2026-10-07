@@ -1,0 +1,1518 @@
+#!/usr/bin/env python3
+"""The torch runner's tests, all offline and on synthetic designs:
+
+  * a known-weight forward pass matches the arithmetic, every box captured
+  * a nested box's ports, paths and values
+  * the ops' shapes (reshape, transpose, concat, matmul, rope)
+  * char-level training: the loss falls, samples draw, the checkpoint lands
+  * frozen boxes are counted and skipped, through nested levels
+  * the generate loop samples valid ids; integer feeds reach a layer
+  * a GGUF tensor loads dequantized and oriented [out, in]
+  * describe() counts trainable vs frozen; an unwired box is refused by name
+"""
+import json
+import os
+import sys
+import tempfile
+
+import numpy as np
+import torch
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent"))
+import nn_torch as T  # noqa: E402
+
+FAILED = []
+
+
+def check(name, fn):
+    try:
+        fn()
+        print("  ok   " + name)
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        FAILED.append(name)
+        print("  FAIL " + name + " — " + str(e))
+        if os.environ.get("STACK"):
+            traceback.print_exc()
+
+
+def n(kind, nid, x=0, y=0, **kw):
+    out = {"id": nid, "kind": kind, "name": kw.pop("name", nid), "x": x, "y": y}
+    out.update(kw)
+    return out
+
+
+def edge(a, b, fp=0, tp=0):
+    return {"from": a, "to": b, "fromPort": fp, "toPort": tp}
+
+
+def canvas(nodes, edges):
+    return {"type": "canvas", "version": 1, "nodes": nodes, "edges": edges}
+
+
+print("nn_torch: a known-weight forward pass")
+
+KNOWN = [[1.0, -2.0, 0.5, 0.0], [0.0, 1.0, 1.0, -1.0], [-1.0, 0.0, 2.0, 1.0]]
+
+
+def forward_known():
+    c = canvas([
+        n("input", "i", dout=4),
+        n("layer", "l", din=4, dout=3),
+        n("act", "a", act="relu"),
+        n("output", "o", din=3),
+    ], [edge("i", "l"), edge("l", "a"), edge("a", "o")])
+    g = T.compile_canvas(c)
+    with torch.no_grad():
+        g.boxes["l"].w.copy_(torch.tensor(KNOWN))
+    x = torch.tensor([1.0, 1.0, 1.0, 1.0])
+    got = g(feeds={"i": x})["o"].tolist()
+    want = [max(0.0, sum(r[j] * float(x[j]) for j in range(4))) for r in KNOWN]
+    assert all(abs(a - b) < 1e-5 for a, b in zip(got, want)), (got, want)
+    res = T.run(c, {"i": [1.0, 1.0, 1.0, 1.0]}, input_id="i", output_id="o")
+    assert set(res["values"]) == {"i", "l", "a", "o"}, res["values"].keys()
+    assert res["values"]["o"]["shape"] == [3]
+    assert res["values"]["a"]["min"] >= 0, "relu keeps the minimum at 0"
+
+
+check("known weights, every box captured", forward_known)
+
+
+def nested_forward():
+    inner = {"type": "nested", "version": 1,
+             "nodes": [n("input", "ni", dout=2), n("layer", "nl", din=2, dout=2),
+                       n("output", "no", din=2)],
+             "edges": [edge("ni", "nl"), edge("nl", "no")]}
+    c = canvas([
+        n("input", "i", dout=2),
+        n("custom", "c", inner=inner),
+        n("output", "o", din=2),
+    ], [edge("i", "c"), edge("c", "o")])
+    g = T.compile_canvas(c)
+    with torch.no_grad():
+        g.boxes["c"].inner.boxes["nl"].w.copy_(torch.tensor([[1.0, 1.0], [0.0, 1.0]]))
+    vals = g(feeds={"i": torch.tensor([3.0, 4.0])})
+    got = vals["o"].tolist()                       # x @ W^T = [7, 4]
+    assert abs(got[0] - 7.0) < 1e-5 and abs(got[1] - 4.0) < 1e-5, got
+    paths = g.collect()
+    assert "c/ni" in paths and "c/nl" in paths and "c/no" in paths, sorted(paths)
+    assert "c" in paths, "the nested box carries its own output value"
+    res = T.run(c, {"i": [3.0, 4.0]}, input_id="i", output_id="o")
+    assert res["values"]["c/no"]["shape"] == [2]
+
+
+check("nested ports, paths and values", nested_forward)
+
+
+def ops_shapes():
+    c = canvas([
+        n("input", "i", dout=8),
+        n("op", "r", op="reshape", dims="4x2"),
+        n("op", "t", op="transpose"),
+        n("input", "k", dout=12),
+        n("op", "k2", op="reshape", dims="4x3"),
+        n("op", "mm", op="matmul"),
+        n("input", "p", dout=3),
+        n("input", "q", dout=5),
+        n("op", "cc", op="concat"),
+        n("input", "g", dout=8),
+        n("op", "rp2", op="reshape", dims="2x4"),
+        n("op", "rp", op="rope"),
+        n("output", "o", din=8),
+    ], [edge("i", "r"), edge("r", "t"), edge("k", "k2"),
+        edge("t", "mm", 0, 0), edge("k2", "mm", 0, 1),
+        edge("p", "cc", 0, 0), edge("q", "cc", 0, 1),
+        edge("g", "rp2"), edge("rp2", "rp"), edge("rp", "o")])
+    feeds = {"i": [1, 2, 3, 4, 5, 6, 7, 8], "k": list(range(12)),
+             "p": [1, 2, 3], "q": [4, 5, 6, 7, 8], "g": list(range(8))}
+    v = T.run(c, feeds)["values"]
+    assert v["r"]["shape"] == [4, 2], v["r"]
+    assert v["t"]["shape"] == [2, 4], v["t"]
+    assert v["k2"]["shape"] == [4, 3], v["k2"]
+    assert v["mm"]["shape"] == [2, 3], v["mm"]
+    assert v["cc"]["shape"] == [8], v["cc"]
+    assert v["rp"]["shape"] == [2, 4], v["rp"]
+    peek = v["rp"]["peek"]
+    assert peek[:4] == [0.0, 1.0, 2.0, 3.0], peek          # position 0 untouched
+    assert any(abs(a - b) > 0.1 for a, b in zip(peek[4:], [4, 5, 6, 7])), peek
+    c["nodes"][1]["dims"] = "3x3"                          # 8 values ≠ 9
+    try:
+        T.run(c, feeds)
+        raise AssertionError("no error for a bad reshape")
+    except T.CanvasError as e:
+        assert e.box == "r", e
+
+
+check("op shapes (reshape, transpose, concat, matmul, rope)", ops_shapes)
+
+
+def training_works():
+    text = "the quick brown fox jumps over the lazy dog. " * 40
+    vocab = sorted(set(text))
+    V = len(vocab)
+    c = canvas([
+        n("input", "tok", name="tokens", dout=1),
+        n("embed", "emb", vocab=V, din=1, dout=8),
+        n("layer", "l1", din=8, dout=16),
+        n("act", "act1", act="silu"),
+        n("layer", "l2", din=16, dout=V),
+        n("output", "logits", name="logits", din=V),
+    ], [edge("tok", "emb"), edge("emb", "l1"), edge("l1", "act1"),
+        edge("act1", "l2"), edge("l2", "logits")])
+    seen = []
+    cfg = {"ctx": 8, "batch": 8, "steps": 60, "lr": 0.01, "seed": 3,
+           "eval_every": 0, "sample_every": 20, "sample_len": 24, "optimizer": "adamw"}
+    with tempfile.TemporaryDirectory() as d:
+        ckpt = os.path.join(d, "ckpt.pt")
+        res = T.train(c, text, "tok", "logits", cfg, device="cpu",
+                      progress=lambda **kw: seen.append(kw), checkpoint_path=ckpt)
+        assert res["loss"] < seen[1]["loss"], (res["loss"], seen[1]["loss"])
+        assert res["samples"] and isinstance(res["samples"][-1]["text"], str)
+        assert os.path.isfile(ckpt)
+        blob = torch.load(ckpt, weights_only=False)
+        assert blob["vocab"] == vocab and "state_dict" in blob
+    assert res["trainable_params"] > 0
+    assert any(k.get("trainable_params") for k in seen if k.get("trainable_params"))
+
+
+check("char-level training: loss falls, samples, checkpoint", training_works)
+
+
+def frozen_skipped():
+    text = "abcdefg abcdefg abcdefg abcdefg abcdefg"
+    V = len(set(text))
+    c = canvas([
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=V, din=1, dout=8),
+        n("layer", "l1", din=8, dout=8, frozen=True),
+        n("act", "act1", act="silu"),
+        n("layer", "l2", din=8, dout=V),
+        n("output", "logits", din=V),
+    ], [edge("tok", "emb"), edge("emb", "l1"), edge("l1", "act1"),
+        edge("act1", "l2"), edge("l2", "logits")])
+    d = T.describe(c)
+    frozen, total = 8 * 8, V * 8 + 8 * 8 + 8 * V
+    assert d["counts"]["params"] == total, (d["counts"], total)
+    assert d["counts"]["frozen"] == frozen and d["counts"]["trainable"] == total - frozen
+    with tempfile.TemporaryDirectory() as tmp:
+        tr = T.Trainer(c, text, "tok", "logits",
+                       {"ctx": 4, "batch": 4, "steps": 3, "lr": 0.01,
+                        "eval_every": 0, "sample_every": 0})
+        assert tr.trainable_params == total - frozen, (tr.trainable_params, total - frozen)
+        assert not tr.graph.boxes["l1"].w.requires_grad
+        assert tr.graph.boxes["l2"].w.requires_grad
+        tr.save(os.path.join(tmp, "x.pt"))
+
+
+check("freeze is read through and skipped", frozen_skipped)
+
+
+def generate_samples():
+    V = 6
+    c = canvas([
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=V, din=1, dout=4),
+        n("layer", "l", din=4, dout=V),
+        n("output", "logits", din=V),
+    ], [edge("tok", "emb"), edge("emb", "l"), edge("l", "logits")])
+    steps = []
+    res = T.run(c, {"tok": [2]}, generate=5, input_id="tok", output_id="logits",
+                temperature=0.9, sample_seed=7, on_step=steps.append)
+    assert len(res["generated"]) == 5 and all(0 <= i < V for i in res["generated"])
+    assert steps == [0, 1, 2, 3, 4, 5], \
+        "one step per forward pass — prompt then each token: %r" % (steps,)
+
+
+check("generate samples valid ids", generate_samples)
+
+
+def text_pipeline_generates():
+    """A tokenizer -> model -> de-tokenizer design generates through the same
+    loop: the ids the tokenizer made of its text grow, and the finished text
+    lands on the last forward."""
+    import nn_tokenizers as nn_hf
+    repo = "unsloth/Qwen3.8-27B-NVFP4"
+    if not os.path.isfile(nn_hf.tokenizer_path(repo, download=False)):
+        print("  skip text generation (no cached tokenizer for %s)" % repo)
+        return
+    c = canvas([
+        n("tokenize", "tokz", repo=repo, text="The capital of France is"),
+        n("embed", "emb", vocab=248320, din=1, dout=8),
+        n("layer", "fc", din=8, dout=16),
+        n("detokenize", "detok", repo=repo),
+        n("output", "logits", din=16),
+    ], [edge("tokz", "emb"), edge("emb", "fc"), edge("fc", "logits"),
+        edge("tokz", "detok")])
+    res = T.run(c, {}, generate=1, input_id="tokz", output_id="logits", sample_seed=1)
+    assert len(res["generated"]) == 1 and 0 <= res["generated"][0] < 16, res["generated"]
+    text = res["texts"].get("detok", "")
+    assert text.startswith("The capital of France is"), repr(text)
+    assert len(text) > len("The capital of France is"), \
+        "the finished text carries the sampled token too: %r" % text
+    assert res["values"]["logits"]["shape"] == [6, 16], \
+        "the last forward runs the prompt plus the token it made: %s" % res["values"]["logits"]
+
+
+check("a text pipeline generates: the tokenizer's ids grow, the text lands",
+      text_pipeline_generates)
+
+
+def generate_needs_ids():
+    """Asked to generate from something that is no token ids, the run says so
+    by name — it never grows a mystery tensor."""
+    c = canvas([
+        n("input", "i", dout=1),
+        n("embed", "emb", vocab=16, din=1, dout=4),
+        n("output", "logits", din=4),
+    ], [edge("i", "emb"), edge("emb", "logits")])
+    try:
+        T.run(c, {"i": [1.5]}, generate=1, input_id="i", output_id="logits")
+    except T.CanvasError as e:
+        assert "token ids" in str(e), str(e)
+        return
+    raise AssertionError("generating from non-ids should refuse clearly")
+
+
+check("generate refuses a feed that is not token ids", generate_needs_ids)
+
+
+def greedy_at_zero():
+    """Temperature 0 is greedy — the loop and the sample box take the argmax."""
+    row = torch.tensor([0.1, 3.0, 0.2])
+    assert T._pick_one(row, 0, 0, 1.0, None) == 1, "the generate loop is greedy"
+    node = {"id": "s", "kind": "sample", "temperature": 0, "sample_seed": 1}
+    assert T.sample_one(row, node).tolist() == [1], "the sample box is greedy"
+
+
+check("temperature 0 picks the most likely id", greedy_at_zero)
+
+
+def agent_boxes_run_no_maths():
+    """An agent box is a view of an agent's task: a design that carries one
+    still runs, and the box holds no values."""
+    c = canvas([
+        n("input", "i", dout=2),
+        {"id": "ag", "kind": "agent", "name": "agent", "x": 120, "y": 0},
+        n("layer", "l", din=2, dout=2),
+        n("output", "o", din=2),
+    ], [edge("i", "l"), edge("l", "o")])
+    res = T.run(c, {"i": [1.0, 2.0]})
+    assert res["values"]["o"]["shape"] == [2], res["values"]
+    assert "ag" not in res["values"], res["values"].keys()
+
+
+check("an agent box rides along inertly \u2014 the design still runs",
+      agent_boxes_run_no_maths)
+
+
+def integer_inputs_work():
+    c = canvas([
+        n("input", "i", dout=1),
+        n("layer", "l", din=1, dout=2),
+        n("output", "o", din=2),
+    ], [edge("i", "l"), edge("l", "o")])
+    res = T.run(c, {"i": [1]})                 # no decimals: arrives as int64
+    assert res["values"]["o"]["shape"] == [2], res["values"]["o"]
+
+
+check("an integer input feeds a layer", integer_inputs_work)
+
+
+def zero_centered_norm_and_residual_add():
+    c = canvas([
+        n("input", "x", dout=4),
+        n("input", "r", dout=4),
+        n("norm", "pn", dout=4),
+        n("norm", "zn", dout=4, zc=True),
+        n("op", "z", op="zeros"),
+        n("op", "add", op="add"),
+        n("output", "o", din=4),
+    ], [edge("x", "pn"), edge("x", "zn"), edge("x", "z", 0, 0),
+       edge("pn", "add", 0, 0), edge("zn", "add", 0, 1),
+       edge("r", "add", 0, 2), edge("z", "add", 0, 3),
+       edge("add", "o")])
+    x = [2.0, -1.0, 0.0, 4.0]
+    m = (sum(v * v for v in x) / len(x)) ** 0.5       # rms over the mean
+    g = T.compile_canvas(c)
+    with torch.no_grad():
+        g.boxes["pn"].w.fill_(0.0)          # plain norm, zero weight -> zeros
+        g.boxes["zn"].w.fill_(0.0)          # zero-centered, zero delta -> identity
+    vals = g(feeds={"x": torch.tensor(x),
+                    "r": torch.tensor([1.0, 1.0, 1.0, 1.0])})
+    want = [v / m + 1.0 for v in x]         # 0 + x/m + 1 + 0
+    assert all(abs(a - b) < 1e-6 for a, b in zip(vals["o"].tolist(), want)), vals["o"].tolist()
+    with torch.no_grad():
+        g.boxes["zn"].w.fill_(2.0)          # (1 + 2) * x / rms
+    vals = g(feeds={"x": torch.tensor(x),
+                    "r": torch.tensor([0.0, 0.0, 0.0, 0.0])})
+    want = [3.0 * v / m for v in x]
+    assert all(abs(a - b) < 1e-6 for a, b in zip(vals["o"].tolist(), want)), vals["o"].tolist()
+
+
+check("a zero-centered norm is the identity at zero; add sums its feeds", zero_centered_norm_and_residual_add)
+
+
+def gguf_tensor_loads():
+    from gguf import GGUFWriter
+    arr = np.arange(6, dtype=np.float32).reshape(3, 2)      # logical [out=3, in=2]
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "tiny.gguf")
+        w = GGUFWriter(path, "llama")
+        w.add_tensor("test.weight", arr)
+        w.write_header_to_file()
+        w.write_kv_data_to_file()
+        w.write_tensors_to_file()
+        w.close()
+        t = T.load_gguf_tensor(path, "test.weight")
+        assert tuple(t.shape) == (3, 2) and torch.allclose(t, torch.from_numpy(arr)), t
+        c = canvas([
+            n("input", "i", dout=2),
+            n("layer", "l", din=2, dout=3, t="test.weight"),
+            n("output", "o", din=3),
+        ], [edge("i", "l"), edge("l", "o")])
+        g = T.compile_canvas(c, gguf_file=path)
+        assert torch.allclose(g.boxes["l"].w, torch.from_numpy(arr))
+        assert abs(float(g.boxes["l"].w.detach()[0, 0]) - 0.0) < 1e-6
+
+
+check("GGUF tensor: dequantized and oriented [out, in]", gguf_tensor_loads)
+
+
+def per_box_dtype_halves_the_weights():
+    c = canvas([
+        n("input", "i", dout=4),
+        n("layer", "l", din=4, dout=3, dtype="f16"),
+        n("output", "o", din=3),
+    ], [edge("i", "l"), edge("l", "o")])
+    g = T.compile_canvas(c)
+    assert g.boxes["l"].w.dtype == torch.float16, g.boxes["l"].w.dtype
+    assert g.weight_report()["bytes"] == 3 * 4 * 2, g.weight_report()
+    res = T.run(c, {"i": [1.0, 2.0, 3.0, 4.0]})
+    assert res["values"]["o"]["shape"] == [3], res["values"]["o"]
+
+    # quantised dtypes land at half once dequantised, declared f32 stays f32,
+    # and the mixed chain still computes (in f32)
+    cq = canvas([
+        n("input", "i", dout=4),
+        n("layer", "q", din=4, dout=2, dtype="q4_k"),
+        n("norm", "rn", norm="rms", size=2, dtype="f32"),
+        n("output", "o", din=2),
+    ], [edge("i", "q"), edge("q", "rn"), edge("rn", "o")])
+    gq = T.compile_canvas(cq)
+    assert gq.boxes["q"].w.dtype == torch.float16, gq.boxes["q"].w.dtype
+    assert gq.boxes["rn"].w.dtype == torch.float32, gq.boxes["rn"].w.dtype
+    res = T.run(cq, {"i": [1.0, 2.0, 3.0, 4.0]})
+    assert res["values"]["o"]["shape"] == [2], res["values"]["o"]
+
+    ce = canvas([
+        n("input", "ids", dout=4),
+        n("embed", "e", vocab=5, dout=2, dtype="q6_k"),
+        n("output", "eo", din=2),
+    ], [edge("ids", "e"), edge("e", "eo")])
+    ge = T.compile_canvas(ce)
+    assert ge.boxes["e"].w.dtype == torch.float16, ge.boxes["e"].w.dtype
+    res = T.run(ce, {"ids": [1.0, 2.0, 3.0, 4.0]})
+    assert res["values"]["eo"]["shape"] == [4, 2], res["values"]["eo"]
+
+
+check("per-box dtype: f32 / f16 / quantised storage, f32 maths",
+      per_box_dtype_halves_the_weights)
+
+
+def estimate_reads_the_design():
+    inner = {"type": "nested", "version": 1,
+             "nodes": [n("input", "ni", dout=4),
+                       n("layer", "nl", din=4, dout=3, dtype="f16"),
+                       n("output", "no", din=3)],
+             "edges": [edge("ni", "nl"), edge("nl", "no")]}
+    c = canvas([
+        n("input", "i", dout=4),
+        n("layer", "q", din=4, dout=1024, dtype="q4_k"),        # quantised -> f16
+        n("custom", "m", inner=inner),                          # nested, inherits
+        n("layer", "sys", din=3, dout=2, place="system"),
+        n("output", "o", din=2),
+    ], [])
+    est = T.estimate_canvas(c, "cuda")
+    assert est["gpu_bytes"] == 4096 * 2 + 12 * 2, est
+    assert est["system_bytes"] == 6 * 4, est                    # no dtype -> f32
+    assert est["bytes"] == est["gpu_bytes"] + est["system_bytes"], est
+    assert est["boxes"] == 3, est
+    est2 = T.estimate_canvas(c, "cpu")
+    assert est2["system_bytes"] == est2["bytes"] and est2["gpu_bytes"] == 0, est2
+    assert T.estimate_node({"kind": "layer", "din": 3, "dout": 4, "dtype": "f32"}) == (12, 48)
+    assert T.estimate_node({"kind": "norm"}) == (0, 0)
+
+
+check("estimate: what a compile would hold, per device, from the JSON alone",
+      estimate_reads_the_design)
+
+
+def estimate_understands_packed_gguf():
+    # a bound gguf layer: packed bytes on a gpu with a native kernel, f16 off it
+    node = {"kind": "layer", "din": 4096, "dout": 4096, "dtype": "q4_k",
+            "wbytes": 10_000_000, "params": 16_777_216}
+    assert T.estimate_node(node, native=True) == (16_777_216, 10_000_000)
+    assert T.estimate_node(node, native=False) == (16_777_216, 16_777_216 * 2)
+    # a type with no kernel still dequantizes, wherever it runs
+    assert T.estimate_node(dict(node, dtype="iq1_s"), native=True)[1] == 16_777_216 * 2
+    # packed safetensors storage keeps its byte count without the flag
+    assert T.estimate_node({"kind": "layer", "din": 4096, "dout": 4096,
+                            "dtype": "u8", "wbytes": 1_000_000,
+                            "params": 8_000_000})[1] == 1_000_000
+    # embedding tables stay packed with kernels, f16 without
+    assert T.estimate_node({"kind": "embed", "vocab": 1000, "dout": 64,
+                            "dtype": "q6_k", "wbytes": 100_000}, native=True)[1] == 100_000
+    assert T.estimate_node({"kind": "embed", "vocab": 1000, "dout": 64,
+                            "dtype": "q6_k", "wbytes": 100_000}, native=False)[1] == 128_000
+    # a gpu-placed canvas counts the packed bytes on a machine with kernels
+    canvas = {"nodes": [{"id": "l", "kind": "layer", "din": 4096, "dout": 4096,
+                         "dtype": "q4_k", "wbytes": 10_000_000, "place": "gpu"}]}
+    est = T.estimate_canvas(canvas, "cuda")
+    native_here = T.nn_quant is not None and T.nn_quant.gpu_ok()
+    assert est["gpu_bytes"] == (10_000_000 if native_here else 4096 * 4096 * 2), est
+
+
+check("estimate: native gguf storage counts packed, not a phantom f16 (50.9 GB bug)",
+      estimate_understands_packed_gguf)
+
+
+# ---------------------------------------------------------------- hf models
+def hf_box_takes_text_gives_the_next_token():
+    # a stubbed model in the engine's cache: the plumbing, without a download
+    import types
+
+    class Tok:
+        def __call__(self, text, return_tensors=None):
+            return types.SimpleNamespace(input_ids=torch.tensor([[1, 2, 3]]))
+
+        def decode(self, ids, skip_special_tokens=False):
+            return {3: "!", 4: "?"}.get(int(ids[0]), "?")
+
+    class Model:
+        def __call__(self, ids):
+            logits = torch.zeros(1, ids.shape[1], 8)
+            logits[0, -1, 3] = 9.0                 # always pick id 3 -> "!"
+            return types.SimpleNamespace(logits=logits)
+
+    T._HF_MODELS[("test/tiny", "float32", "cpu")] = (Tok(), Model())
+    try:
+        c = canvas([n("hf", "h", repo="test/tiny")], [])
+        res = T.run(c, {"h": "Once upon a"})       # the prompt arrives as a feed
+        assert res["texts"]["h"] == "!", res
+        c2 = canvas([n("hf", "h2", repo="test/tiny", text="its own prompt")], [])
+        res2 = T.run(c2, {})                       # …or the box's own text
+        assert res2["texts"]["h2"] == "!", res2
+        assert T.hf_loaded("test/tiny") and not T.hf_loaded("nope/nope")
+        try:
+            T.run(canvas([n("hf", "h3")], []), {})
+            raise AssertionError("a repo-less hf box must refuse")
+        except T.CanvasError as e:
+            assert "repo" in str(e), e
+            assert e.nid == "h3" or e.box == "h3", (e.box, e.nid)
+    finally:
+        T._HF_MODELS.clear()
+
+
+check("an hf box: text (or ids) in, the next token's text out",
+      hf_box_takes_text_gives_the_next_token)
+
+
+def hf_file_reference_binds():
+    # an `hf:<repo>/<file>` reference: the engine fetches it once — the file is
+    # already in the cache here, so nothing touches the network
+    cache = os.path.join(os.path.expanduser("~"), ".cache", "nnstudio", "hf",
+                         "test", "tiny")
+    os.makedirs(cache, exist_ok=True)
+    path = os.path.join(cache, "model.safetensors")
+    T.write_safetensors(path, {"q.weight": torch.ones(3, 2)})
+    try:
+        w = T.load_weight_tensor("hf:test/tiny/model.safetensors", "q.weight")
+        assert tuple(w.shape) == (3, 2), w
+        c = canvas([n("input", "i", dout=2),
+                    n("layer", "l", din=2, dout=3, dtype="f16",
+                      file="hf:test/tiny/model.safetensors", t="q.weight"),
+                    n("output", "o", din=3)],
+                   [edge("i", "l"), edge("l", "o")])
+        res = T.run(c, {"i": [1.0, 2.0]})
+        assert res["values"]["o"]["shape"] == [3], res["values"]["o"]
+        assert abs(res["values"]["o"]["mean"] - 3.0) < 1e-6, res["values"]["o"]
+        assert T.compile_canvas(c).boxes["l"].w.dtype == torch.float16, "stored at f16"
+    finally:
+        os.remove(path)
+
+
+check("an hf: file reference binds like any safetensors — cache first",
+      hf_file_reference_binds)
+
+
+def head_ops_do_attention_shapes():
+    # permute: a general axis order, not just the last two
+    c = canvas([n("input", "i", dout=6, input_mode="python",
+                  input_code="[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]"),
+                n("op", "p", op="permute", axes="1,0"),
+                n("output", "o", din=6)], [edge("i", "p"), edge("p", "o")])
+    res = T.run(c, {})
+    o = res["values"]["o"]
+    assert o["shape"] == [3, 2] and o["peek"] == [1.0, 4.0, 2.0, 5.0, 3.0, 6.0], o
+
+    # reshape with a -1: the sequence dim is inferred
+    c = canvas([n("input", "i", dout=6, input_mode="python",
+                  input_code="[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]"),
+                n("op", "r", op="reshape", dims="-1 2"),
+                n("output", "o", din=6)], [edge("i", "r"), edge("r", "o")])
+    o = T.run(c, {})["values"]["o"]
+    assert o["shape"] == [3, 2] and o["peek"] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], o
+
+    # repeat: kv heads -> q heads (GQA), interleaved
+    c = canvas([n("input", "i", dout=2, input_mode="python", input_code="[[1.0, 2.0]]"),
+                n("op", "g", op="repeat", repeats="3", dim="0"),
+                n("output", "o", din=2)], [edge("i", "g"), edge("g", "o")])
+    o = T.run(c, {})["values"]["o"]
+    assert o["shape"] == [3, 2] and o["peek"] == [1.0, 2.0, 1.0, 2.0, 1.0, 2.0], o
+
+    # mask: a causal (optionally windowed) -inf fill, then softmax
+    eye = "[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]"
+    c = canvas([n("input", "i", dout=3, input_mode="python", input_code=eye),
+                n("op", "m", op="mask", mode="causal"),
+                n("act", "sm", act="softmax"),
+                n("output", "o", din=3)], [edge("i", "m"), edge("m", "sm"), edge("sm", "o")])
+    o = T.run(c, {})["values"]["o"]
+    assert o["shape"] == [3, 3], o
+    row0 = o["peek"][:3]
+    assert abs(row0[0] - 1.0) < 1e-6 and abs(row0[1]) < 1e-6 and abs(row0[2]) < 1e-6, row0
+    # a window of 1: a position sees only itself
+    c2 = canvas([n("input", "i", dout=3, input_mode="python", input_code=eye),
+                 n("op", "m", op="mask", mode="causal", window=1),
+                 n("act", "sm", act="softmax"),
+                 n("output", "o", din=3)],
+                [edge("i", "m"), edge("m", "sm"), edge("sm", "o")])
+    o2 = T.run(c2, {})["values"]["o"]
+    assert abs(o2["peek"][3] - 0.0) < 1e-6 and abs(o2["peek"][4] - 1.0) < 1e-6, \
+        "row 1 sees only itself: %r" % o2["peek"]
+
+    # scale by a factor: 1/sqrt(head_dim), no weight tensor needed
+    c = canvas([n("input", "i", dout=2, input_mode="python", input_code="[[2.0, 4.0]]"),
+                n("op", "s", op="scale", factor="0.5"),
+                n("output", "o", din=2)], [edge("i", "s"), edge("s", "o")])
+    o = T.run(c, {})["values"]["o"]
+    assert o["peek"] == [1.0, 2.0], o
+
+
+check("the head ops: permute, reshape -1, repeat, mask, scale factor",
+      head_ops_do_attention_shapes)
+
+
+def slice_zeros_and_partial_rope():
+    # slice by index removes one dimension; by start/stop it keeps a range
+    c = canvas([n("input", "i", dout=6, input_mode="python",
+                  input_code="[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]"),
+                n("op", "s1", op="slice", axis=1, index=1),
+                n("output", "o1", din=2)], [edge("i", "s1"), edge("s1", "o1")])
+    o1 = T.run(c, {})["values"]["o1"]
+    assert o1["shape"] == [2] and o1["peek"] == [2.0, 5.0], o1
+
+    c = canvas([n("input", "i", dout=6, input_mode="python",
+                  input_code="[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]"),
+                n("op", "s2", op="slice", axis=1, start=0, stop=2),
+                n("output", "o2", din=4)], [edge("i", "s2"), edge("s2", "o2")])
+    o2 = T.run(c, {})["values"]["o2"]
+    assert o2["shape"] == [2, 2] and o2["peek"] == [1.0, 2.0, 4.0, 5.0], o2
+
+    # zeros: the same shape, all zero (an elided branch's contribution)
+    c = canvas([n("input", "i", dout=3, input_mode="python", input_code="[1.0, 2.0, 3.0]"),
+                n("op", "z", op="zeros"),
+                n("output", "o", din=3)], [edge("i", "z"), edge("z", "o")])
+    o = T.run(c, {})["values"]["o"]
+    assert o["shape"] == [3] and o["peek"] == [0.0, 0.0, 0.0], o
+
+    # partial rope: only the leading `dim` rotates, the tail is untouched
+    import math
+    c = canvas([n("input", "i", dout=8, input_mode="python",
+                  input_code="[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]"),
+                n("op", "r", op="rope", theta=10000.0, dim=2),
+                n("output", "o", din=8)], [edge("i", "r"), edge("r", "o")])
+    o = T.run(c, {})["values"]["o"]
+    assert o["shape"] == [2, 4], o
+    # `peek` is rounded to 4 decimals by tensor_stats, so compare there
+    assert o["peek"][4] == round(-math.sin(1.0), 4), o["peek"]
+    assert o["peek"][5] == round(math.cos(1.0), 4), o["peek"]
+    assert o["peek"][6:] == [0.0, 0.0], o["peek"]
+
+
+check("slice, zeros and partial rope (Qwen3_5's non-rotated tail)",
+      slice_zeros_and_partial_rope)
+
+
+def stats_are_strict_json():
+    """A stat that is NaN/±inf must leave the JSON valid: the browser refuses
+    Infinity, and -Infinity dies at the minus sign."""
+    st = T.tensor_stats(torch.tensor([float("-inf"), float("nan"), 2.5,
+                                      float("inf")]))
+    assert st["mean"] is None and st["min"] is None and st["max"] is None, st
+    assert st["peek"][0] is None and st["peek"][1] is None, st["peek"]
+    assert st["peek"][2] == 2.5 and st["peek"][3] is None, st["peek"]
+    text = json.dumps(st, allow_nan=False)     # strict: raises on any survivor
+    assert "Infinity" not in text and "NaN" not in text, text
+    st2 = T.tensor_stats(torch.tensor([1.0, 2.0, 3.0]))   # finite: exactly as before
+    assert st2["mean"] == 2.0 and st2["max"] == 3.0 and st2["peek"] == [1.0, 2.0, 3.0], st2
+
+
+check("tensor stats stay strictly JSON, inf and nan included",
+      stats_are_strict_json)
+
+
+def zero_centered_norm_and_residual_add():
+    # a zero-centered rms norm: the stored weight is the *delta* from one, so
+    # a zero weight is the identity (Qwen3_5's norms); the plain norm scales
+    c = canvas([n("input", "i", dout=4, input_mode="python",
+                   input_code="[1.0, 1.0, 2.0, 2.0]"),
+                 n("norm", "z", norm="rms", eps=1e-6, size=4, zc=True,
+                   input_mode="python", input_code="[0.0, 0.0, 0.0, 0.0]"),
+                 n("output", "o", din=4)], [edge("i", "z"), edge("z", "o")])
+    g = T.compile_canvas(c, device="cpu")
+    with torch.no_grad():
+        g.boxes["z"].w.zero_()                  # a zero weight is the identity
+    o = T.run_graph(g, c, {})["values"]["o"]
+    # x * rsqrt(mean(x^2) + eps) * (1 + 0)
+    import math
+    s = 1.0 / math.sqrt(2.5 + 1e-6)
+    assert o["peek"] == [round(s, 4), round(s, 4), round(2 * s, 4), round(2 * s, 4)], o
+    # and the same norm without zc scales by the weight: a zero weight is zero
+    c2 = canvas([n("input", "i", dout=4, input_mode="python",
+                    input_code="[1.0, 1.0, 2.0, 2.0]"),
+                  n("norm", "p", norm="rms", eps=1e-6, size=4),
+                  n("output", "o", din=4)], [edge("i", "p"), edge("p", "o")])
+    g2 = T.compile_canvas(c2, device="cpu")
+    with torch.no_grad():
+        g2.boxes["p"].w.zero_()
+    o2 = T.run_graph(g2, c2, {})["values"]["o"]
+    assert o2["peek"] == [0.0, 0.0, 0.0, 0.0], o2
+
+    # a residual add takes every input as an addend: the live branch's output
+    # plus the zero its elided twin would have contributed
+    c = canvas([n("input", "a", dout=2, input_mode="python", input_code="[1.0, 2.0]"),
+                 n("input", "b", dout=2, input_mode="python", input_code="[3.0, 4.0]"),
+                 n("op", "z", op="zeros"),
+                 n("op", "sum", op="add"),
+                 n("output", "o", din=2)],
+                [edge("a", "sum", 0, 0), edge("b", "sum", 0, 1), edge("a", "z"),
+                 edge("z", "sum", 0, 2), edge("sum", "o")])
+    o = T.run(c, {})["values"]["o"]
+    assert o["shape"] == [2] and o["peek"] == [4.0, 6.0], o
+
+
+check("zero-centered norms; a residual add sums its elided branch's zero",
+      zero_centered_norm_and_residual_add)
+
+
+def missing_wire_says_so():
+    c = canvas([
+        n("input", "i", dout=2),
+        n("layer", "l", din=2, dout=2),
+        n("output", "o", din=2),
+    ], [edge("l", "o")])
+    try:
+        T.run(c, {"i": [1.0, 2.0]})
+        raise AssertionError("a layer with no input dot ran anyway")
+    except T.CanvasError as e:
+        assert e.box == "l", e
+
+
+check("an unwired box is refused, by name", missing_wire_says_so)
+
+
+# ---------------------------------------------------------------- weight files
+def safetensors_roundtrip():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "w.safetensors")
+        t = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+        b = torch.ones(3, dtype=torch.float16)
+        T.write_safetensors(path, {"l.weight": t, "l.bias": b}, metadata={"app": "test"})
+        meta = T.file_tensors(path)
+        assert meta["kind"] == "safetensors" and meta["count"] == 2, meta
+        by = {x["name"]: x for x in meta["tensors"]}
+        assert by["l.weight"]["shape"] == [3, 4] and by["l.weight"]["dtype"] == "F32", by
+        assert by["l.bias"]["dtype"] == "F16" and by["l.bias"]["shape"] == [3], by
+        assert meta["metadata"] == {"app": "test"}, meta["metadata"]
+        assert torch.allclose(T.load_weight_tensor(path, "l.weight"), t)
+        assert T.load_weight_tensor(path, "l.bias").dtype == torch.float32, \
+            "weights arrive in the engine's working dtype"
+        # a canvas bound to it runs on those weights, not the random init
+        c = canvas([
+            n("input", "i", dout=4),
+            n("layer", "l", din=4, dout=3, file=path, t="l.weight,l.bias"),
+            n("output", "o", din=3),
+        ], [edge("i", "l"), edge("l", "o")])
+        g = T.compile_canvas(c, device="cpu")
+        assert torch.allclose(g.boxes["l"].w, t), "the bound weight is the real one"
+        assert torch.allclose(g.boxes["l"].bias, b.float()), "…and its bias"
+        res = T.run_graph(g, c, {"i": [1, 2, 3, 4]})
+        want = t @ torch.tensor([1.0, 2, 3, 4]) + b.float()
+        got = torch.tensor(res["values"]["o"]["peek"][:3])
+        assert torch.allclose(got, want, atol=1e-4), (got, want)
+
+
+check("safetensors: metadata, load, and a run on real weights", safetensors_roundtrip)
+
+
+def pt_roundtrip():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "w.pt")
+        t = torch.randn(5, 2)
+        torch.save({"l.weight": t, "step": 3, "opt": {"lr": 0.1}}, path)
+        meta = T.file_tensors(path)
+        assert meta["kind"] == "pt", meta
+        assert [x["name"] for x in meta["tensors"]] == ["l.weight"], meta
+        assert meta["tensors"][0]["shape"] == [5, 2], meta
+        assert torch.allclose(T.load_weight_tensor(path, "l.weight"), t)
+        path2 = os.path.join(d, "w2.pt")
+        torch.save({"state_dict": {"a.weight": t}}, path2)
+        assert torch.allclose(T.load_weight_tensor(path2, "a.weight"), t), "state dict"
+
+
+check("pt: metadata and load (state dicts included)", pt_roundtrip)
+
+
+def export_roundtrip():
+    c = canvas([
+        n("input", "i", dout=4),
+        n("layer", "l", name="fc 1", din=4, dout=3),
+        n("embed", "e", name="embedding 1", vocab=7, din=1, dout=2),
+        n("output", "o", din=3),
+    ], [edge("i", "l"), edge("l", "o")])
+    import json as _json
+    for fmt in ("safetensors", "pt"):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "out." + fmt)
+            man = T.export_weights(c, path, fmt)
+            assert man["keys"] == 2, man
+            keys = {m["key"]: m for m in man["tensors"]}
+            assert "fc 1.weight" in keys and "embedding 1.weight" in keys, keys
+            assert keys["fc 1.weight"]["shape"] == [3, 4], keys
+            meta = T.file_tensors(path)
+            assert {x["name"] for x in meta["tensors"]} == set(keys), meta
+            # point the boxes at their keys and run: exactly the exported values
+            c2 = _json.loads(_json.dumps(c))
+            for node in c2["nodes"]:
+                mine = [m["key"] for m in man["tensors"] if m["id"] == node["id"]]
+                if mine:
+                    node["file"] = path
+                    node["t"] = ",".join(mine)
+            g1 = T.compile_canvas(c, device="cpu")
+            g2 = T.compile_canvas(c2, device="cpu")
+            assert torch.allclose(g1.boxes["l"].w, g2.boxes["l"].w), fmt
+            assert torch.allclose(g1.boxes["e"].w, g2.boxes["e"].w), fmt
+
+
+check("export weights: one file, a manifest, and a run from it", export_roundtrip)
+
+
+# ---------------------------------------------------------------- text boxes
+def tokenizer_roundtrip():
+    c = canvas([
+        n("tokenize", "t", vocab="ab c"),
+        n("detokenize", "d", vocab="ab c"),
+    ], [edge("t", "d")])
+    res = T.run(c, {"t": "cab"})
+    assert res["texts"]["d"] == "cab", res["texts"]
+    assert "t" in res["values"], "the ids travel the wire as a tensor"
+    assert T.run(c, {"t": "caxb"})["texts"]["d"] == "cab", "chars outside the vocab are skipped"
+    # a box-level text runs with no feed at all
+    c2 = canvas([
+        n("tokenize", "t", vocab="ab", text="aab"),
+        n("detokenize", "d", vocab="ab"),
+    ], [edge("t", "d")])
+    assert T.run(c2, {})["texts"]["d"] == "aab"
+    try:
+        T.run(canvas([n("tokenize", "t", vocab="ab"), n("detokenize", "d", vocab="ab")],
+                     [edge("t", "d")]), {})
+        raise AssertionError("ran without any text")
+    except T.CanvasError as e:
+        assert e.box == "t", e
+
+
+check("tokenizer -> de-tokenizer: text in, text out", tokenizer_roundtrip)
+
+
+def detokenizer_takes_ids():
+    c = canvas([
+        n("input", "i", dout=3),
+        n("detokenize", "d", vocab="abc", din=3),
+    ], [edge("i", "d")])
+    assert T.run(c, {"i": [2, 0]})["texts"]["d"] == "ca", "ids go in as they are"
+    assert T.run(c, {"i": []})["texts"]["d"] == "", "an empty sequence is empty text"
+    try:                                       # logits are the sample box's job
+        T.run(c, {"i": [0.1, 5.0, 0.2]})
+        raise AssertionError("took logits")
+    except T.CanvasError as e:
+        assert e.box == "d" and "sample" in str(e), e
+    try:
+        T.run(canvas([n("input", "i", dout=2), n("detokenize", "d", din=2)], [edge("i", "d")]),
+              {"i": [0, 1]})
+        raise AssertionError("de-tokenized into nothing")
+    except T.CanvasError as e:
+        assert e.box == "d" and "vocabulary" in str(e), e
+
+
+check("a de-tokenizer: ids only, and it says when the vocab is empty",
+      detokenizer_takes_ids)
+
+
+def sample_picks_one():
+    def pick(seed, temp):
+        c = canvas([
+            n("input", "i", dout=3),
+            n("sample", "s", temperature=temp, sample_seed=seed),
+            n("detokenize", "d", vocab="abc"),
+        ], [edge("i", "s"), edge("s", "d")])
+        out = T.run(c, {"i": [0.0, 0.0, 0.0]})
+        assert out["values"]["s"]["shape"] == [1], out["values"]["s"]
+        return out["texts"]["d"]
+    c = canvas([
+        n("input", "i", dout=3),
+        n("sample", "s", temperature=0),
+        n("detokenize", "d", vocab="abc"),
+    ], [edge("i", "s"), edge("s", "d")])
+    assert T.run(c, {"i": [0.1, 5.0, 0.2]})["texts"]["d"] == "b", "temperature 0 is greedy"
+    assert pick(1, 1.0) == pick(1, 1.0), "the same seed picks the same id"
+    got = {pick(s, 2.0) for s in range(1, 9)}
+    assert len(got) > 1 and got <= set("abc"), got
+    c2 = canvas([
+        n("input", "i", input_mode="python",
+          input_code="[[0.0, 9.0, 0.0], [0.1, 0.2, 8.0]]"),
+        n("sample", "s", temperature=0),
+        n("detokenize", "d", vocab="abc"),
+    ], [edge("i", "s"), edge("s", "d")])
+    res = T.run(c2, {})                        # rows [0,9,0] then [0.1,0.2,8]
+    assert res["texts"]["d"] == "c", "the last position's row decides: " + str(res["texts"])
+    try:
+        T.run(c2, {"i": [0, 1, 2, 3, 4, 5]})
+        raise AssertionError("sampled ids")
+    except T.CanvasError as e:
+        assert e.box == "s" and "logits" in str(e), e
+
+
+check("a sample box: logits in, one id out (greedy, seeded, last position)",
+      sample_picks_one)
+
+
+def input_text_feeds_a_tokenizer():
+    c = canvas([
+        n("input", "i", input_mode="text", text="cab"),
+        n("tokenize", "t", vocab="ab c"),
+        n("detokenize", "d", vocab="ab c"),
+    ], [edge("i", "t"), edge("t", "d")])
+    assert T.run(c, {})["texts"]["d"] == "cab", "the input's own text travels the wire"
+    assert T.run(c, {"i": "bca"})["texts"]["d"] == "bca", "…or what the run typed"
+    c2 = canvas([
+        n("input", "i", input_mode="text", text="cab"),
+        n("tokenize", "t", vocab="ab c", text="aabb"),
+        n("detokenize", "d", vocab="ab c"),
+    ], [edge("i", "t"), edge("t", "d")])
+    assert T.run(c2, {})["texts"]["d"] == "cab", "the wire beats the box's own text"
+    bad = canvas([
+        n("input", "i", dout=2),
+        n("tokenize", "t", vocab="ab"),
+    ], [edge("i", "t")])
+    try:
+        T.run(bad, {"i": [1, 2]})
+        raise AssertionError("tokenized a tensor")
+    except T.CanvasError as e:
+        assert e.box == "t" and "text" in str(e), e
+
+
+check("an input in text mode feeds the tokenizer over the wire",
+      input_text_feeds_a_tokenizer)
+
+
+# ---------------------------------------------------------------- data flow
+def bound_tensors_read_through_nesting():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "w.safetensors")
+        T.write_safetensors(path, {
+            "deep.layer.weight": torch.arange(8, dtype=torch.float32).reshape(4, 2),
+            "deep.norm.weight": torch.ones(4),
+        })
+        innermost = {"type": "nested", "version": 1,
+                     "nodes": [n("input", "ii", dout=2),
+                               n("layer", "deep layer", din=2, dout=4, t="deep.layer.weight"),
+                               n("norm", "deep norm", norm="rms", t="deep.norm.weight"),
+                               n("output", "io", din=4)],
+                     "edges": [edge("ii", "deep layer"), edge("deep layer", "deep norm"),
+                               edge("deep norm", "io")]}
+        middle = {"type": "nested", "version": 1,
+                  "nodes": [n("input", "mi", dout=2),
+                            n("custom", "inner box", inner=innermost),
+                            n("output", "mo", din=4)],
+                  "edges": [edge("mi", "inner box"), edge("inner box", "mo")]}
+        c = canvas([
+            n("input", "i", dout=2),
+            n("custom", "model", inner=middle, file=path),   # the file lives at the top
+            n("output", "o", din=4),
+        ], [edge("i", "model"), edge("model", "o")])
+        g = T.compile_canvas(c, device="cpu")
+        inn = g.boxes["model"].inner.boxes["inner box"].inner
+        assert torch.allclose(inn.boxes["deep layer"].w,
+                              torch.arange(8, dtype=torch.float32).reshape(4, 2)), "layer bound"
+        assert inn.boxes["deep norm"].w is not None and inn.boxes["deep norm"].w.numel() == 4, \
+            "the file reads through two nested levels"
+        res = T.run(c, {"i": [1.0, 2.0]})
+        assert res["values"]["o"]["shape"] == [4], res["values"]["o"]
+
+
+check("a bound file reads through nested boxes, any depth",
+      bound_tensors_read_through_nesting)
+
+
+def progress_reports_the_data_flow():
+    c = canvas([
+        n("input", "i", dout=2),
+        n("layer", "l", din=2, dout=3),
+        n("output", "o", din=3),
+    ], [edge("i", "l"), edge("l", "o")])
+    seen = []
+    T.run(c, {"i": [1.0, 2.0]}, on_node=seen.append)
+    assert seen == ["i", "l", "o"], seen
+    innermost = {"type": "nested", "version": 1,
+                 "nodes": [n("input", "ii", dout=2),
+                           n("layer", "nl", din=2, dout=3),
+                           n("output", "io", din=3)],
+                 "edges": [edge("ii", "nl"), edge("nl", "io")]}
+    c2 = canvas([
+        n("input", "i2", dout=2),
+        n("custom", "c2", inner=innermost),
+        n("output", "o2", din=3),
+    ], [edge("i2", "c2"), edge("c2", "o2")])
+    seen2 = []
+    T.run(c2, {"i2": [1.0, 2.0]}, on_node=seen2.append)
+    assert seen2[0] == "i2" and seen2[-1] == "o2", seen2
+    assert {"c2/ii", "c2/nl", "c2/io"} <= set(seen2), seen2
+    assert seen2.index("c2/nl") < seen2.index("c2"), \
+        "the inside reports first — a glowing block is one that finished"
+
+
+check("a run reports every box as its value lands, nested boxes included",
+      progress_reports_the_data_flow)
+
+
+def hf_tokenizer_from_cache():
+    try:
+        import tokenizers  # noqa: F401
+    except Exception:  # noqa: BLE001
+        print("  skip huggingface tokenizer (pip install tokenizers)")
+        return
+    import json as _json
+    import nn_tokenizers as HT
+    for text, want in (("Qwen/Qwen3-8B", "Qwen/Qwen3-8B"),
+                       ("gpt2", "gpt2"),
+                       ("https://huggingface.co/Qwen/Qwen3-8B", "Qwen/Qwen3-8B"),
+                       ("https://huggingface.co/Qwen/Qwen3-8B/tree/main", "Qwen/Qwen3-8B"),
+                       ("https://huggingface.co/gpt2/resolve/main/tokenizer.json", "gpt2")):
+        assert HT.hf_repo_id(text) == want, (text, HT.hf_repo_id(text))
+    with tempfile.TemporaryDirectory() as d:
+        os.environ["NNSTUDIO_TOKENIZER_CACHE"] = d
+        try:
+            repo_dir = os.path.join(d, "test__tiny")
+            os.makedirs(repo_dir)
+            doc = {"version": "1.0", "truncation": None, "padding": None, "added_tokens": [],
+                   "normalizer": None, "pre_tokenizer": {"type": "Whitespace"},
+                   "post_processor": None, "decoder": None,
+                   "model": {"type": "WordLevel",
+                             "vocab": {"[UNK]": 0, "hello": 1, "world": 2, "cab": 3},
+                             "unk_token": "[UNK]"}}
+            with open(os.path.join(repo_dir, "tokenizer.json"), "w") as f:
+                _json.dump(doc, f)
+            meta = HT.tokenizer_meta("test/tiny")
+            assert meta["model"] == "WordLevel" and meta["tokens"] == 4, meta
+            c = canvas([
+                n("tokenize", "t", repo="test/tiny"),
+                n("detokenize", "d", repo="test/tiny"),
+            ], [edge("t", "d")])
+            res = T.run(c, {"t": "hello world"})
+            assert res["values"]["t"]["shape"] == [2], res["values"]["t"]
+            assert res["texts"]["d"] == "hello world", res["texts"]
+            c2 = canvas([
+                n("input", "i", dout=4),
+                n("sample", "s", temperature=0),
+                n("detokenize", "d", repo="test/tiny"),
+            ], [edge("i", "s"), edge("s", "d")])
+            assert T.run(c2, {"i": [0.0, 1.0, 9.0, 2.0]})["texts"]["d"] == "world", \
+                "greedy sample -> id 2 -> the tokenizer's own vocab"
+        finally:
+            os.environ.pop("NNSTUDIO_TOKENIZER_CACHE", None)
+
+
+check("a huggingface tokenizer: the repo loads from the cache, ids round-trip",
+      hf_tokenizer_from_cache)
+
+
+# ---------------------------------------------------------------- offload
+def offload_clears_the_caches():
+    T._TEXT_TOKENS["probe/tiny"] = object()      # whatever is cached, it goes
+    T._READERS["/probe.gguf"] = (0, object())
+    T.offload()
+    assert T._TEXT_TOKENS == {} and T._READERS == {}, "every cache is empty"
+    c = canvas([n("input", "i", dout=2), n("layer", "l", din=2, dout=2)],
+               [edge("i", "l")])
+    res = T.run(c, {"i": [1.0, 2.0]})
+    assert res["values"]["l"]["shape"] == [2], "the engine still runs after"
+
+
+check("offload: every reader and tokenizer is let go, and the engine still runs",
+      offload_clears_the_caches)
+
+
+# ---------------------------------------------------------------- matrix inputs
+def input_python_expression():
+    c = canvas([
+        n("input", "i", dout=4, input_mode="python", input_code="[1.0, 2.0, 3.0, 4.0]"),
+        n("layer", "l", din=4, dout=3),
+        n("output", "o", din=3),
+    ], [edge("i", "l"), edge("l", "o")])
+    res = T.run(c, {})                           # no feeds: the box defines its own
+    st = res["values"]["i"]
+    assert st["shape"] == [4] and abs(st["mean"] - 2.5) < 1e-6, st
+    g = T.compile_canvas(c, device="cpu")
+    want = g.boxes["l"].w @ torch.tensor([1.0, 2.0, 3.0, 4.0])
+    got = torch.tensor(res["values"]["o"]["peek"][:3])
+    assert torch.allclose(got, want, atol=1e-4), (got, want)
+
+
+check("a python input: one expression, built by the box", input_python_expression)
+
+
+def input_python_statements():
+    c = canvas([
+        n("input", "i", dout=2, input_mode="python", input_code="x = [[1, 2], [3, 4]]"),
+        n("layer", "l", din=2, dout=3),
+        n("output", "o", din=3),
+    ], [edge("i", "l"), edge("l", "o")])
+    res = T.run(c, {})
+    assert res["values"]["i"]["shape"] == [2, 2], res["values"]["i"]
+
+
+check("a python input: statements, the matrix left in x", input_python_statements)
+
+
+def input_random_seeded():
+    node = n("input", "i", dout=3, input_mode="random", input_rows=2)
+    a = T.build_input(node, seed=1)
+    b = T.build_input(node, seed=1)
+    d = T.build_input(node, seed=2)
+    assert tuple(a.shape) == (2, 3), a.shape
+    assert torch.allclose(a, b), "the same seed gives the same matrix"
+    assert not torch.allclose(a, d), "…and another seed does not"
+    c = canvas([node, n("output", "o", din=3)], [edge("i", "o")])
+    res = T.run(c, {})
+    assert res["values"]["i"]["shape"] == [2, 3], res["values"]["i"]
+
+
+check("a random input: rows x size, seeded", input_random_seeded)
+
+
+def input_feed_wins():
+    node = n("input", "i", dout=2, input_mode="python", input_code="[9, 9]")
+    out = T.build_feeds(canvas([node], []), {"i": [1, 1]})
+    assert list(out["i"]) == [1, 1], "what the caller passed wins"
+    out2 = T.build_feeds(canvas([node], []), {})
+    assert list(out2["i"]) == [9, 9], out2
+
+
+check("an explicit feed beats the input's own definition", input_feed_wins)
+
+
+def input_errors_are_named():
+    for node, word in ((n("input", "i", dout=2, input_mode="python", input_code=""),
+                        "no python code"),
+                       (n("input", "i", input_mode="random"), "no shape")):
+        try:
+            T.build_input(node)
+            raise AssertionError("built anyway")
+        except T.CanvasError as e:
+            assert e.box == "i" and word in str(e), e
+
+
+check("input definitions fail by name, with a reason", input_errors_are_named)
+
+
+def errors_carry_their_box_id():
+    c = canvas([
+        n("input", "i", dout=4),
+        n("layer", "l", din=4, dout=2),
+        n("output", "o", din=2),
+    ], [edge("i", "l"), edge("l", "o")])
+    try:                                       # no feed for the input
+        T.run(c, {})
+        raise AssertionError("ran anyway")
+    except T.CanvasError as e:
+        assert e.nid == "i" and e.box == "i", (e.box, e.nid)
+    bad = canvas([
+        n("input", "i2", dout=2),
+        n("tokenize", "t", vocab="ab"),
+    ], [edge("i2", "t")])
+    try:                                       # a tensor on the tokenizer's wire
+        T.run(bad, {"i2": [1.0, 2.0]})
+        raise AssertionError("ran anyway")
+    except T.CanvasError as e:
+        assert e.nid == "t", (e.box, e.nid)
+    innermost = {"type": "nested", "version": 1,
+                 "nodes": [n("norm", "dn", norm="rms")], "edges": []}
+    middle = {"type": "nested", "version": 1,
+              "nodes": [n("custom", "inner", inner=innermost)], "edges": []}
+    deep = canvas([n("custom", "model", inner=middle)], [])
+    try:                                       # compile-time, nested: the innermost box
+        T.compile_canvas(deep, device="cpu")
+        raise AssertionError("compiled anyway")
+    except T.CanvasError as e:
+        assert e.nid == "dn" and e.box == "dn", (e.box, e.nid)
+
+
+check("an error carries the id of the box it is about, any depth",
+      errors_carry_their_box_id)
+
+
+# ---------------------------------------------------------------- placement
+def placement_keeps_boxes_where_told():
+    c = canvas([
+        n("input", "i", dout=4),
+        n("layer", "l", din=4, dout=3, place="system"),
+        n("layer", "l2", din=3, dout=2),
+        n("output", "o", din=2),
+    ], [edge("i", "l"), edge("l", "l2"), edge("l2", "o")])
+    g = T.compile_canvas(c, device="cpu")
+    assert g.boxes["l"].device == "cpu" and g.boxes["l2"].device == "cpu"
+    res = T.run_graph(g, c, {"i": [1, 2, 3, 4]})
+    assert res["values"]["o"]["shape"] == [2], res["values"]["o"]
+    rep = g.weight_report()
+    assert rep["params"] == 4 * 3 + 3 * 2, rep
+    assert rep["bytes"] == rep["params"] * 4, rep          # the engine defaults to f32
+    assert rep["boxes"] == 2, rep
+
+
+check("placement: system-placed boxes sit on the cpu, forward still runs",
+      placement_keeps_boxes_where_told)
+
+
+def placement_reads_through_nested():
+    inner = {"type": "nested", "version": 1,
+             "nodes": [n("input", "ni", dout=4),
+                       n("layer", "nl", din=4, dout=3, place="system"),
+                       n("output", "no", din=3)],
+             "edges": [edge("ni", "nl"), edge("nl", "no")]}
+    c = canvas([
+        n("input", "i", dout=4),
+        n("custom", "c", inner=inner),
+        n("output", "o", din=3),
+    ], [edge("i", "c"), edge("c", "o")])
+    g = T.compile_canvas(c, device="cpu")
+    assert g.boxes["c"].inner.boxes["nl"].place == "system"
+    res = T.run_graph(g, c, {"i": [1, 2, 3, 4]})
+    assert res["values"]["o"]["shape"] == [3], res["values"]["o"]
+    rep = g.weight_report()
+    assert rep["params"] == 12 and rep["boxes"] == 1, rep   # nested weight, counted at its place
+
+
+check("placement reads through nested boxes", placement_reads_through_nested)
+
+
+def placement_splits_devices():
+    if not torch.cuda.is_available():
+        print("  skip placement across gpu/cpu (no cuda here)")
+        return
+    c = canvas([
+        n("input", "i", dout=4),
+        n("layer", "gpu_l", din=4, dout=3),
+        n("layer", "sys_l", din=3, dout=2, place="system"),
+        n("output", "o", din=2),
+    ], [edge("i", "gpu_l"), edge("gpu_l", "sys_l"), edge("sys_l", "o")])
+    g = T.compile_canvas(c, device="cuda")
+    assert g.boxes["gpu_l"].w.device.type == "cuda", g.boxes["gpu_l"].w.device
+    assert g.boxes["sys_l"].w.device.type == "cpu", g.boxes["sys_l"].w.device
+    res = T.run_graph(g, c, {"i": [1, 2, 3, 4]})
+    assert res["values"]["o"]["shape"] == [2], res["values"]["o"]
+    assert res["values"]["o"]["mean"] == res["values"]["o"]["mean"], "no NaN"
+    rep = g.weight_report()
+    assert rep["on_gpu_bytes"] == 4 * 3 * 4, rep           # gpu_l: 12 params, f32
+    assert rep["on_system_bytes"] == 3 * 2 * 4, rep        # sys_l: 6 params, f32
+    assert rep["bytes"] == rep["on_gpu_bytes"] + rep["on_system_bytes"]
+
+
+check("placement splits a graph across gpu and cpu mid-forward", placement_splits_devices)
+
+
+def storage_dtypes_compile_and_run():
+    # every dtype the picker offers: the torch names the engine knows, and a
+    # box built on each — ints and bools store, and f32 maths still runs
+    want = {"f64": torch.float64, "f32": torch.float32, "f16": torch.float16,
+            "bf16": torch.bfloat16, "i64": torch.int64, "i32": torch.int32,
+            "i16": torch.int16, "i8": torch.int8, "u8": torch.uint8,
+            "bool": torch.bool}
+    for name, dt in want.items():
+        assert T._DTYPE_NAMES.get(name) is dt, (name, T._DTYPE_NAMES.get(name))
+        assert T._DTYPE_BYTES.get(name), name
+    for name in ("f8_e4m3", "f8_e5m2"):
+        if name in T._DTYPE_NAMES:
+            assert T._DTYPE_BYTES.get(name) == 1, name
+    for dtype in ("f64", "u8", "i8", "i32"):
+        c = canvas([n("input", "i", dout=4, input_mode="python",
+                      input_code="[1.0, 1.0, 2.0, 2.0]"),
+                    n("layer", "l", din=4, dout=2, dtype=dtype),
+                    n("output", "o", din=2)], [edge("i", "l"), edge("l", "o")])
+        res = T.run(c, {})
+        assert res["values"]["o"]["shape"] == [2], (dtype, res["values"]["o"])
+        assert res["values"]["o"]["mean"] == res["values"]["o"]["mean"], dtype
+    # an integer weight cannot ask for gradients — and does not blow up
+    c = canvas([n("input", "i", dout=2, input_mode="python", input_code="[1.0, 2.0]"),
+                n("layer", "l", din=2, dout=2, dtype="u8"),
+                n("output", "o", din=2)], [edge("i", "l"), edge("l", "o")])
+    g = T.compile_canvas(c)
+    assert g.boxes["l"].w.requires_grad is False, "an int8 weight carries no grad"
+
+
+check("torch storage dtypes: f64, fp8 and the ints compile and run",
+      storage_dtypes_compile_and_run)
+
+
+def quantized_weight_files():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "q.safetensors")
+        # ---- fp8 per-channel: w = fp8 * weight_scale --------------------
+        w = torch.tensor([[0.5, -1.25, 2.0, 0.75, -0.5, 1.0],
+                          [-1.0, 0.25, -0.75, 1.5, 0.125, -2.0]], dtype=torch.float32)
+        scale = torch.tensor([[0.01], [0.02]], dtype=torch.float32)
+        q8 = (w / scale).to(torch.float8_e4m3fn)
+        T.write_safetensors(path, {"a.weight": q8.contiguous(),
+                                   "a.weight_scale": scale,
+                                   "a.bias": torch.zeros(2)})
+        assert T.load_weight_tensor(path, "a.weight", None).dtype == torch.float8_e4m3fn, \
+            "fp8 comes back as stored"
+        x = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        c = canvas([n("input", "i", dout=6, input_mode="python",
+                      input_code="[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]"),
+                    n("layer", "a", din=6, dout=2, t="a.weight", file=path, dtype="f8_e4m3"),
+                    n("output", "o", din=2)], [edge("i", "a"), edge("a", "o")])
+        g = T.compile_canvas(c, device="cpu")
+        assert g.boxes["a"].w_scale is not None, "the fp8 channel scale rides along"
+        got = g(feeds={"i": x})["o"].float()
+        want = (q8.to(torch.float32) * scale) @ x
+        assert torch.allclose(got.reshape(-1), want, atol=1e-3), (got, want)
+
+        # ---- packed NVFP4: low nibble first, per-16 scales, stored divisor
+        codes = torch.tensor([list(range(16)), list(reversed(range(16)))],
+                             dtype=torch.uint8)
+        packed = (codes[:, 0::2] | (codes[:, 1::2] << 4)).to(torch.uint8)
+        lut = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
+                            -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0])
+        bscale = torch.tensor([[0.5], [2.0]], dtype=torch.float32).to(torch.float8_e4m3fn)
+        T.write_safetensors(path, {"b.weight_packed": packed,
+                                   "b.weight_scale": bscale,
+                                   "b.weight_global_scale": torch.tensor([100.0])})
+        x2 = torch.arange(1.0, 17.0).reshape(1, 16)
+        c2 = canvas([n("input", "i", dout=16),
+                     n("layer", "b", din=16, dout=2, t="b.weight_packed",
+                       file=path, dtype="u8"),
+                     n("output", "o", din=2)], [edge("i", "b"), edge("b", "o")])
+        g2 = T.compile_canvas(c2, device="cpu")
+        assert g2.boxes["b"].w_packed and g2.boxes["b"].w_global == 100.0, \
+            "the packed weight, its block scales and the stored divisor are bound"
+        got2 = g2(feeds={"i": x2})["o"].float()
+        w2 = (lut[codes.long()].to(torch.float32)
+              * bscale.to(torch.float32)) / 100.0
+        want2 = w2 @ x2.reshape(-1)
+        assert torch.allclose(got2.reshape(-1), want2, atol=1e-3), (got2, want2)
+
+
+check("quantized weight files: fp8 scales, packed E2M1 with its divisor",
+      quantized_weight_files)
+
+
+def flow_paths_address_each_level():
+    c = canvas([
+        n("input", "i", dout=2),
+        {"id": "m", "kind": "custom", "name": "model", "x": 100, "y": 0,
+         "inner": {"nodes": [n("input", "bi", dout=2),
+                             n("layer", "l", din=2, dout=2),
+                             n("output", "bo", din=2)],
+                   "edges": [edge("bi", "l"), edge("l", "bo")]}},
+        n("output", "o", din=2)], [edge("i", "m"), edge("m", "o")])
+    seq = []
+    res = T.run(c, {"i": [1.0, 2.0]}, on_node=seq.append)
+    assert seq == ["i", "m/bi", "m/l", "m/bo", "m", "o"], \
+        "full paths, and a nested box is marked only when it is done: %r" % seq
+    assert res["values"]["m/l"]["shape"] == [2], res["values"]["m/l"]
+
+
+check("the flow stream carries full paths, nested boxes after their inside",
+      flow_paths_address_each_level)
+
+
+def gemma_primitives():
+    """The three things Gemma 4 needs beyond llama: a tanh-approximate GELU,
+    transformers' *proportional* RoPE (the whole head dim rotates, but only the
+    leading pairs carry a frequency), and a scaled word embedding."""
+    x = torch.tensor([-3.0, -1.0, 0.0, 1.0, 3.0])
+    tanh = T._activate("gelu_pytorch_tanh", x)
+    assert torch.allclose(tanh, torch.nn.functional.gelu(x, approximate="tanh"))
+    assert not torch.allclose(tanh, torch.nn.functional.gelu(x)), \
+        "the tanh approximation is its own activation"
+
+    # proportional rope: denominator is the full head dim, pairs past
+    # int(partial * head_dim / 2) have inv_freq 0 (an identity rotation)
+    d, theta, part = 8, 10000.0, 0.25
+    x = torch.arange(1.0, 1.0 + 2 * d).reshape(2, d)
+    inv = torch.tensor([theta ** (-2.0 * k / d) for k in range(d // 2)])
+    inv[int(part * d // 2):] = 0.0
+    ang = torch.arange(2).float().unsqueeze(1) * inv.unsqueeze(0)
+    cos, sin = ang.cos(), ang.sin()
+    x1, x2 = x[..., :d // 2], x[..., d // 2:]
+    want = torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+    got = T._rope(x, theta, None, part)
+    assert torch.allclose(got, want, atol=1e-6), (got, want)
+    assert torch.allclose(T._rope(x, theta, None, None), want) is False, \
+        "a plain rope over the same width is a different rotation"
+    # the trailing pairs (angles 2,3 here) come back untouched
+    tail = got[:, d // 2 + 2:]
+    assert torch.allclose(tail, x[:, d // 2 + 2:]), tail
+
+    # a scaled embedding: the table times sqrt(d_model)
+    c = canvas([
+        n("input", "i", dout=1),
+        n("embed", "e", vocab=3, din=1, dout=4, embed_scale=2.5),
+        n("output", "o", din=4),
+    ], [edge("i", "e"), edge("e", "o")])
+    g = T.compile_canvas(c, device="cpu")
+    with torch.no_grad():
+        g.boxes["e"].w.copy_(torch.arange(12, dtype=torch.float32).reshape(3, 4))
+    o = T.run_graph(g, c, {"i": [2]})["values"]["o"]
+    assert o["peek"] == [20.0, 22.5, 25.0, 27.5], o
+
+
+check("gemma primitives: tanh gelu, proportional rope, scaled embedding",
+      gemma_primitives)
+
+
+def causal_conv_is_time_major():
+    torch.manual_seed(0)
+    c, k, t = 6, 4, 5
+    w = torch.randn(c, 1, k)
+    x = torch.randn(t, c)
+    b = type("B", (), {})()
+    b.w, b.node, b.name = w, {"act": None}, "conv"
+    y = T._causal_conv1d(b, x)
+    assert tuple(y.shape) == (t, c), y.shape
+    xp = torch.nn.functional.pad(x, (0, 0, k - 1, 0))
+    want = torch.zeros(t, c)
+    for s in range(t):
+        for j in range(k):
+            want[s] += xp[s + j] * w[:, 0, j]
+    want = want * torch.sigmoid(want)            # the short conv is silu
+    assert torch.allclose(y, want, atol=1e-5), (y, want)
+    yb = T._causal_conv1d(b, x.unsqueeze(0))     # a batch rides along
+    assert tuple(yb.shape) == (1, t, c) and torch.allclose(yb[0], y, atol=1e-5)
+    b2 = type("B", (), {})()
+    b2.w, b2.node, b2.name = w, {"act": "silu"}, "conv"
+    ys = T._causal_conv1d(b2, x)
+    assert torch.allclose(ys, want, atol=1e-5), "explicit act ignored"
+
+
+check("conv1d: time-major [T, C], causal over time, act only when set",
+      causal_conv_is_time_major)
+
+
+def gated_delta_rule_matches_reference():
+    """The scan primitive is the gated delta rule. HF checkpoints bind the raw
+    `A_log` (the spec marks it `a_log`, so the decay is
+    `-exp(A_log) * softplus`); a GGUF binds llama.cpp's `ssm_a`, which already
+    holds `-exp(A_log)` and must not be exponentiated again. Both must match
+    the library's recurrent formula (`torch_recurrent_gated_delta_rule`)."""
+    torch.manual_seed(3)
+    B, L = 1, 6
+    nk, dk, nv, dv = 2, 3, 4, 4                  # nv // nk == 2: repeat runs
+    key_dim, value_dim = nk * dk, nv * dv
+    conv = torch.randn(B, L, key_dim * 2 + value_dim)
+    b_in = torch.randn(B, L, nv)
+    a_in = torch.randn(B, L, nv)
+    A_log = torch.randn(nv)
+    dt = torch.randn(nv)
+
+    def reference(decay_scale):
+        q = conv[..., :key_dim].reshape(B, L, nk, dk)
+        k = conv[..., key_dim:2 * key_dim].reshape(B, L, nk, dk)
+        v = conv[..., 2 * key_dim:].reshape(B, L, nv, dv)
+        q = q.repeat_interleave(nv // nk, dim=2)
+        k = k.repeat_interleave(nv // nk, dim=2)
+        q, k, v = (x.transpose(1, 2) for x in (q, k, v))     # [B, heads, T, dim]
+        q = q / (q.pow(2).sum(-1, keepdim=True) + 1e-6).sqrt()
+        k = k / (k.pow(2).sum(-1, keepdim=True) + 1e-6).sqrt()
+        q = q / (dk ** 0.5)
+        g = decay_scale * torch.nn.functional.softplus(a_in + dt)
+        beta = torch.sigmoid(b_in).transpose(1, 2)
+        decay = g.transpose(1, 2).exp()
+        state = torch.zeros(B, nv, dk, dv)
+        out = torch.zeros_like(v)
+        for t in range(L):
+            k_t, q_t, v_t = k[:, :, t], q[:, :, t], v[:, :, t]
+            state = state * decay[:, :, t].unsqueeze(-1).unsqueeze(-1)
+            kv_mem = (state * k_t.unsqueeze(-1)).sum(dim=-2)
+            delta = (v_t - kv_mem) * beta[:, :, t].unsqueeze(-1)
+            state = state + k_t.unsqueeze(-1) * delta.unsqueeze(-2)
+            out[:, :, t] = (state * q_t.unsqueeze(-1)).sum(dim=-2)
+        return out.transpose(1, 2).contiguous()
+
+    def box(w, marked):
+        b = type("B", (), {})()
+        b.name = "scan"
+        b.node = {"op": "scan", "a_log": marked, "k_heads": nk, "k_dim": dk,
+                  "heads": nv, "head_dim": dv}
+        b.w = w
+        b.extras = [dt]
+        return b
+
+    want = reference(-A_log.exp())
+    got = T._gated_delta_rule(box(A_log, True), [conv, b_in, a_in])
+    assert torch.allclose(got, want, atol=1e-5), (got - want).abs().max()
+    got2 = T._gated_delta_rule(box(-A_log.exp(), False), [conv, b_in, a_in])
+    assert torch.allclose(got2, want, atol=1e-5), (got2 - want).abs().max()
+
+
+check("scan: gated delta rule \u2014 raw A_log and GGUF ssm_a agree",
+      gated_delta_rule_matches_reference)
+
+def shared_namespaces_load_one_copy():
+    from gguf import GGUFWriter
+    arr = np.arange(12, dtype=np.float32).reshape(3, 4)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "tiny.gguf")
+        w = GGUFWriter(path, "llama")
+        w.add_tensor("shared.weight", arr)
+        w.write_header_to_file()
+        w.write_kv_data_to_file()
+        w.write_tensors_to_file()
+        w.close()
+
+        def node(nid, t):
+            return n("layer", nid, din=4, dout=3, t=t, dtype="f32")
+
+        ns = path + "::shared.weight"
+        c = canvas([node("a", ns), node("b", ns),
+                    node("c", "shared.weight"),
+                    n("output", "o", din=3)],
+                   [edge("a", "o"), edge("b", "o"), edge("c", "o")])
+        g = T.compile_canvas(c, gguf_file=path)
+        a, b, d3 = g.boxes["a"], g.boxes["b"], g.boxes["c"]
+        assert a.w is b.w, "one namespace: the same Parameter object in both boxes"
+        assert d3.w is a.w, "a plain name and its namespace share the same copy"
+        rep = g.weight_report()
+        assert rep["bytes"] == 12 * 4, "48 bytes of weight, counted once: %r" % rep
+        assert rep["shared"] == 1, rep
+        est = T.estimate_canvas({"nodes": [node("a", ns), node("b", ns),
+                                           node("c", "shared.weight")]}, "cpu")
+        assert est["bytes"] == 48 and est["shared"] == 1, \
+            "the pre-flight counts one copy too: %r" % est
+
+
+check("one namespace, one copy: shared weights load once", shared_namespaces_load_one_copy)
+
+if FAILED:
+    sys.exit(1)
+print("nn_torch_test: all assertions passed")

@@ -1,0 +1,935 @@
+{
+ "family": "gemma4_unified",
+ "about": "Gemma 4's unified language decoder (the text half of the multimodal Gemma4UnifiedForConditionalGeneration): a scaled word embedding (sqrt(d_model)), then per-layer RMSNorm -> attention -> post-attention norm + residual -> pre-FFN RMSNorm -> gelu-tanh gated MLP -> post-FFN norm + residual -> a per-layer scalar. Attention is MHA/GQA with a per-head q/k RMSNorm and a scale-less v RMSNorm; sliding layers use default RoPE (theta 10k) with a causal sliding-window mask, full layers use proportional RoPE (theta 1M, partial factor 0.25) with a plain causal mask and, when attention_k_eq_v, reuse the raw k projection as v.",
+ "match": {
+  "model_type": [
+   "gemma4_unified",
+   "gemma4_unified_text"
+  ]
+ },
+ "verified": {
+  "transformers": "5.18.0",
+  "date": "2026-10-05",
+  "by": "reverse-model agent",
+  "check": "tests/spec_conformance_test.py gemma4_unified",
+  "note": "Embedding (sqrt(d_model)), all per-layer q/k/v projections, every block output and the logits match the eager library run at 0.0 (tol 1e-4). Covers both layer types (sliding: default RoPE + sliding-window causal mask; full: proportional RoPE, partial_rotary_factor 0.25, plain causal mask), the scale-less v RMSNorm, gelu_pytorch_tanh MLP and the per-layer layer_scalar. The repo is google/gemma-4-12B-it, a multimodal Gemma4UnifiedForConditionalGeneration: this family spec draws the language decoder only; the vision/audio embedders (model.embed_vision, model.embed_audio, model.vision_embedder.*, 11 tensors) stay unbound. The repo's text_config has attention_k_eq_v=true, so its 8 full_attention layers carry no v_proj and reuse the raw k projection as value: that branch is drawn and bound (k -> value = k -> v_norm), but the tiny gate config sets attention_k_eq_v=false (the library harness reads self_attn.v_proj on every layer, and a shared-kv layer has no v_proj to read), so the alternative path is not numerically gated here. Repo-only final_logit_softcapping=30.0 is not applied (no top-level post-head node in the spec; absent in the gate config); num_kv_shared_layers=0 and use_double_wide_mlp=false are inactive in this repo and not drawn."
+ },
+ "embed_scale": "d_model ** 0.5",
+ "config": {
+  "d_model": {
+   "keys": [
+    "hidden_size"
+   ]
+  },
+  "blocks": {
+   "keys": [
+    "num_hidden_layers"
+   ]
+  },
+  "heads": {
+   "keys": [
+    "num_attention_heads"
+   ]
+  },
+  "kv_heads": {
+   "keys": [
+    "num_key_value_heads"
+   ],
+   "from": "heads"
+  },
+  "head_dim": {
+   "keys": [
+    "head_dim"
+   ],
+   "expr": "d_model / heads"
+  },
+  "global_head_dim": {
+   "keys": [
+    "global_head_dim",
+    "per_layer_config.1.head_dim"
+   ],
+   "expr": "head_dim"
+  },
+  "global_kv_heads": {
+   "keys": [
+    "num_global_key_value_heads",
+    "per_layer_config.1.num_key_value_heads"
+   ],
+   "expr": "kv_heads"
+  },
+  "intermediate": {
+   "keys": [
+    "intermediate_size"
+   ]
+  },
+  "vocab": {
+   "keys": [
+    "vocab_size"
+   ]
+  },
+  "eps": {
+   "keys": [
+    "rms_norm_eps",
+    "layer_norm_eps"
+   ],
+   "default": 1e-06
+  },
+  "act": {
+   "keys": [
+    "hidden_activation",
+    "hidden_act"
+   ],
+   "default": "gelu_pytorch_tanh"
+  },
+  "rope_sliding": {
+   "keys": [
+    "rope_parameters.sliding_attention.rope_theta",
+    "rope_theta"
+   ],
+   "default": 10000.0
+  },
+  "rope_full": {
+   "keys": [
+    "rope_parameters.full_attention.rope_theta"
+   ],
+   "default": 1000000.0
+  },
+  "partial": {
+   "keys": [
+    "rope_parameters.full_attention.partial_rotary_factor",
+    "partial_rotary_factor"
+   ],
+   "default": 0.25
+  },
+  "sliding_window": {
+   "keys": [
+    "sliding_window"
+   ],
+   "default": 1024
+  },
+  "attention_k_eq_v": {
+   "keys": [
+    "attention_k_eq_v"
+   ],
+   "default": false
+  },
+  "layer_types": {
+   "keys": [
+    "layer_types"
+   ],
+   "default": []
+  }
+ },
+ "weights": {
+  "embed": [
+   "model.language_model.embed_tokens.weight",
+   "model.embed_tokens.weight"
+  ],
+  "final_norm": [
+   "model.language_model.norm.weight",
+   "model.norm.weight"
+  ],
+  "head": "lm_head.weight"
+ },
+ "block": {
+  "label": "blk {i} · gemma4_unified",
+  "nodes": [
+   {
+    "id": "in",
+    "kind": "input",
+    "name": "in",
+    "pos": [
+     0,
+     0
+    ],
+    "dout": "d_model"
+   },
+   {
+    "id": "attn_norm",
+    "kind": "norm",
+    "name": "attn_norm",
+    "pos": [
+     220,
+     0
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "param": "input_layernorm.weight"
+   },
+   {
+    "id": "q",
+    "kind": "layer",
+    "name": "q proj",
+    "pos": [
+     460,
+     -260
+    ],
+    "din": "d_model",
+    "dout": "heads * (head_dim + (global_head_dim - head_dim) * (layer_types[i] == 'full_attention'))",
+    "param": "self_attn.q_proj.weight"
+   },
+   {
+    "id": "q_reshape",
+    "kind": "op",
+    "name": "q heads",
+    "pos": [
+     680,
+     -260
+    ],
+    "op": "reshape",
+    "dims": [
+     "-1",
+     "heads",
+     "head_dim + (global_head_dim - head_dim) * (layer_types[i] == 'full_attention')"
+    ]
+   },
+   {
+    "id": "q_norm",
+    "kind": "norm",
+    "name": "q norm",
+    "pos": [
+     900,
+     -260
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "size": "head_dim + (global_head_dim - head_dim) * (layer_types[i] == 'full_attention')",
+    "param": "self_attn.q_norm.weight"
+   },
+   {
+    "id": "q_perm",
+    "kind": "op",
+    "name": "q [h]",
+    "pos": [
+     1120,
+     -260
+    ],
+    "op": "permute",
+    "axes": [
+     1,
+     0,
+     2
+    ]
+   },
+   {
+    "id": "q_rope",
+    "kind": "op",
+    "name": "rope",
+    "pos": [
+     1340,
+     -260
+    ],
+    "op": "rope",
+    "theta": "rope_sliding + (rope_full - rope_sliding) * (layer_types[i] == 'full_attention')",
+    "partial": "partial * (layer_types[i] == 'full_attention')"
+   },
+   {
+    "id": "k",
+    "kind": "layer",
+    "name": "k proj",
+    "pos": [
+     460,
+     0
+    ],
+    "din": "d_model",
+    "dout": "(kv_heads + (global_kv_heads - kv_heads) * attention_k_eq_v * (layer_types[i] == 'full_attention')) * (head_dim + (global_head_dim - head_dim) * (layer_types[i] == 'full_attention'))",
+    "param": "self_attn.k_proj.weight"
+   },
+   {
+    "id": "k_reshape",
+    "kind": "op",
+    "name": "k heads",
+    "pos": [
+     680,
+     0
+    ],
+    "op": "reshape",
+    "dims": [
+     "-1",
+     "kv_heads + (global_kv_heads - kv_heads) * attention_k_eq_v * (layer_types[i] == 'full_attention')",
+     "head_dim + (global_head_dim - head_dim) * (layer_types[i] == 'full_attention')"
+    ]
+   },
+   {
+    "id": "k_norm",
+    "kind": "norm",
+    "name": "k norm",
+    "pos": [
+     900,
+     0
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "size": "head_dim + (global_head_dim - head_dim) * (layer_types[i] == 'full_attention')",
+    "param": "self_attn.k_norm.weight"
+   },
+   {
+    "id": "k_perm",
+    "kind": "op",
+    "name": "k [g]",
+    "pos": [
+     1120,
+     0
+    ],
+    "op": "permute",
+    "axes": [
+     1,
+     0,
+     2
+    ]
+   },
+   {
+    "id": "k_rope",
+    "kind": "op",
+    "name": "rope",
+    "pos": [
+     1340,
+     0
+    ],
+    "op": "rope",
+    "theta": "rope_sliding + (rope_full - rope_sliding) * (layer_types[i] == 'full_attention')",
+    "partial": "partial * (layer_types[i] == 'full_attention')"
+   },
+   {
+    "id": "k_rep",
+    "kind": "op",
+    "name": "k repeat",
+    "pos": [
+     1560,
+     0
+    ],
+    "op": "repeat",
+    "repeats": "heads // (kv_heads + (global_kv_heads - kv_heads) * attention_k_eq_v * (layer_types[i] == 'full_attention'))",
+    "dim": 0,
+    "if": "heads != (kv_heads + (global_kv_heads - kv_heads) * attention_k_eq_v * (layer_types[i] == 'full_attention'))"
+   },
+   {
+    "id": "kT",
+    "kind": "op",
+    "name": "kᵀ",
+    "pos": [
+     1780,
+     0
+    ],
+    "op": "transpose"
+   },
+   {
+    "id": "v",
+    "kind": "layer",
+    "name": "v proj",
+    "pos": [
+     460,
+     260
+    ],
+    "din": "d_model",
+    "dout": "(kv_heads + (global_kv_heads - kv_heads) * attention_k_eq_v * (layer_types[i] == 'full_attention')) * (head_dim + (global_head_dim - head_dim) * (layer_types[i] == 'full_attention'))",
+    "param": "self_attn.v_proj.weight",
+    "if": "(attention_k_eq_v * (layer_types[i] == 'full_attention')) == 0"
+   },
+   {
+    "id": "k_alt",
+    "kind": "op",
+    "name": "value = k (k_eq_v)",
+    "pos": [
+     680,
+     260
+    ],
+    "op": "scale",
+    "factor": "1",
+    "if": "attention_k_eq_v * (layer_types[i] == 'full_attention')"
+   },
+   {
+    "id": "zero",
+    "kind": "op",
+    "name": "elided value → 0",
+    "pos": [
+     680,
+     420
+    ],
+    "op": "zeros"
+   },
+   {
+    "id": "val_pick",
+    "kind": "op",
+    "name": "value",
+    "pos": [
+     900,
+     260
+    ],
+    "op": "add"
+   },
+   {
+    "id": "v_reshape",
+    "kind": "op",
+    "name": "v heads",
+    "pos": [
+     1120,
+     260
+    ],
+    "op": "reshape",
+    "dims": [
+     "-1",
+     "kv_heads + (global_kv_heads - kv_heads) * attention_k_eq_v * (layer_types[i] == 'full_attention')",
+     "head_dim + (global_head_dim - head_dim) * (layer_types[i] == 'full_attention')"
+    ]
+   },
+   {
+    "id": "v_perm",
+    "kind": "op",
+    "name": "v [g]",
+    "pos": [
+     1340,
+     260
+    ],
+    "op": "permute",
+    "axes": [
+     1,
+     0,
+     2
+    ]
+   },
+   {
+    "id": "v_norm",
+    "kind": "norm",
+    "name": "v norm (no scale)",
+    "pos": [
+     1560,
+     260
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "size": "head_dim + (global_head_dim - head_dim) * (layer_types[i] == 'full_attention')"
+   },
+   {
+    "id": "v_rep",
+    "kind": "op",
+    "name": "v repeat",
+    "pos": [
+     1780,
+     260
+    ],
+    "op": "repeat",
+    "repeats": "heads // (kv_heads + (global_kv_heads - kv_heads) * attention_k_eq_v * (layer_types[i] == 'full_attention'))",
+    "dim": 0,
+    "if": "heads != (kv_heads + (global_kv_heads - kv_heads) * attention_k_eq_v * (layer_types[i] == 'full_attention'))"
+   },
+   {
+    "id": "scores",
+    "kind": "op",
+    "name": "q·kᵀ scores",
+    "pos": [
+     2020,
+     -80
+    ],
+    "op": "matmul"
+   },
+   {
+    "id": "mask",
+    "kind": "op",
+    "name": "causal mask",
+    "pos": [
+     2240,
+     -80
+    ],
+    "op": "mask",
+    "mode": "causal",
+    "window": "sliding_window * (layer_types[i] == 'sliding_attention')"
+   },
+   {
+    "id": "softmax",
+    "kind": "act",
+    "name": "softmax",
+    "pos": [
+     2460,
+     -80
+    ],
+    "act": "softmax"
+   },
+   {
+    "id": "attn_v",
+    "kind": "op",
+    "name": "scores·v",
+    "pos": [
+     2680,
+     -80
+    ],
+    "op": "matmul"
+   },
+   {
+    "id": "merge_perm",
+    "kind": "op",
+    "name": "merge [t]",
+    "pos": [
+     2900,
+     -80
+    ],
+    "op": "permute",
+    "axes": [
+     1,
+     0,
+     2
+    ]
+   },
+   {
+    "id": "merge_reshape",
+    "kind": "op",
+    "name": "merge heads",
+    "pos": [
+     3120,
+     -80
+    ],
+    "op": "reshape",
+    "dims": [
+     "-1",
+     "heads * (head_dim + (global_head_dim - head_dim) * (layer_types[i] == 'full_attention'))"
+    ]
+   },
+   {
+    "id": "out_proj",
+    "kind": "layer",
+    "name": "out proj",
+    "pos": [
+     3340,
+     -80
+    ],
+    "din": "heads * (head_dim + (global_head_dim - head_dim) * (layer_types[i] == 'full_attention'))",
+    "dout": "d_model",
+    "param": "self_attn.o_proj.weight"
+   },
+   {
+    "id": "post_attn_norm",
+    "kind": "norm",
+    "name": "post_attn_norm",
+    "pos": [
+     3560,
+     -80
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "param": "post_attention_layernorm.weight"
+   },
+   {
+    "id": "add1",
+    "kind": "op",
+    "name": "add",
+    "pos": [
+     3780,
+     -80
+    ],
+    "op": "add"
+   },
+   {
+    "id": "pre_ffn_norm",
+    "kind": "norm",
+    "name": "pre_ffn_norm",
+    "pos": [
+     4000,
+     -80
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "param": "pre_feedforward_layernorm.weight"
+   },
+   {
+    "id": "gate",
+    "kind": "layer",
+    "name": "ffn_gate",
+    "pos": [
+     4220,
+     -160
+    ],
+    "din": "d_model",
+    "dout": "intermediate",
+    "param": "mlp.gate_proj.weight"
+   },
+   {
+    "id": "up",
+    "kind": "layer",
+    "name": "ffn_up",
+    "pos": [
+     4220,
+     0
+    ],
+    "din": "d_model",
+    "dout": "intermediate",
+    "param": "mlp.up_proj.weight"
+   },
+   {
+    "id": "ffn_act",
+    "kind": "act",
+    "name": "ffn_act",
+    "pos": [
+     4440,
+     -160
+    ],
+    "act": "act"
+   },
+   {
+    "id": "mul",
+    "kind": "op",
+    "name": "mul",
+    "pos": [
+     4660,
+     -160
+    ],
+    "op": "multiply"
+   },
+   {
+    "id": "down",
+    "kind": "layer",
+    "name": "ffn_down",
+    "pos": [
+     4880,
+     -160
+    ],
+    "din": "intermediate",
+    "dout": "d_model",
+    "param": "mlp.down_proj.weight"
+   },
+   {
+    "id": "post_ffn_norm",
+    "kind": "norm",
+    "name": "post_ffn_norm",
+    "pos": [
+     5100,
+     -160
+    ],
+    "norm": "rms",
+    "eps": "eps",
+    "param": "post_feedforward_layernorm.weight"
+   },
+   {
+    "id": "add2",
+    "kind": "op",
+    "name": "add",
+    "pos": [
+     5320,
+     -160
+    ],
+    "op": "add"
+   },
+   {
+    "id": "layer_scalar",
+    "kind": "op",
+    "name": "layer scalar",
+    "pos": [
+     5540,
+     -160
+    ],
+    "op": "scale",
+    "param": "layer_scalar"
+   },
+   {
+    "id": "out",
+    "kind": "output",
+    "name": "out",
+    "pos": [
+     5760,
+     -160
+    ],
+    "din": "d_model"
+   }
+  ],
+  "edges": [
+   [
+    "in",
+    "attn_norm",
+    0,
+    0
+   ],
+   [
+    "attn_norm",
+    "q",
+    0,
+    0
+   ],
+   [
+    "attn_norm",
+    "k",
+    0,
+    0
+   ],
+   [
+    "attn_norm",
+    "v",
+    0,
+    0
+   ],
+   [
+    "q",
+    "q_reshape",
+    0,
+    0
+   ],
+   [
+    "q_reshape",
+    "q_norm",
+    0,
+    0
+   ],
+   [
+    "q_norm",
+    "q_perm",
+    0,
+    0
+   ],
+   [
+    "q_perm",
+    "q_rope",
+    0,
+    0
+   ],
+   [
+    "k",
+    "k_reshape",
+    0,
+    0
+   ],
+   [
+    "k_reshape",
+    "k_norm",
+    0,
+    0
+   ],
+   [
+    "k_norm",
+    "k_perm",
+    0,
+    0
+   ],
+   [
+    "k_perm",
+    "k_rope",
+    0,
+    0
+   ],
+   [
+    "k_rope",
+    "k_rep",
+    0,
+    0
+   ],
+   [
+    "k_rep",
+    "kT",
+    0,
+    0
+   ],
+   [
+    "k",
+    "k_alt",
+    0,
+    0
+   ],
+   [
+    "k",
+    "zero",
+    0,
+    0
+   ],
+   [
+    "v",
+    "val_pick",
+    0,
+    0
+   ],
+   [
+    "k_alt",
+    "val_pick",
+    0,
+    1
+   ],
+   [
+    "val_pick",
+    "v_reshape",
+    0,
+    0
+   ],
+   [
+    "v_reshape",
+    "v_perm",
+    0,
+    0
+   ],
+   [
+    "v_perm",
+    "v_norm",
+    0,
+    0
+   ],
+   [
+    "v_norm",
+    "v_rep",
+    0,
+    0
+   ],
+   [
+    "q_rope",
+    "scores",
+    0,
+    0
+   ],
+   [
+    "kT",
+    "scores",
+    0,
+    1
+   ],
+   [
+    "scores",
+    "mask",
+    0,
+    0
+   ],
+   [
+    "mask",
+    "softmax",
+    0,
+    0
+   ],
+   [
+    "softmax",
+    "attn_v",
+    0,
+    0
+   ],
+   [
+    "v_rep",
+    "attn_v",
+    0,
+    1
+   ],
+   [
+    "attn_v",
+    "merge_perm",
+    0,
+    0
+   ],
+   [
+    "merge_perm",
+    "merge_reshape",
+    0,
+    0
+   ],
+   [
+    "merge_reshape",
+    "out_proj",
+    0,
+    0
+   ],
+   [
+    "out_proj",
+    "post_attn_norm",
+    0,
+    0
+   ],
+   [
+    "post_attn_norm",
+    "add1",
+    0,
+    0
+   ],
+   [
+    "in",
+    "add1",
+    0,
+    1
+   ],
+   [
+    "add1",
+    "pre_ffn_norm",
+    0,
+    0
+   ],
+   [
+    "pre_ffn_norm",
+    "gate",
+    0,
+    0
+   ],
+   [
+    "pre_ffn_norm",
+    "up",
+    0,
+    0
+   ],
+   [
+    "gate",
+    "ffn_act",
+    0,
+    0
+   ],
+   [
+    "ffn_act",
+    "mul",
+    0,
+    0
+   ],
+   [
+    "up",
+    "mul",
+    0,
+    1
+   ],
+   [
+    "mul",
+    "down",
+    0,
+    0
+   ],
+   [
+    "down",
+    "post_ffn_norm",
+    0,
+    0
+   ],
+   [
+    "post_ffn_norm",
+    "add2",
+    0,
+    0
+   ],
+   [
+    "add1",
+    "add2",
+    0,
+    1
+   ],
+   [
+    "add2",
+    "layer_scalar",
+    0,
+    0
+   ],
+   [
+    "layer_scalar",
+    "out",
+    0,
+    0
+   ]
+  ]
+ },
+ "test": {
+  "model_type": "gemma4_unified_text",
+  "config": {
+   "vocab_size": 64,
+   "hidden_size": 32,
+   "intermediate_size": 64,
+   "num_hidden_layers": 2,
+   "num_attention_heads": 4,
+   "num_key_value_heads": 2,
+   "head_dim": 8,
+   "global_head_dim": 16,
+   "num_global_key_value_heads": 2,
+   "max_position_embeddings": 64,
+   "rms_norm_eps": 1e-06,
+   "hidden_activation": "gelu_pytorch_tanh",
+   "attention_k_eq_v": false,
+   "layer_types": [
+    "sliding_attention",
+    "full_attention"
+   ],
+   "tie_word_embeddings": false
+  }
+ }
+}
