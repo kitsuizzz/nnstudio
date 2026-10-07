@@ -3410,15 +3410,25 @@ check("the dataset table: csv rows, columns, dtypes — and the cells edit", () 
      String(n.text).split("\n")[0] === "prompt,completion,chosen",
      "…as csv, headed by the names");
 
-  // columns come and go; an empty name is a name
+  // columns come and go; a column's default name is its letter
   __t.bxTableInsertCol(n, 1);
   t = __t.bxTableRead(n);
   eql(t.cols.length, 4, "insert adds a column");
+  eql(t.cols[1], "B", "…and a new column takes its letter");
   eql(t.rows[0], ["a", "", "c", "x"], "…and every row makes room");
+  __t.bxTableRenameCol(n, 1, "middle");
+  eql(__t.bxTableRead(n).cols[1], "middle", "a typed name replaces the letter");
   __t.bxTableRenameCol(n, 1, "");
-  eql(__t.bxTableRead(n).cols[1], "", "a column may have no name");
+  eql(__t.bxTableRead(n).cols[1], "B", "an emptied name goes back to its letter");
   __t.bxTableDeleteCol(n, 1);
   eql(__t.bxTableRead(n).cols, ["prompt", "completion", "chosen"], "delete puts it back");
+
+  // an unnamed csv column reads as its letter — the default name
+  const m = __t.bxAdd("dataset", 0, 0, {});
+  m.format = "csv";
+  m.text = "prompt,,note\nhi,there,1";
+  eql(__t.bxTableRead(m).cols, ["prompt", "B", "note"],
+     "an unnamed column reads as its letter");
 
   // dtypes: inferred like read_csv, overridable per column
   eql(__t.bxDtypeInfer(["1", "2"]), "int64", "whole numbers read as int64");

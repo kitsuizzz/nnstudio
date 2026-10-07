@@ -2709,7 +2709,8 @@ function bxTableRead(n) { // the box's rows as {cols, rows, format}
   }
   if (fmt === "csv") {
     const grid = bxCsvParse(text);
-    const cols = (grid.shift() || []).map(c => String(c));
+    // a column's default name is its letter: an unnamed column is A, B, …
+    const cols = (grid.shift() || []).map((c, i) => String(c) || bxColLetter(i));
     return { cols, rows: grid.map(r => cols.map((_, i) => (r[i] != null ? r[i] : ""))),
              format: "csv" };
   }
@@ -2759,13 +2760,14 @@ function bxTableSetCell(n, r, c, v) {
 function bxTableRenameCol(n, i, name) {
   const t = bxTableRead(n);
   if (!t.cols.length) return;
-  t.cols[i] = String(name == null ? "" : name);   // an empty name is a name
+  // an emptied name goes back to its letter: a column always has a name
+  t.cols[i] = String(name == null ? "" : name) || bxColLetter(i);
   bxTableWrite(n, t);
 }
 function bxTableInsertCol(n, i) {
   const t = bxTableRead(n);
   i = Math.max(0, Math.min(t.cols.length, Number(i) || 0));
-  t.cols.splice(i, 0, "");
+  t.cols.splice(i, 0, bxColLetter(i));            // a new column takes its letter
   for (const r of t.rows) r.splice(i, 0, "");
   bxTableWrite(n, t);
 }
@@ -2832,7 +2834,8 @@ function bxDatasetFill(pane, n) {              // the table: lines and text
     } else if (!hit.ok) {
       note = "cannot read " + file;
     } else {
-      t = { cols: hit.cols || [], rows: hit.rows || [], format: hit.format || "csv" };
+      t = { cols: (hit.cols || []).map((c, i) => String(c == null ? "" : c) || bxColLetter(i)),
+            rows: hit.rows || [], format: hit.format || "csv" };
       note = "rows come from " + file
              + (hit.more ? " \u2014 showing the first " + t.rows.length : "");
     }
@@ -2892,9 +2895,13 @@ function bxDatasetFill(pane, n) {              // the table: lines and text
     const th = mk("th", { class: "bxname" });
     const showName = () => {
       th.innerHTML = "";
-      const val = mk("div", { class: "bxnameval" + (c ? "" : " bxdim"),
-                              text: c || bxColLetter(i),
-                              title: "the column's name \u2014 empty is fine" });
+      let name = c;                                  // the name at render time
+      if (!readOnly)                                 // …or the latest, if it was renamed
+        { const t2 = bxTableRead(n); if (t2.cols[i] != null) name = String(t2.cols[i]); }
+      const val = mk("div", { class: "bxnameval" + (name ? "" : " bxdim"),
+                              text: name || bxColLetter(i),
+                              title: "the column's name \u2014 an emptied name goes "
+                                     + "back to its letter" });
       val.addEventListener("mousedown", stopEv);
       val.addEventListener("click", editName);
       th.appendChild(val);
@@ -2902,7 +2909,9 @@ function bxDatasetFill(pane, n) {              // the table: lines and text
     const editName = () => {
       if (readOnly) return;
       th.innerHTML = "";
-      const inp = mk("input", { class: "bxcolname", type: "text", value: c,
+      const t2 = bxTableRead(n);                    // the latest name, if renamed
+      const now = (t2.cols[i] != null) ? String(t2.cols[i]) : c;
+      const inp = mk("input", { class: "bxcolname", type: "text", value: now,
                                 placeholder: bxColLetter(i) });
       inp.addEventListener("mousedown", stopEv);
       inp.addEventListener("change", () => {
@@ -3048,7 +3057,8 @@ function bxDatasetFill(pane, n) {              // the table: lines and text
         while (t2.rows.length <= cur.r + i) t2.rows.push(t2.cols.map(() => ""));
         parts.forEach((part, j) => {
           const col = cur.c + j;
-          while (t2.cols.length <= col) t2.cols.push("");   // paste grows columns
+          while (t2.cols.length <= col)
+            t2.cols.push(bxColLetter(t2.cols.length));      // paste grows columns
           t2.rows[cur.r + i][col] = part;
         });
       });
