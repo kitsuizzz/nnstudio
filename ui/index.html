@@ -725,6 +725,13 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 .bxtspace { flex: 1 1 auto; }
 /* the Palette menu: its categories, expanding into the box cards themselves */
 #bxtPalMenu { min-width: 384px; }
+#bxtDatasetMenu { min-width: 330px; }
+#bxtDatasetMenu .bxhint { font-size: 11.5px; color: var(--ink-faint);
+                          padding: 2px 8px 8px; line-height: 1.45; }
+#bxtDatasetMenu .bxdsrow { display: flex; align-items: center; gap: 8px;
+                           padding: 5px 8px; border-top: 1px solid rgba(255,255,255,.06); }
+#bxtDatasetMenu .bxdsname { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+#bxtDatasetMenu .bxdsmeta { color: var(--ink-faint); font-size: 11px; flex: 1; }
 .bxtcat { display: flex; align-items: center; gap: 6px; cursor: pointer;
           padding: 6px 9px; border-radius: 7px;
           font: 600 10px var(--mono); letter-spacing: .09em; text-transform: uppercase;
@@ -776,6 +783,8 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
             onclick="window.open('/docs', '_blank')">Docs</span>
       <span class="bxtbtn" id="bxtPalette" title="add a box to the canvas">Palette ▾</span>
       <div class="bxtdrop" id="bxtPalMenu" hidden></div>
+      <span class="bxtbtn" id="bxtDataset" title="training data: the dataset box and its rows">Dataset ▾</span>
+      <div class="bxtdrop" id="bxtDatasetMenu" hidden></div>
       <span class="bxtbtn" id="bxtBackend" title="where the heavy work runs">Backend ▾</span>
       <div class="bxtdrop" id="bxtBackendMenu" hidden></div>
       <span class="bxtbtn off" id="bxtRunBtn" title="connect a backend first — Backend ▾">Run ▾</span>
@@ -1060,7 +1069,8 @@ const BX_OP_EXTRAS = ["keep", "k_heads", "k_dim", "heads", "head_dim", "partial"
 // dots stay unknown (they never make a wire wrong)
 const BX_OPAQUE = ["matmul", "topk", "scan", "permute", "repeat", "mask", "slice", "zeros"];
 // kinds whose boxes hold no size of their own: the wire's size passes through
-const BX_UNSIZED = ["act", "op", "norm", "attn", "ssm", "moe", "script", "hf"];
+const BX_UNSIZED = ["act", "op", "norm", "attn", "ssm", "moe", "script", "hf",
+                    "dataset", "loss", "reward", "train"];
 // a reshape can be told the shape it makes, like "128x40" (x, ×, *, comma or
 // spaces between the numbers). The element count is the product of the dims,
 // and both sides of the box must carry it — a reshape never changes how much
@@ -1130,6 +1140,12 @@ function bxShape(n) {
   if (n.kind === "output") return bxDim(n.din);
   if (n.kind === "sample")
     return n.temperature != null ? "t " + n.temperature : "greedy";
+  if (n.kind === "dataset")
+    return n.file ? "rows \u00b7 file"
+                  : "rows \u00b7 " + bxDatasetRowCount(n);
+  if (n.kind === "loss") return "logits + labels";
+  if (n.kind === "reward") return n.reward || "python";
+  if (n.kind === "train") return "training";
   if (n.kind === "tokenize")
     return n.repo ? "hf \u00b7 " + bxClip(String(n.repo).split("/").pop(), 16)
                   : "vocab " + (String(n.vocab || "").length || "?");
@@ -1280,7 +1296,15 @@ function bxDefaultName(kind) {
 // are the input/output boxes placed inside it (top to bottom)
 function bxPortDefs(n, dir, seen) {
   if (!n) return [];
-  if (n.kind === "agent") return [];             // a view of an agent's task: no wires
+  if (n.kind === "agent" || n.kind === "train" || n.kind === "reward")
+    return [];                                  // a display or a scorer: no wires
+  if (n.kind === "dataset")  // its rows ride out to a loss box's second dot
+    return dir === "out" ? [{ size: null, node: n, field: "dout", act: true }] : [];
+  if (n.kind === "loss")     // the model's scores, then the dataset's labels
+    return dir === "in"
+      ? [{ size: null, node: n, field: "din", act: true },
+         { size: null, node: n, field: "din", act: true }]
+      : [{ size: 1, node: n }];
   seen = seen || new Set();
   if (seen.has(n.id)) return [];                 // a loop of pass-throughs stops here
   seen.add(n.id);
@@ -1475,7 +1499,7 @@ function bxAdd(kind, x, y, v) {
   const gguf = kind === "gguf";                // a GGUF node *is* a nested box:
   if (gguf) kind = "custom";                   // a model is loaded into it
   const sizeless = kind === "act" || kind === "script" || kind === "custom" ||
-                   kind === "hf";
+                   kind === "hf" || BX_UNSIZED.indexOf(kind) >= 0;
   const n = { id: bxId(), kind, x: bxSnapTo(x), y: bxSnapTo(y),
               name: v.name || (gguf ? "GGUF" : bxDefaultName(kind)),
               din: kind === "input" || sizeless ? null : bxSize(v.din),
@@ -2420,6 +2444,38 @@ function bxConfigure(id, vals) {
       const raw = String(vals.temperature == null ? "" : vals.temperature).trim();
       const tp = raw === "" ? null : Number(raw);
       n.temperature = (tp != null && isFinite(tp) && tp >= 0) ? tp : null;
+    }
+  }
+  if (n.kind === "dataset") {                  // the rows it trains on
+    if (vals.text !== undefined) {
+      const t = String(vals.text == null ? "" : vals.text);
+      n.text = t ? bxClip(t, 200000) : null;
+    }
+    if (vals.repo !== undefined) {
+      const s = String(vals.repo == null ? "" : vals.repo).trim();
+      n.repo = s ? bxClip(s, 200) : null;
+    }
+    if (vals.vocab !== undefined) {
+      const v = String(vals.vocab == null ? "" : vals.vocab);
+      n.vocab = v ? bxClip(v, 4096) : null;
+    }
+  }
+  if (n.kind === "reward") {                   // how it scores a piece of text
+    if (vals.reward !== undefined) {
+      const r = String(vals.reward == null ? "" : vals.reward);
+      n.reward = ["python", "exact", "regex", "length"].indexOf(r) >= 0 ? r : null;
+    }
+    if (vals.expr !== undefined) {
+      const t = String(vals.expr == null ? "" : vals.expr);
+      n.expr = t ? bxClip(t, 20000) : null;
+    }
+    if (vals.pattern !== undefined) {
+      const t = String(vals.pattern == null ? "" : vals.pattern);
+      n.pattern = t ? bxClip(t, 200) : null;
+    }
+    if (vals.match !== undefined) {
+      const t = String(vals.match == null ? "" : vals.match);
+      n.match = t ? bxClip(t, 200) : null;
     }
   }
   if (n.kind === "norm") {
@@ -3909,7 +3965,7 @@ function bxMenuBuild(mode, id, ev) {
          () => { bxMenuClose(); bxCopyBoxes(many ? selIds : [n.id]); }],
       ];
       if (n.kind === "act") mine.push(["set the activation", () => bxForm(n.kind, null, n, "activation")]);
-      else if (n.kind === "agent")
+      else if (n.kind === "agent" || n.kind === "train")
         mine.push(["expand / shrink the display", () => { bxMenuClose();
           const p = n.panel || (n.panel = {});
           p.expand = !p.expand;
@@ -3924,6 +3980,8 @@ function bxMenuBuild(mode, id, ev) {
       else if (n.kind === "hf")
         mine.push(["set the model …", () => bxForm(n.kind, null, n, "hf")]);
       else if (n.kind === "sample") mine.push(["set the sample …", () => bxForm(n.kind, null, n, "sample")]);
+      else if (n.kind === "dataset") mine.push(["set the rows …", () => bxForm(n.kind, null, n, "dataset")]);
+      else if (n.kind === "reward") mine.push(["set the reward …", () => bxForm(n.kind, null, n, "reward")]);
       else if (n.kind === "input") {
         mine.push(["set input", () => bxForm(n.kind, null, n, "matrix")]);
         mine.push(["resize this box", () => bxForm(n.kind, null, n, "resize")]);
@@ -4115,7 +4173,8 @@ function bxtForm(mode) {
 function bxtExport() { return bxtForm("export"); }
 function bxtImport() { return bxtForm("import"); }
 function bxtDropsClose(keep) {
-  for (const id of ["bxtFilesMenu", "bxtPalMenu", "bxtBackendMenu", "bxtRunMenu", "bxtVramMenu"]) {
+  for (const id of ["bxtFilesMenu", "bxtPalMenu", "bxtDatasetMenu", "bxtBackendMenu",
+                     "bxtRunMenu", "bxtVramMenu"]) {
     if (id === keep) continue;
     const m = $(id);
     if (m) m.hidden = true;
@@ -4132,6 +4191,11 @@ function bxtToggle(id) {
 }
 function bxtFilesToggle() { return BX.up ? false : bxtToggle("bxtFilesMenu"); }
 function bxtPaletteToggle() { return bxtToggle("bxtPalMenu"); }
+function bxtDatasetToggle() {
+  const open = bxtToggle("bxtDatasetMenu");
+  if (open) bxRenderDatasetMenu();             // the rows list, fresh
+  return open;
+}
 function bxtVramToggle() {
   const open = bxtToggle("bxtVramMenu");
   if (open) bxRenderEstimate();                // the live vram line, fresh
@@ -4950,6 +5014,7 @@ function bxtInit() {
   bxtBackendLoad();                            // the remembered backend choice
   wire("bxtFiles", bxtFilesToggle);
   wire("bxtPalette", bxtPaletteToggle);
+  wire("bxtDataset", bxtDatasetToggle);
   wire("bxtBackend", bxtBackendToggle);
   wire("bxtRunBtn", bxtRunToggle);
   wire("bxtVram", bxtVramToggle);
@@ -6076,6 +6141,16 @@ function bxForm(kind, ev, node, mode) {
     wrap.appendChild(lab);
     return sel;
   };
+  const rewardField = (value) => {             // python | exact | regex | length
+    const lab = mk("label", { text: "reward kind" });
+    const sel = mk("select", { class: "bxsel" });
+    for (const k of ["python", "exact", "regex", "length"])
+      sel.appendChild(mk("option", { value: k, text: k }));
+    sel.value = ["python", "exact", "regex", "length"].indexOf(value) >= 0 ? value : "python";
+    lab.appendChild(sel);
+    wrap.appendChild(lab);
+    return sel;
+  };
   const f = {};                               // this mode's fields, by name
   if (mode === "activation") {
     f.fn = actField(node ? node.act : "silu");
@@ -6151,11 +6226,15 @@ function bxForm(kind, ev, node, mode) {
     f.temp = numField("temperature", node ? node.temperature : null);
     f.seed = numField("seed", node ? node.sample_seed : null);
   } else if ((mode === "add" && kind === "dataset") || mode === "dataset") {
-    f.name = nameField(bxDefaultName(kind));
+    f.name = nameField(node ? node.name : bxDefaultName(kind));
     f.text = textField("rows", node ? node.text || "" : "", "prompt<TAB>completion — one pair per line");
+    f.file = textField("rows file (optional)", node ? node.file || "" : "",
+                       "a .jsonl path on the backend machine");
+    f.vocab = vocabField(node ? node.vocab || "" : "");
     f.repo = hfField(node ? node.repo || "" : "");
   } else if ((mode === "add" && kind === "reward") || mode === "reward") {
-    f.name = nameField(bxDefaultName(kind));
+    f.name = nameField(node ? node.name : bxDefaultName(kind));
+    f.rkind = rewardField(node ? node.reward : "python");
     f.expr = textField("reward expr", node ? node.expr || "" : "1.0", "python over prompt/output");
     f.pattern = textField("regex (optional)", node ? node.pattern || "" : "");
     f.match = textField("exact match (optional)", node ? node.match || "" : "");
@@ -6209,11 +6288,12 @@ function bxForm(kind, ev, node, mode) {
       if (f.repo._tokens != null) v.tokens = f.repo._tokens;   // from the load chip
     }
     if (f.text) v.text = f.text.value;
+    if (f.file) v.file = f.file.value;
+    if (f.rkind) v.reward = f.rkind.value;
     if (f.temp) v.temperature = f.temp.value;
-  if (f.text) v.text = f.text.value;
-  if (f.expr) v.expr = f.expr.value;
-  if (f.pattern) v.pattern = f.pattern.value;
-  if (f.match) v.match = f.match.value;
+    if (f.expr) v.expr = f.expr.value;
+    if (f.pattern) v.pattern = f.pattern.value;
+    if (f.match) v.match = f.match.value;
     if (f.seed) v.sample_seed = f.seed.value;
     if (f.code) v.script = f.code.value;
     if (mode !== "add" && mode !== "resize") return v;   // settings forms carry no sizes
@@ -6318,6 +6398,39 @@ function bxPalCard(kind, label) {
   item.appendChild(bxPreview(kind));
   item.addEventListener("mousedown", (ev) => bxPalDown(ev, kind));
   return item;
+}
+function bxDatasetRowCount(n) {                // rows typed in, or "file"
+  if (n.file) return "file";
+  return String(n.text || "").split("\n").filter(l => l.trim()).length;
+}
+function bxRenderDatasetMenu() {
+  const menu = $("bxtDatasetMenu");
+  if (!menu) return;
+  menu.innerHTML = "";
+  const grid = mk("div", { class: "bxtcards" });
+  grid.appendChild(bxPalCard("dataset", "dataset box"));
+  menu.appendChild(grid);
+  menu.appendChild(mk("div", { class: "bxhint",
+    text: "one row per line: prompt<TAB>completion, or JSONL. Wire the box into "
+          + "a loss box's second dot to train on its rows." }));
+  const here = (BX.nodes || []).filter(x => x.kind === "dataset");
+  if (here.length) {
+    menu.appendChild(mk("div", { class: "bxtcat", text: "on this canvas" }));
+    for (const n of here) {
+      const rows = bxDatasetRowCount(n);
+      const row = mk("div", { class: "bxdsrow" });
+      row.appendChild(mk("span", { class: "bxdsname", text: n.name || "dataset" }));
+      row.appendChild(mk("span", { class: "bxdsmeta",
+                                  text: rows === "file" ? "from its file" : rows + " rows" }));
+      const edit = mk("span", { class: "chip tiny", text: "edit rows" });
+      edit.addEventListener("click", () => {
+        bxtDropsClose();
+        bxForm(n.kind, null, n, "dataset");
+      });
+      row.appendChild(edit);
+      menu.appendChild(row);
+    }
+  }
 }
 function bxRenderPalette() {
   const menu = $("bxtPalMenu");
