@@ -216,6 +216,10 @@ globalThis.__t = {
   bxTasksFetch, bxTaskLogFetch, bxTasksApply, bxLogApply, bxLogState,
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand,
+  bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
+  bxTableRead, bxTableWrite, bxTableType, bxTableSetCell, bxTableRenameCol,
+  bxTableInsertCol, bxTableDeleteCol, bxTableAddRow, bxTableDeleteRow,
+  bxTableAttach,
   get BXTASKS() { return BXTASKS; }, set BXTASKS(v) { BXTASKS = v; },
   bxMarkAudit, bxAuditClear, get bxAudit() { return bxAudit; },
   get bxFlowSet() { return bxFlowSet; }, get bxFlowNow() { return bxFlowNow; },
@@ -3381,60 +3385,74 @@ check("the weight registry travels with the design", () => {
   __t.BX.weights = null;
 });
 
-check("the dataset sheet: rows round-trip and the cells edit", () => {
-  const parse = __t.bxRowsParse, text = __t.bxRowsText;
-  const rows = parse("a\tc\n{\"prompt\":\"b\",\"completion\":\"d\",\"chosen\":\"x\"}\ne");
-  eql(rows.map(r => r.p), ["a", "b", "e"], "tsv and jsonl rows side by side");
-  eql(rows.map(r => r.c), ["c", "d", ""], "…prompt/completion read out of both");
-  eql(rows[1].x, { chosen: "x" }, "…jsonl extra keys travel along");
-  const out = text(rows);
-  ok(out.indexOf("a\tc") === 0, "back to text: tab pairs as tab pairs");
-  ok(out.indexOf('{"prompt":"b","completion":"d","chosen":"x"}') > 0,
-     "…json stays json, extras intact");
-  eql(parse(out).map(r => r.p + "/" + r.c), ["a/c", "b/d", "e/"],
-     "…and the round trip is exact");
-  eql(__t.bxRowsFormat(rows), "jsonl", "the sheet knows its format");
+check("the dataset table: csv rows, columns, dtypes — and the cells edit", () => {
+  eql(__t.bxRowsParse("a\tc\nb").map(r => r.p), ["a", "b"],
+     "legacy tab pairs still read");
 
+  // csv round trip: quotes, commas and newlines inside a cell
+  const csv = __t.bxCsvWrite([["prompt", "completion"], ["a, b", 'say "hi"'], ["x", "y\nz"]]);
+  const grid = __t.bxCsvParse(csv);
+  eql(grid[0], ["prompt", "completion"], "the header names the columns");
+  eql(grid[1], ["a, b", 'say "hi"'], "commas and quotes survive");
+  eql(grid[2], ["x", "y\nz"], "a newline in a cell survives too");
+
+  // jsonl keys become columns — extras are not lost
   const n = __t.bxAdd("dataset", 0, 0, {});
-  n.text = "a\tc\nb\td";
+  n.text = '{"prompt":"a","completion":"c","chosen":"x"}\n{"prompt":"b","completion":"d"}';
+  let t = __t.bxTableRead(n);
+  eql(t.cols, ["prompt", "completion", "chosen"], "jsonl keys become columns");
+  eql(t.rows[0], ["a", "c", "x"], "…and the values line up under them");
+
+  // an edit writes csv, headed by the names
+  __t.bxTableSetCell(n, 1, 2, "y");
+  eql(__t.bxTableRead(n).rows, [["a", "c", "x"], ["b", "d", "y"]], "cells write through");
+  ok(n.format === "csv" &&
+     String(n.text).split("\n")[0] === "prompt,completion,chosen",
+     "…as csv, headed by the names");
+
+  // columns come and go; an empty name is a name
+  __t.bxTableInsertCol(n, 1);
+  t = __t.bxTableRead(n);
+  eql(t.cols.length, 4, "insert adds a column");
+  eql(t.rows[0], ["a", "", "c", "x"], "…and every row makes room");
+  __t.bxTableRenameCol(n, 1, "");
+  eql(__t.bxTableRead(n).cols[1], "", "a column may have no name");
+  __t.bxTableDeleteCol(n, 1);
+  eql(__t.bxTableRead(n).cols, ["prompt", "completion", "chosen"], "delete puts it back");
+
+  // dtypes: inferred like read_csv, overridable per column
+  eql(__t.bxDtypeInfer(["1", "2"]), "int64", "whole numbers read as int64");
+  eql(__t.bxDtypeInfer(["1.5", "2"]), "float64", "…decimals as float64");
+  eql(__t.bxDtypeInfer(["true", "false"]), "bool", "…true/false as bool");
+  eql(__t.bxDtypeInfer(["x"]), "object", "…text as object");
+  eql(__t.bxDtypeInfer(["blob:" + "a".repeat(64) + ".png"]), "image", "…media ids as image");
+  eql(__t.bxDtypeInfer(["blob:" + "b".repeat(64) + ".mp4"]), "video", "…and as video");
+  eql(__t.bxTableType(n, 2), "object", "the chosen column reads as object");
+  n.colt = ["", "", "int64"];
+  eql(__t.bxTableType(n, 2), "int64", "an override wins");
+
+  // the grid renders flat: one cell per value
   const pane = document.createElement("div");
   __t.bxDatasetFill(pane, n);
-  eql(pane.querySelectorAll(".bxth").map(t => t.textContent),
-    ["#", "prompt", "completion", ""], "the sheet wears a header row");
-  let cells = pane.querySelectorAll(".bxcell");
-  eql(cells.length, 4, "two rows by two columns");
-  cells[0].value = "A";
-  cells[0].dispatchEvent({ type: "change" });
-  ok(String(n.text).indexOf("A\tc") === 0, "a typed cell writes back into the rows");
+  eql(pane.querySelectorAll(".bxcell").length, 6, "two rows by three columns");
+  eql(pane.querySelectorAll(".bxcolname").map(i => i.value),
+    ["prompt", "completion", "chosen"], "…under their names");
+  ok(pane.querySelectorAll(".bxthumb").length === 0, "no media, no thumbnails");
 
-  const plus = pane.querySelectorAll(".bxbbtn").filter(b => b.textContent === "+ row")[0];
-  plus.dispatchEvent({ type: "click" });
-  eql(__t.bxRowsParse(n.text).length, 3, "+ row appends a row");
-  __t.bxDatasetFill(pane, n);
-  cells = pane.querySelectorAll(".bxcell");
-  cells[4].value = "Z";
-  cells[4].dispatchEvent({ type: "change" });
-  ok(String(n.text).indexOf("\nZ") >= 0, "…and the fresh row accepts typing");
-
-  __t.bxDatasetFill(pane, n);
-  pane.querySelectorAll(".bxdel")[1].dispatchEvent({ type: "click" });
-  eql(__t.bxRowsParse(n.text).map(r => r.p), ["A", "Z"], "× removes its row");
-
-  // a block copied from a spreadsheet fills from the focused cell
-  __t.bxDatasetFill(pane, n);
-  cells = pane.querySelectorAll(".bxcell");
-  cells[2].dispatchEvent({ type: "focus" });        // row 2, prompt
-  pane.querySelectorAll(".bxsheet")[0].dispatchEvent({
-    type: "paste", preventDefault() {},
-    clipboardData: { getData: () => "X\tY\nZ\tW" } });
-  eql(__t.bxRowsParse(n.text).map(r => r.p + "/" + r.c),
-    ["A/c", "X/Y", "Z/W"], "a pasted block lands in one go");
-
-  // the sheet grows, and its size travels with the design
-  __t.bxDatasetExpand(n);
-  eql([n.box.w, n.box.h], [860, 520], "expand grows the sheet");
+  // bookkeeping travels with the design
+  n.colw = [80, 0, 120];
   const back = __t.bxJSONNodeFrom(__t.bxJSONNode(n));
-  eql([back.box.w, back.box.h], [860, 520], "…and the size survives the JSON round trip");
+  eql(back.colw, [80, 0, 120], "column widths survive the JSON round trip");
+  eql(back.colt, ["", "", "int64"], "…and so do the type overrides");
+
+  // a media cell shows its media, referenced by id
+  const id = "c".repeat(64) + ".png";
+  __t.bxTableSetCell(n, 0, 1, "blob:" + id);
+  const pane2 = document.createElement("div");
+  __t.bxDatasetFill(pane2, n);
+  const thumbs = pane2.querySelectorAll(".bxthumb");
+  eql(thumbs.length, 1, "a blob cell renders a thumbnail");
+  ok(String(thumbs[0].src).indexOf(id) >= 0, "…served by its id");
 });
 
 if (failed) { console.log("ui_boot: " + failed + " failure(s)"); process.exit(1); }

@@ -26,6 +26,8 @@ nothing here knows where it runs.
 """
 import json
 import math
+import csv
+import io
 import os
 import re
 import shutil
@@ -2399,6 +2401,8 @@ def dataset_rows(node):
                               "its rows are not on disk: %s" % (f,))
         with open(p, encoding="utf-8") as fh:
             text = fh.read()
+    if str(node.get("format") or "") == "csv":
+        return _csv_rows(node, text)
     rows = []
     for line in str(text).splitlines():
         line = line.strip()
@@ -2412,6 +2416,37 @@ def dataset_rows(node):
                 pass
         a, sep, b = line.partition("\t")
         rows.append({"prompt": a, "completion": b if sep else ""})
+    return rows
+
+
+def _csv_rows(node, text):
+    """A dataframe's rows: the header names the columns — prompt/completion by
+    name (or output/answer), else the first two. Any other columns (ids of
+    images, notes) ride along unread."""
+    rd = csv.reader(io.StringIO(str(text)))
+    head = [str(h).strip().lower() for h in (next(rd, []) or [])]
+
+    def pick(*names):
+        for nm in names:
+            if nm in head:
+                return head.index(nm)
+        return None
+
+    pi = pick("prompt", "input", "question")
+    ci = pick("completion", "output", "answer", "response")
+    if pi is None:
+        pi = 0
+    if ci is None:
+        ci = 1 if len(head) > 1 else pi
+    rows = []
+    for r in rd:
+        if not r or not any(str(x).strip() for x in r):
+            continue
+
+        def get(i):
+            return str(r[i]) if i is not None and i < len(r) else ""
+
+        rows.append({"prompt": get(pi), "completion": get(ci)})
     return rows
 
 

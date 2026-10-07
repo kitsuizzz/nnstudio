@@ -1557,6 +1557,28 @@ def design_training_and_checkpoints():
 check("a design trains: the loss falls, checkpoints land, resume continues",
       design_training_and_checkpoints)
 
+def dataset_csv_reads_like_a_frame():
+    node = {"id": "d", "kind": "dataset", "name": "rows", "format": "csv",
+            "text": 'prompt,completion,note\n"a, b","say ""hi""",x\nq,"multi\nline",y'}
+    rows = T.dataset_rows(node)
+    assert rows == [{"prompt": "a, b", "completion": 'say "hi"'},
+                    {"prompt": "q", "completion": "multi\nline"}], rows
+    named = {"id": "d2", "kind": "dataset", "format": "csv", "vocab": "hiter",
+             "text": "question,answer\nhi,there"}
+    assert T.dataset_rows(named) == [{"prompt": "hi", "completion": "there"}], \
+        "columns map by name (question/answer)"
+    fell = {"id": "d3", "kind": "dataset", "format": "csv", "text": "x,y\n1,2"}
+    assert T.dataset_rows(fell) == [{"prompt": "1", "completion": "2"}], \
+        "unknown names fall back to the first two columns"
+    ids, labels = T.dataset_batch(named, T.dataset_rows(named), 0, 2)
+    lab = labels[0].tolist()
+    assert lab[0] == -100 and lab[-1] != -100, "the prompt stays masked: %s" % lab
+    assert ids[0].tolist() == [0, 1, 2, 0, 3, 4, 3], ids   # hi there, in ids
+
+
+check("a csv dataset reads like a dataframe: headers map, quotes survive",
+      dataset_csv_reads_like_a_frame)
+
 if FAILED:
     print("nn_torch_test: %d failure(s): %s" % (len(FAILED), ", ".join(FAILED)))
     sys.exit(1)

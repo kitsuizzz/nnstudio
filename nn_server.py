@@ -34,6 +34,14 @@ import nn_tasks                # agent_tasks: what the AI agents are doing
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui", "index.html")
 DOCS = os.path.join(HERE, "ui", "docs.html")
+BLOB_DIR = os.path.join(HERE, "datasets", "blobs")   # media, content-addressed
+BLOB_OK = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp",
+           ".mp4", ".webm", ".ogv", ".mov", ".m4v"}
+BLOB_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+             ".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif",
+             ".bmp": "image/bmp", ".mp4": "video/mp4", ".webm": "video/webm",
+             ".ogv": "video/ogg", ".mov": "video/quicktime", ".m4v": "video/mp4"}
+BLOB_ID = __import__("re").compile(r"^[0-9a-f]{8,64}\.[a-z0-9]{2,5}$")
 MODELS_DIR = os.path.join(HERE, "models")
 AGENT_DIR = os.path.join(HERE, "agent")
 WEIGHTS_DIR = os.path.join(HERE, "weights")
@@ -588,6 +596,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, body, "text/html; charset=utf-8")
             return
+        if path == "/api/blob":
+            q = parse_qs(urlparse(self.path).query)
+            bid = str((q.get("id") or [""])[0]).strip().lower()
+            if not BLOB_ID.match(bid) or os.path.splitext(bid)[1] not in BLOB_OK:
+                self._json({"ok": False, "error": "not a blob id"}, 400)
+                return
+            p = os.path.join(BLOB_DIR, bid)
+            try:
+                with open(p, "rb") as fh:
+                    body = fh.read()
+            except OSError:
+                self._json({"ok": False, "error": "no such blob"}, 404)
+                return
+            self._send(200, body, BLOB_MIME.get(os.path.splitext(bid)[1],
+                                                "application/octet-stream"))
+            return
         if path == "/api/dataset":
             q = parse_qs(urlparse(self.path).query)
             f = str((q.get("path") or [""])[0]).strip()
@@ -601,8 +625,26 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as e:
                 self._json({"ok": False, "error": "cannot read %s: %s" % (f, e)}, 404)
                 return
+            fmt = str((q.get("format") or [""])[0]).strip()
             rows = []
             more = False
+            if fmt == "csv":
+                import csv as _csv
+                import io as _io
+                rd = _csv.reader(_io.StringIO(raw))
+                cols = next(rd, []) or []
+                for r in rd:
+                    if len(rows) >= 500:
+                        more = True
+                        break
+                    if not r or not any(x.strip() for x in r):
+                        continue
+                    rows.append([str(x) for x in r])
+                self._json({"ok": True, "file": f, "format": "csv",
+                            "cols": [str(c) for c in cols], "rows": rows,
+                            "more": more})
+                return
+            cols = ["prompt", "completion"]
             for line in raw.splitlines():
                 if not line.strip():
                     continue
@@ -618,12 +660,13 @@ class Handler(BaseHTTPRequestHandler):
                         comp = o.get("completion")
                         if comp is None:
                             comp = o.get("output")
-                        rows.append({"prompt": str(o.get("prompt") or ""),
-                                     "completion": "" if comp is None else str(comp)})
+                        rows.append([str(o.get("prompt") or ""),
+                                     "" if comp is None else str(comp)])
                         continue
                 a, sep, b = line.partition("\t")
-                rows.append({"prompt": a, "completion": b if sep else ""})
-            self._json({"ok": True, "file": f, "rows": rows, "more": more})
+                rows.append([a, b if sep else ""])
+            self._json({"ok": True, "file": f, "format": "tsv",
+                        "cols": cols, "rows": rows, "more": more})
             return
         if path in ("/docs", "/docs.html"):
             try:
@@ -726,9 +769,74 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json({"ok": False, "error": "not found"}, 404)
 
+    def _blob_post(self, length):
+        """Bytes in, an id out: the store is content-addressed, so the same
+        file uploaded twice is one blob and the table only carries its id."""
+        if length <= 0 or length > 64 * 1024 * 1024:
+            self._json({"ok": False, "error": "file must be 1..64 MB"}, 400)
+            return
+        q = parse_qs(urlparse(self.path).query)
+        name = str((q.get("name") or [""])[0]).strip() or "data.bin"
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in BLOB_OK:
+            self._json({"ok": False,
+                        "error": "only images and videos (png jpg gif webp "
+                                 "avif bmp mp4 webm ogv mov m4v)"}, 400)
+            return
+        body = self.rfile.read(length)
+        import hashlib
+        bid = hashlib.sha256(body).hexdigest() + ext
+        os.makedirs(BLOB_DIR, exist_ok=True)
+        p = os.path.join(BLOB_DIR, bid)
+        existed = os.path.isfile(p)
+        if not existed:
+            with open(p, "wb") as fh:
+                fh.write(body)
+        self._json({"ok": True, "id": bid, "bytes": len(body), "existed": existed})
+
+    def _unpack_post(self, length):
+        """A packed table comes home: data.csv in, media back in the store."""
+        if length <= 0 or length > 256 * 1024 * 1024:
+            self._json({"ok": False, "error": "archive must be 1..256 MB"}, 400)
+            return
+        import io as _io
+        import zipfile as _zip
+        raw = self.rfile.read(length)
+        try:
+            zf = _zip.ZipFile(_io.BytesIO(raw))
+        except Exception as e:  # noqa: BLE001
+            self._json({"ok": False, "error": "not a zip: %s" % e}, 400)
+            return
+        csv_text = ""
+        saved = 0
+        os.makedirs(BLOB_DIR, exist_ok=True)
+        for zi in zf.infolist():
+            base = os.path.basename(zi.filename)
+            if zi.filename.endswith(".csv") and not csv_text:
+                csv_text = zf.read(zi).decode("utf-8", "replace")
+            elif (zi.filename.startswith("blobs/") and BLOB_ID.match(base)
+                  and zi.file_size <= 64 * 1024 * 1024):
+                if os.path.splitext(base)[1] not in BLOB_OK:
+                    continue
+                p = os.path.join(BLOB_DIR, base)
+                if not os.path.isfile(p):
+                    with open(p, "wb") as fh:
+                        fh.write(zf.read(zi))
+                saved += 1
+        if not csv_text:
+            self._json({"ok": False, "error": "the archive holds no data.csv"}, 400)
+            return
+        self._json({"ok": True, "csv": csv_text, "blobs": saved})
+
     def do_POST(self):
         path = urlparse(self.path).path
         length = int(self.headers.get("Content-Length") or 0)
+        if path == "/api/blob":
+            self._blob_post(length)
+            return
+        if path == "/api/dataset/unpack":
+            self._unpack_post(length)
+            return
         try:
             data = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
@@ -761,6 +869,27 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._tasks_cmd({"task": task["id"], "cmd": "cancel",
                              "reason": str(data.get("reason") or "stopped")})
+            return
+        if path == "/api/dataset/pack":
+            import io as _io
+            import zipfile as _zip
+            csv_text = str(data.get("csv") or "")
+            if not csv_text:
+                self._json({"ok": False, "error": "no csv to pack"}, 400)
+                return
+            buf = _io.BytesIO()
+            zf = _zip.ZipFile(buf, "w", _zip.ZIP_DEFLATED)
+            zf.writestr("data.csv", csv_text)
+            for bid in (data.get("blobs") or [])[:2000]:
+                bid = str(bid).strip().lower()
+                if not BLOB_ID.match(bid) or os.path.splitext(bid)[1] not in BLOB_OK:
+                    continue
+                p = os.path.join(BLOB_DIR, bid)
+                if os.path.isfile(p):
+                    with open(p, "rb") as fh:
+                        zf.writestr("blobs/" + bid, fh.read())
+            zf.close()
+            self._send(200, buf.getvalue(), "application/zip")
             return
         if path == "/api/tasks":
             self._tasks_create(data)

@@ -346,11 +346,21 @@
       write. A training run feeds its rows to the <span class="pill">loss</span> box;
       the prompt part of each row is masked out of the loss (the model learns to
       produce the completion, not to parrot the prompt).</p>
-      <p>Its face is a <b>spreadsheet</b>: click a cell to type (Enter moves down,
-      Tab moves right), <b>paste a block copied from Excel/Sheets</b> to fill many
-      cells at once, <b>+ row</b> adds a row and <b>×</b> removes one.
-      Double-click the box for more room. A file-backed dataset previews its
-      first rows (read-only) straight from the backend.</p>
+      <p>Its face is a <b>dataframe</b>, like a pandas table or a CSV: column
+      letters, editable <b>column names</b> (empty names are fine), and a type
+      chip per column (<code>int64</code>, <code>float64</code>, <code>bool</code>,
+      <code>object</code>, <code>image</code>, <code>video</code>) — inferred from
+      the values, click to override. Click a cell to type (Enter moves down, Tab
+      right), paste a block from Excel/Sheets, <b>+ row</b> / <b>×</b> manage rows,
+      the letter strip's <b>+</b> / <b>×</b> manage columns, and dragging the
+      header edge resizes one. Double-click the box for more room.</p>
+      <p>A column can hold <b>images and videos</b>: drop a file on a cell (or
+      paste one) — the bytes live in the project's media store, the cell carries
+      only a small <code>blob:</code> reference, and the table shows the
+      thumbnail (click to view or play). The box menu exports the table: a plain
+      <code>.csv</code> for text and numbers, or a <code>.zip</code> (csv +
+      media) when cells hold media — and imports either back. A file-backed
+      dataset previews its first rows (read-only) from the backend.</p>
       <p class="bfields"><b>Fields:</b> <code>text</code> (rows typed in) or
       <code>file</code> (a JSONL file path on the backend machine); tokenizer
       <code>repo</code>/<code>vocab</code>, like the tokenize box. One row per line:
