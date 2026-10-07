@@ -299,13 +299,14 @@
     overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   }
   .bxdf .bxcorner { background: #1b1f23; width: 34px; border-color: #262b30; }
-  .bxdf .bxletter { background: #1b1f23; color: #6b7280; text-align: center;
-                    font-family: var(--mono); font-size: 10px; font-weight: 600; }
-  .bxletter .bxcolbtn { visibility: hidden; cursor: pointer; padding: 0 3px;
-                        color: #8a8a8a; }
-  .bxletter:hover .bxcolbtn { visibility: visible; }
-  .bxletter .bxcolbtn:hover { color: #f97316; }
   .bxdf .bxname { background: #1b1f23; position: relative; padding: 0; }
+  .bxnamehost { display: flex; align-items: center; }
+  .bxnameslot { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+  .bxname .bxcolbtn { visibility: hidden; cursor: pointer; padding: 0 3px;
+                      color: #8a8a8a; font-family: var(--mono);
+                      font-size: 10px; font-weight: 600; }
+  .bxname:hover .bxcolbtn { visibility: visible; }
+  .bxname .bxcolbtn:hover { color: #f97316; }
   .bxval { padding: 3px 6px; overflow: hidden; text-overflow: ellipsis;
            white-space: nowrap; cursor: cell; color: #c9ced3;
            font: 11.5px/1.6 var(--mono); }
@@ -2860,11 +2861,47 @@ function bxDatasetFill(pane, n) {              // the table: lines and text
   cg.appendChild(mk("col", { style: "width:22px" }));
   table.appendChild(cg);
   const thead = mk("thead");
-  const lr = mk("tr", { class: "bxletters" });
-  lr.appendChild(mk("th", { class: "bxcorner" }));
-  cols.forEach((_, i) => {
-    const th = mk("th", { class: "bxletter" });
-    th.appendChild(mk("span", { text: bxColLetter(i) }));
+  const nr = mk("tr", { class: "bxnames" });
+  nr.appendChild(mk("th", { class: "bxcorner" }));
+  cols.forEach((c, i) => {
+    const th = mk("th", { class: "bxname" });
+    const host = mk("div", { class: "bxnamehost" });
+    th.appendChild(host);
+    const slot = mk("div", { class: "bxnameslot" });
+    host.appendChild(slot);
+    const showName = () => {
+      slot.innerHTML = "";
+      let name = c;                                  // the name at render time
+      if (!readOnly)                                 // …or the latest, if it was renamed
+        { const t2 = bxTableRead(n); if (t2.cols[i] != null) name = String(t2.cols[i]); }
+      const val = mk("div", { class: "bxnameval" + (name ? "" : " bxdim"),
+                              text: name || bxColLetter(i),
+                              title: "the column's name \u2014 an emptied name goes "
+                                     + "back to its letter" });
+      val.addEventListener("mousedown", stopEv);
+      val.addEventListener("click", editName);
+      slot.appendChild(val);
+    };
+    const editName = () => {
+      if (readOnly) return;
+      slot.innerHTML = "";
+      const t2 = bxTableRead(n);                    // the latest name, if renamed
+      const now = (t2.cols[i] != null) ? String(t2.cols[i]) : c;
+      const inp = mk("input", { class: "bxcolname", type: "text", value: now,
+                                placeholder: bxColLetter(i) });
+      inp.addEventListener("mousedown", stopEv);
+      inp.addEventListener("change", () => {
+        bxTableRenameCol(n, i, inp.value);
+        bxCommit();
+      });
+      inp.addEventListener("blur", showName);
+      inp.addEventListener("keydown", (e) => {
+        if ((e && e.key) === "Escape") { stopEv(e); showName(); }
+      });
+      slot.appendChild(inp);
+      if (inp.focus) inp.focus();
+    };
+    showName();
     if (!readOnly) {
       const ins = mk("span", { class: "bxcolbtn", text: "+",
                                title: "insert a column after this one" });
@@ -2882,50 +2919,9 @@ function bxDatasetFill(pane, n) {              // the table: lines and text
         bxCommit();
         bxRender();
       });
-      th.appendChild(ins);
-      th.appendChild(del);
+      host.appendChild(ins);
+      host.appendChild(del);
     }
-    lr.appendChild(th);
-  });
-  lr.appendChild(mk("th", { class: "bxcorner" }));
-  thead.appendChild(lr);
-  const nr = mk("tr", { class: "bxnames" });
-  nr.appendChild(mk("th", { class: "bxcorner" }));
-  cols.forEach((c, i) => {
-    const th = mk("th", { class: "bxname" });
-    const showName = () => {
-      th.innerHTML = "";
-      let name = c;                                  // the name at render time
-      if (!readOnly)                                 // …or the latest, if it was renamed
-        { const t2 = bxTableRead(n); if (t2.cols[i] != null) name = String(t2.cols[i]); }
-      const val = mk("div", { class: "bxnameval" + (name ? "" : " bxdim"),
-                              text: name || bxColLetter(i),
-                              title: "the column's name \u2014 an emptied name goes "
-                                     + "back to its letter" });
-      val.addEventListener("mousedown", stopEv);
-      val.addEventListener("click", editName);
-      th.appendChild(val);
-    };
-    const editName = () => {
-      if (readOnly) return;
-      th.innerHTML = "";
-      const t2 = bxTableRead(n);                    // the latest name, if renamed
-      const now = (t2.cols[i] != null) ? String(t2.cols[i]) : c;
-      const inp = mk("input", { class: "bxcolname", type: "text", value: now,
-                                placeholder: bxColLetter(i) });
-      inp.addEventListener("mousedown", stopEv);
-      inp.addEventListener("change", () => {
-        bxTableRenameCol(n, i, inp.value);
-        bxCommit();
-      });
-      inp.addEventListener("blur", showName);
-      inp.addEventListener("keydown", (e) => {
-        if ((e && e.key) === "Escape") { stopEv(e); showName(); }
-      });
-      th.appendChild(inp);
-      if (inp.focus) inp.focus();
-    };
-    showName();
     const dt = mk("span", { class: "bxdtype", text: dtypes[i],
                             title: "the column's type \u2014 click to change it" });
     if (!readOnly) {

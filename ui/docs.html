@@ -347,14 +347,16 @@
       the prompt part of each row is masked out of the loss (the model learns to
       produce the completion, not to parrot the prompt).</p>
       <p>Its face is a <b>dataframe</b> sheet inset in the card, like a pandas
-      table or a CSV: column letters, editable <b>column names</b> (a column's
-      default name is its letter — emptying one puts the letter back), and a
-      type chip per column (<code>int64</code>, <code>float64</code>, <code>bool</code>,
-      <code>object</code>, <code>image</code>, <code>video</code>) — inferred from
-      the values, click to override. Click a cell to type (Enter moves down, Tab
-      right), paste a block from Excel/Sheets, <b>+ row</b> / <b>×</b> manage rows,
-      the letter strip's <b>+</b> / <b>×</b> manage columns, and dragging the
-      header edge resizes one. Double-click the box for more room.</p>
+      table or a CSV, with a single header row: each column shows its
+      <b>name</b>, which defaults to the column's letter (A, B, …) — click a
+      name to choose one, and emptying it puts the letter back — and a type
+      chip (<code>int64</code>, <code>float64</code>, <code>bool</code>,
+      <code>object</code>, <code>image</code>, <code>video</code>) inferred from
+      the values, click to override. Click a cell to type (Enter moves down,
+      Tab right), paste a block from Excel/Sheets, <b>+ row</b> / <b>×</b>
+      manage rows, and hovering a column's name shows <b>+</b> / <b>×</b> to
+      add or remove it; dragging the header edge resizes the column.
+      Double-click the box for more room.</p>
       <p>A column can hold <b>images and videos</b>: drop a file on a cell (or
       paste one) — the bytes live in the project's media store, the cell carries
       only a small <code>blob:</code> reference, and the table shows the
