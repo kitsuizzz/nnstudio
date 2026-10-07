@@ -195,10 +195,10 @@
 <section class="card" id="canvas">
   <h1>The canvas: using it</h1>
   <p class="dim">
-    The toolbar strip above the canvas has six menus:
+    The toolbar strip above the canvas has five menus:
     <span class="pill grey">Files ▾</span> <span class="pill grey">Palette ▾</span>
-    <span class="pill grey">Dataset ▾</span> <span class="pill grey">Backend ▾</span>
-    <span class="pill grey">Run ▾</span> <span class="pill grey">VRAM ▾</span>
+    <span class="pill grey">Backend ▾</span> <span class="pill grey">Run ▾</span>
+    <span class="pill grey">VRAM ▾</span>
   </p>
 
   <h2>Moving around</h2>
@@ -206,9 +206,10 @@
     <li><b>Add a box</b> — open <span class="pill grey">Palette ▾</span>, expand a
         category, and drag a card onto the canvas. Categories follow the boxes'
         jobs: containers, data, compute, results, system.</li>
-    <li><b>Add training data</b> — <span class="pill grey">Dataset ▾</span> is the
-        dataset box's own menu: drag the box out, and the menu lists every dataset
-        on the canvas with its row count and an <i>edit rows</i> shortcut.</li>
+    <li><b>Add training data</b> — the Palette's
+        <span class="pill grey">Dataset ▾</span> category holds the
+        <span class="pill">dataset</span> box. Right-click it any time to
+        <i>set the rows …</i>.</li>
     <li><b>Move / resize</b> — drag a box by its body; drag its corner to resize
         (boxes with displays, like the agent box, resize with their display).</li>
     <li><b>Wire two boxes</b> — drag from a box's <b>right dot</b> (its output) to
@@ -629,8 +630,8 @@
         <span class="pill">embed</span> → one or more
         <span class="pill">layer</span> boxes → whatever produces scores over the
         vocabulary (a layer sized to the vocab).</li>
-    <li>Open <span class="pill grey">Dataset ▾</span>, drag out a
-        <span class="pill">dataset</span> box; give it rows
+    <li>Open <span class="pill grey">Palette ▾</span> → <b>Dataset</b>, drag out
+        the <span class="pill">dataset</span> box; give it rows
         (<code>prompt&lt;TAB&gt;completion</code> or JSONL).</li>
     <li>Add a <span class="pill">loss</span> box. Wire the model's scores into its
         <b>first</b> dot, the dataset box into its <b>second</b>.</li>

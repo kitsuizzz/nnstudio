@@ -725,13 +725,6 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 .bxtspace { flex: 1 1 auto; }
 /* the Palette menu: its categories, expanding into the box cards themselves */
 #bxtPalMenu { min-width: 384px; }
-#bxtDatasetMenu { min-width: 330px; }
-#bxtDatasetMenu .bxhint { font-size: 11.5px; color: var(--ink-faint);
-                          padding: 2px 8px 8px; line-height: 1.45; }
-#bxtDatasetMenu .bxdsrow { display: flex; align-items: center; gap: 8px;
-                           padding: 5px 8px; border-top: 1px solid rgba(255,255,255,.06); }
-#bxtDatasetMenu .bxdsname { font-family: var(--mono); font-size: 12px; color: var(--ink); }
-#bxtDatasetMenu .bxdsmeta { color: var(--ink-faint); font-size: 11px; flex: 1; }
 .bxtcat { display: flex; align-items: center; gap: 6px; cursor: pointer;
           padding: 6px 9px; border-radius: 7px;
           font: 600 10px var(--mono); letter-spacing: .09em; text-transform: uppercase;
@@ -783,8 +776,6 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
             onclick="window.open('/docs', '_blank')">Docs</span>
       <span class="bxtbtn" id="bxtPalette" title="add a box to the canvas">Palette ▾</span>
       <div class="bxtdrop" id="bxtPalMenu" hidden></div>
-      <span class="bxtbtn" id="bxtDataset" title="training data: the dataset box and its rows">Dataset ▾</span>
-      <div class="bxtdrop" id="bxtDatasetMenu" hidden></div>
       <span class="bxtbtn" id="bxtBackend" title="where the heavy work runs">Backend ▾</span>
       <div class="bxtdrop" id="bxtBackendMenu" hidden></div>
       <span class="bxtbtn off" id="bxtRunBtn" title="connect a backend first — Backend ▾">Run ▾</span>
@@ -4173,8 +4164,7 @@ function bxtForm(mode) {
 function bxtExport() { return bxtForm("export"); }
 function bxtImport() { return bxtForm("import"); }
 function bxtDropsClose(keep) {
-  for (const id of ["bxtFilesMenu", "bxtPalMenu", "bxtDatasetMenu", "bxtBackendMenu",
-                     "bxtRunMenu", "bxtVramMenu"]) {
+  for (const id of ["bxtFilesMenu", "bxtPalMenu", "bxtBackendMenu", "bxtRunMenu", "bxtVramMenu"]) {
     if (id === keep) continue;
     const m = $(id);
     if (m) m.hidden = true;
@@ -4191,11 +4181,6 @@ function bxtToggle(id) {
 }
 function bxtFilesToggle() { return BX.up ? false : bxtToggle("bxtFilesMenu"); }
 function bxtPaletteToggle() { return bxtToggle("bxtPalMenu"); }
-function bxtDatasetToggle() {
-  const open = bxtToggle("bxtDatasetMenu");
-  if (open) bxRenderDatasetMenu();             // the rows list, fresh
-  return open;
-}
 function bxtVramToggle() {
   const open = bxtToggle("bxtVramMenu");
   if (open) bxRenderEstimate();                // the live vram line, fresh
@@ -5014,7 +4999,6 @@ function bxtInit() {
   bxtBackendLoad();                            // the remembered backend choice
   wire("bxtFiles", bxtFilesToggle);
   wire("bxtPalette", bxtPaletteToggle);
-  wire("bxtDataset", bxtDatasetToggle);
   wire("bxtBackend", bxtBackendToggle);
   wire("bxtRunBtn", bxtRunToggle);
   wire("bxtVram", bxtVramToggle);
@@ -6383,6 +6367,7 @@ const BX_PALETTE = () => [
                ["norm", "norm box"]]],
   ["text", [["tokenize", "tokenizer box"], ["detokenize", "de-tokenizer box"],
             ["hf", "huggingface model box"]]],
+  ["Dataset", [["dataset", "dataset box"]]],
   ["tensor ops", [["act", "activation box"], ["op", "operation box"],
                   ["script", "script box"], ["sample", "sample box"]]],
   ["blocks", [["attn", "attention box"], ["ssm", "state space box"],
@@ -6402,35 +6387,6 @@ function bxPalCard(kind, label) {
 function bxDatasetRowCount(n) {                // rows typed in, or "file"
   if (n.file) return "file";
   return String(n.text || "").split("\n").filter(l => l.trim()).length;
-}
-function bxRenderDatasetMenu() {
-  const menu = $("bxtDatasetMenu");
-  if (!menu) return;
-  menu.innerHTML = "";
-  const grid = mk("div", { class: "bxtcards" });
-  grid.appendChild(bxPalCard("dataset", "dataset box"));
-  menu.appendChild(grid);
-  menu.appendChild(mk("div", { class: "bxhint",
-    text: "one row per line: prompt<TAB>completion, or JSONL. Wire the box into "
-          + "a loss box's second dot to train on its rows." }));
-  const here = (BX.nodes || []).filter(x => x.kind === "dataset");
-  if (here.length) {
-    menu.appendChild(mk("div", { class: "bxtcat", text: "on this canvas" }));
-    for (const n of here) {
-      const rows = bxDatasetRowCount(n);
-      const row = mk("div", { class: "bxdsrow" });
-      row.appendChild(mk("span", { class: "bxdsname", text: n.name || "dataset" }));
-      row.appendChild(mk("span", { class: "bxdsmeta",
-                                  text: rows === "file" ? "from its file" : rows + " rows" }));
-      const edit = mk("span", { class: "chip tiny", text: "edit rows" });
-      edit.addEventListener("click", () => {
-        bxtDropsClose();
-        bxForm(n.kind, null, n, "dataset");
-      });
-      row.appendChild(edit);
-      menu.appendChild(row);
-    }
-  }
 }
 function bxRenderPalette() {
   const menu = $("bxtPalMenu");

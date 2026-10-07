@@ -531,7 +531,7 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(top.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output"], "Input and Output are the first cards, not a category");
   eql(menu.children.filter(c => c.className === "bxtcat").map(c => c.textContent),
-    ["AI", "weights", "text", "tensor ops", "blocks", "containers"],
+    ["AI", "weights", "text", "Dataset", "tensor ops", "blocks", "containers"],
     "and only the categories are listed below");
   // the AI category holds the agent box
   menu.children.find(c => c.textContent === "AI").click();
@@ -551,6 +551,10 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output", "tokenize", "detokenize", "hf"],
     "text holds the tokenizer pair and the huggingface model");
+  // the Dataset category holds the dataset box
+  menu.children.find(c => c.textContent === "Dataset").click();
+  eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
+    ["input", "output", "dataset"], "Dataset holds the dataset box");
   // one category at a time: opening another closes the first
   menu.children.find(c => c.textContent === "tensor ops").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
