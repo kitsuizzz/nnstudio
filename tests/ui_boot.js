@@ -3431,13 +3431,25 @@ check("the dataset table: csv rows, columns, dtypes — and the cells edit", () 
   n.colt = ["", "", "int64"];
   eql(__t.bxTableType(n, 2), "int64", "an override wins");
 
-  // the grid renders flat: one cell per value
+  // the grid renders text in the cells — no boxes standing around
   const pane = document.createElement("div");
   __t.bxDatasetFill(pane, n);
-  eql(pane.querySelectorAll(".bxcell").length, 6, "two rows by three columns");
-  eql(pane.querySelectorAll(".bxcolname").map(i => i.value),
+  const vals = pane.querySelectorAll(".bxval");
+  eql(vals.length, 6, "two rows by three columns of text");
+  eql(vals.map(v => v.textContent).slice(0, 3), ["a", "c", "x"],
+     "…as plain text in the cells");
+  eql(pane.querySelectorAll(".bxnameval").map(i => i.textContent),
     ["prompt", "completion", "chosen"], "…under their names");
+  eql(pane.querySelectorAll(".bxcell").length, 0, "and no text boxes anywhere");
   ok(pane.querySelectorAll(".bxthumb").length === 0, "no media, no thumbnails");
+
+  // clicking a cell brings up the editor; the edit lands and text returns
+  vals[0]._parent.dispatchEvent({ type: "click" });
+  const editor = pane.querySelectorAll(".bxcell")[0];
+  ok(editor, "clicking a cell brings up the editor");
+  editor.value = "A";
+  editor.dispatchEvent({ type: "change" });
+  eql(__t.bxTableRead(n).rows[0], ["A", "c", "x"], "the edit lands in the rows");
 
   // bookkeeping travels with the design
   n.colw = [80, 0, 120];

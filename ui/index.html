@@ -285,10 +285,9 @@
   .bxlogpane { position: relative; width: 100%; height: 100%; display: flex;
                flex-direction: column; background: #14171a; border: 1px solid #2a2f34;
                border-radius: 8px; overflow: hidden; font-size: 12px; color: #c9ced3; }
-  /* the dataset box's table: nothing but straight lines, like a sheet —
-     no rounded pane, no text-box chrome; the gridlines are the table */
+  /* the dataset box's table: nothing but straight lines and text — no pane
+     look, no text boxes; an editor appears only while a cell is being typed */
   .bxflat { border: 0 !important; border-radius: 0 !important; }
-  .bxflat .bxchip, .bxflat .bxbbtn { border-radius: 0; }
   .bxsheet { overflow: auto; }
   .bxdf { border-collapse: collapse; width: 100%; font-size: 11.5px;
           table-layout: fixed; border-radius: 0; }
@@ -305,10 +304,22 @@
   .bxletter:hover .bxcolbtn { visibility: visible; }
   .bxletter .bxcolbtn:hover { color: #f97316; }
   .bxdf .bxname { background: #1b1f23; position: relative; padding: 0; }
-  .bxcolname { width: 100%; border: 0; border-radius: 0; background: transparent;
-               color: #e5e5e5; font: 600 11px/1.4 var(--mono); padding: 4px 4px;
-               outline: none; appearance: none; -webkit-appearance: none; }
-  .bxcolname::placeholder { color: #4b5563; font-weight: 400; }
+  .bxval { padding: 3px 6px; overflow: hidden; text-overflow: ellipsis;
+           white-space: nowrap; cursor: cell; color: #c9ced3;
+           font: 11.5px/1.6 var(--mono); }
+  .bxval.bxnum { text-align: right; }
+  .bxval.bxdim { color: #4b5563; }
+  .bxnameval { padding: 4px 6px; overflow: hidden; text-overflow: ellipsis;
+               white-space: nowrap; cursor: text; color: #e5e5e5;
+               font: 600 11px/1.5 var(--mono); }
+  .bxnameval.bxdim { color: #4b5563; font-weight: 400; }
+  .bxcolname, .bxcell {
+    width: 100%; height: 100%; border: 0; border-radius: 0;
+    background: rgba(249,115,22,.10); color: #e5e5e5;
+    font: 11.5px/1.6 var(--mono); padding: 3px 6px;
+    outline: none; appearance: none; -webkit-appearance: none; }
+  .bxcolname { font-weight: 600; }
+  .bxcolname:focus, .bxcell:focus { box-shadow: inset 0 0 0 2px #f97316; }
   .bxdtype { position: absolute; right: 8px; top: 3px; font-size: 9px;
              color: #6b7280; background: transparent;
              padding: 0 4px; border: 0; border-left: 1px solid #2f353b;
@@ -319,12 +330,6 @@
   .bxdf .bxrowno { background: #1b1f23; color: #6b7280; text-align: center;
                    font-family: var(--mono); font-size: 10px; width: 34px;
                    user-select: none; }
-  .bxcell { width: 100%; height: 100%; border: 0; border-radius: 0;
-            background: transparent; color: #c9ced3;
-            font: 11.5px/1.6 var(--mono); padding: 3px 6px;
-            outline: none; appearance: none; -webkit-appearance: none; }
-  .bxcell:focus { box-shadow: inset 0 0 0 2px #f97316; }  /* a straight ring */
-  .bxnum { text-align: right; }
   .bxdel { cursor: pointer; color: #6b7280; text-align: center; width: 22px; }
   .bxdel:hover { color: #f87171; }
   .bxthumb { max-height: 46px; max-width: 100%; display: block; cursor: zoom-in; }
@@ -335,8 +340,10 @@
              display: flex; align-items: center; justify-content: center;
              z-index: 1000; cursor: zoom-out; }
   .bxlight img, .bxlight video { max-width: 88vw; max-height: 84vh; }
-  .bxhint2 { padding: 4px 10px; color: #8a8a8a; font-size: 11px; }
+  .bxhint2 { padding: 3px 8px; color: #8a8a8a; font-size: 11px; }
   .bxhint2.warn { color: #fbbf24; }
+  .bxlink { color: #a3a3a3; cursor: pointer; padding: 0 4px; }
+  .bxlink:hover { color: #f97316; }
   .bxgrip { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px;
             cursor: nwse-resize;
             background: linear-gradient(135deg, transparent 45%, #3b4248 45%,
@@ -2797,15 +2804,15 @@ function bxLightbox(url, isVideo) {
                            : mk("img", { src: url, alt: "" }));
   document.body.appendChild(back);
 }
-function bxDatasetFill(pane, n) {              // the dataframe, in the box
+function bxDatasetFill(pane, n) {              // the table: lines and text
   if (!pane) return;
   pane.innerHTML = "";
   bxBehaveInside(pane);
+  if (pane.classList) pane.classList.add("bxflat");   // no pane look at all
   const stopEv = (e) => {
     if (e && e.preventDefault) e.preventDefault();
     if (e && e.stopPropagation) e.stopPropagation();
   };
-  if (pane.classList) pane.classList.add("bxflat");   // straight lines only
   const file = String(n.file || "").trim();
   let t = null, readOnly = false, note = null;
   if (file) {                                  // rows live in a file: preview it
@@ -2833,30 +2840,9 @@ function bxDatasetFill(pane, n) {              // the dataframe, in the box
   const cols = t.cols, rows = t.rows;
   const dtypes = cols.map((_, i) => ((n.colt && n.colt[i]) || "") ||
                                     bxDtypeInfer(rows.map(r => r[i])));
-  const head = mk("div", { class: "bxphead" });
-  head.appendChild(mk("span", { class: "bxptitle", text: n.name || "dataset" }));
-  head.appendChild(mk("span", { class: "bxchip ok",
-                                text: rows.length + " \u00d7 " + cols.length }));
-  const btn = (label, fn, title) => {
-    const b = mk("span", { class: "bxbbtn", text: label });
-    if (title) b.title = title;
-    b.addEventListener("mousedown", stopEv);
-    b.addEventListener("click", fn);
-    return b;
-  };
-  if (!readOnly)
-    head.appendChild(btn("+ row", () => {
-      bxTableAddRow(n);
-      bxCommit();
-      bxRender();
-    }, "add a row at the bottom"));
-  head.appendChild(btn("\u2197", () => { bxDatasetExpand(n); bxRender(); },
-                       "expand / shrink the table"));
-  pane.appendChild(head);
-
   const CAP = 200;
   const scroll = mk("div", { class: "bxpbody bxsheet" });
-  const table = mk("table", { class: "bxdf" });   // gridlines are the table
+  const table = mk("table", { class: "bxdf" });
   const cg = mk("colgroup", {});
   cg.appendChild(mk("col", { style: "width:34px" }));
   cols.forEach((_, i) => {
@@ -2900,18 +2886,35 @@ function bxDatasetFill(pane, n) {              // the dataframe, in the box
   nr.appendChild(mk("th", { class: "bxcorner" }));
   cols.forEach((c, i) => {
     const th = mk("th", { class: "bxname" });
-    const inp = mk("input", { class: "bxcolname", type: "text", value: c,
-                              placeholder: bxColLetter(i),
-                              title: "the column's name — empty is fine",
-                              disabled: readOnly || null });
-    inp.addEventListener("mousedown", stopEv);
-    inp.addEventListener("change", () => {
-      bxTableRenameCol(n, i, inp.value);
-      bxCommit();
-    });
-    th.appendChild(inp);
+    const showName = () => {
+      th.innerHTML = "";
+      const val = mk("div", { class: "bxnameval" + (c ? "" : " bxdim"),
+                              text: c || bxColLetter(i),
+                              title: "the column's name \u2014 empty is fine" });
+      val.addEventListener("mousedown", stopEv);
+      val.addEventListener("click", editName);
+      th.appendChild(val);
+    };
+    const editName = () => {
+      if (readOnly) return;
+      th.innerHTML = "";
+      const inp = mk("input", { class: "bxcolname", type: "text", value: c,
+                                placeholder: bxColLetter(i) });
+      inp.addEventListener("mousedown", stopEv);
+      inp.addEventListener("change", () => {
+        bxTableRenameCol(n, i, inp.value);
+        bxCommit();
+      });
+      inp.addEventListener("blur", showName);
+      inp.addEventListener("keydown", (e) => {
+        if ((e && e.key) === "Escape") { stopEv(e); showName(); }
+      });
+      th.appendChild(inp);
+      if (inp.focus) inp.focus();
+    };
+    showName();
     const dt = mk("span", { class: "bxdtype", text: dtypes[i],
-                            title: "the column's type — click to change it" });
+                            title: "the column's type \u2014 click to change it" });
     if (!readOnly) {
       dt.addEventListener("mousedown", stopEv);
       dt.addEventListener("click", () => {
@@ -2937,57 +2940,73 @@ function bxDatasetFill(pane, n) {              // the dataframe, in the box
   table.appendChild(thead);
 
   const tbody = mk("tbody");
-  const cells = {};
+  const tds = {};                              // cells by "row:col"
   let cur = { r: 0, c: 0 };
-  const mountCell = (td, ri, ci, v) => {       // the flat in-cell editor
+  const showCell = (td, ri, ci, v) => {        // text in the cell, nothing else
     td.innerHTML = "";
-    const inp = mk("input", { class: "bxcell", type: "text", value: v,
-                              disabled: readOnly || null });
+    const id = bxIsBlob(v);
+    if (id) {
+      const url = "/api/blob?id=" + encodeURIComponent(id);
+      if (bxBlobIsVideo(id))
+        td.appendChild(mk("div", { class: "bxfile",
+                                   text: "\u25b6 " + String(id).split(".").pop() }));
+      else
+        td.appendChild(mk("img", { class: "bxthumb", src: url, alt: "" }));
+      return;
+    }
+    const val = mk("div", { class: "bxval"
+                            + (["int64", "float64"].indexOf(dtypes[ci]) >= 0 ? " bxnum" : "")
+                            + (v ? "" : " bxdim"), text: v });
+    td.appendChild(val);
+  };
+  const editCell = (td, ri, ci) => {           // the editor: only while typing
+    if (readOnly) return;
+    cur = { r: ri, c: ci };
+    const t2 = bxTableRead(n);
+    const v = (t2.rows[ri] && t2.rows[ri][ci] != null) ? String(t2.rows[ri][ci]) : "";
+    td.innerHTML = "";
+    const inp = mk("input", { class: "bxcell", type: "text", value: v });
     inp.addEventListener("mousedown", stopEv);
-    inp.addEventListener("focus", () => { cur = { r: ri, c: ci }; });
     inp.addEventListener("change", () => {
       bxTableSetCell(n, ri, ci, inp.value);
       bxCommit();
+    });
+    inp.addEventListener("blur", () => {
+      const t3 = bxTableRead(n);
+      showCell(td, ri, ci, (t3.rows[ri] && t3.rows[ri][ci] != null)
+                           ? String(t3.rows[ri][ci]) : "");
     });
     inp.addEventListener("keydown", (e) => {
       const k = (e && e.key) || "";
       if (k === "Enter") {
         stopEv(e);
-        const t2 = cells[(ri + (e.shiftKey ? -1 : 1)) + ":" + ci];
-        if (t2 && t2.focus) t2.focus();
+        bxTableSetCell(n, ri, ci, inp.value);
+        bxCommit();
+        const below = tds[(ri + (e.shiftKey ? -1 : 1)) + ":" + ci];
+        if (below) editCell(below, ri + (e.shiftKey ? -1 : 1), ci);
       } else if (k === "Escape") {
-        inp.value = v;
+        showCell(td, ri, ci, v);               // back to what the row held
       }
     });
     td.appendChild(inp);
-    cells[ri + ":" + ci] = inp;
+    if (inp.focus) inp.focus();
   };
   rows.slice(0, CAP).forEach((r, ri) => {
     const tr = mk("tr");
     tr.appendChild(mk("th", { class: "bxrowno", text: String(ri + 1) }));
     cols.forEach((_, ci) => {
       const v = r[ci] != null ? String(r[ci]) : "";
-      const id = bxIsBlob(v);
       const td = mk("td", {});
       td._r = ri;
       td._c = ci;
-      if (id) {                                // a media cell shows the media
-        const url = "/api/blob?id=" + encodeURIComponent(id);
-        if (bxBlobIsVideo(id))
-          td.appendChild(mk("div", { class: "bxfile",
-                                     text: "\u25b6 " + String(id).split(".").pop() }));
-        else
-          td.appendChild(mk("img", { class: "bxthumb", src: url, alt: "" }));
-        td.addEventListener("mousedown", stopEv);
-        td.addEventListener("click", () => bxLightbox(url, bxBlobIsVideo(id)));
-        if (!readOnly)
-          td.addEventListener("dblclick", () => mountCell(td, ri, ci, v));
-      } else {
-        mountCell(td, ri, ci, v);
-        const inp = cells[ri + ":" + ci];
-        if (inp && ["int64", "float64"].indexOf(dtypes[ci]) >= 0)
-          inp.classList.add("bxnum");          // numbers live on the right
-      }
+      tds[ri + ":" + ci] = td;
+      showCell(td, ri, ci, v);
+      td.addEventListener("mousedown", stopEv);
+      td.addEventListener("click", () => {
+        const id = bxIsBlob(bxTableRead(n).rows[ri] ? bxTableRead(n).rows[ri][ci] : "");
+        if (id) bxLightbox("/api/blob?id=" + encodeURIComponent(id), bxBlobIsVideo(id));
+        else editCell(td, ri, ci);
+      });
       tr.appendChild(td);
     });
     const del = mk("td", { class: "bxdel", text: "\u00d7" });
@@ -3050,12 +3069,32 @@ function bxDatasetFill(pane, n) {              // the dataframe, in the box
                                 text: "showing " + CAP + " of " + rows.length + " rows" }));
   const noTok = !(String(n.repo || "").trim() || String(n.vocab || "").length);
   const strip = mk("div", { class: "bxhint2" + (noTok ? " warn" : "") });
-  strip.textContent = rows.length + " rows \u00d7 " + cols.length + " cols \u00b7 "
-    + t.format
+  strip.textContent = (n.name ? n.name + " \u00b7 " : "")
+    + rows.length + " rows \u00d7 " + cols.length + " cols \u00b7 " + t.format
     + (n.repo ? " \u00b7 " + String(n.repo).split("/").pop()
       : n.vocab ? " \u00b7 vocab " + String(n.vocab).length
       : " \u00b7 no tokenizer");
   pane.appendChild(strip);
+  if (!readOnly) {                             // plain text controls, no boxes
+    const ctl = mk("div", { class: "bxhint2" });
+    const link = (label, fn, title) => {
+      const b = mk("span", { class: "bxlink", text: label });
+      if (title) b.title = title;
+      b.addEventListener("mousedown", stopEv);
+      b.addEventListener("click", fn);
+      return b;
+    };
+    ctl.appendChild(link("+ row", () => {
+      bxTableAddRow(n);
+      bxCommit();
+      bxRender();
+    }, "add a row at the bottom"));
+    ctl.appendChild(link("expand \u2197", () => {
+      bxDatasetExpand(n);
+      bxRender();
+    }, "expand / shrink the table"));
+    pane.appendChild(ctl);
+  }
   if (note) pane.appendChild(mk("div", { class: "bxhint2", text: note }));
   const grip = mk("div", { class: "bxgrip" });
   grip.addEventListener("mousedown", (ev) => bxAgentGrip(ev, n));
@@ -4270,8 +4309,11 @@ function bxCard(n) {
   if (outs.length)
     g.appendChild(svg("rect", { x: n.x + w - 9, y: n.y + 2, width: 18, height: h - 4, rx: 7,
                                 class: "drail out", "data-node": n.id }));
-  g.appendChild(svg("rect", { x: n.x, y: n.y, width: w, height: h, rx: 9, class: "drect" }));
-  g.appendChild(svgText(n.x + 9, n.y + 15, bxKindLabel(n.kind), "dtype " + n.kind));
+  const isSheet = n.kind === "dataset";       // the table is the box: no card
+  g.appendChild(svg("rect", { x: n.x, y: n.y, width: w, height: h,
+                              rx: isSheet ? 0 : 9, class: "drect" }));
+  if (!isSheet)
+    g.appendChild(svgText(n.x + 9, n.y + 15, bxKindLabel(n.kind), "dtype " + n.kind));
   let rightX = w - 9;                          // the corner marks stack right-to-left
   if (err) { g.appendChild(svgText(n.x + rightX, n.y + 15, "!", "dwarn")); rightX -= 14; }
   else if (warn) { g.appendChild(svgText(n.x + rightX, n.y + 15, "!", "dwarn2")); rightX -= 14; }
@@ -4303,7 +4345,8 @@ function bxCard(n) {
   if (n.dtype && (n.kind === "layer" || n.kind === "embed" || n.kind === "norm" ||
                   (n.t && (n.kind === "op" || n.kind === "script"))))
     bottom += " \u00b7 " + n.dtype;              // the weights' dtype, from the file
-  g.appendChild(svgText(n.x + 9, n.y + h - 11, bxClip(bottom, 30), "dshape lower" + vcls));
+  if (!isSheet)
+    g.appendChild(svgText(n.x + 9, n.y + h - 11, bxClip(bottom, 30), "dshape lower" + vcls));
   const stateText = bxStateText(bxNodeState(n));  // the data the last run left here
   const task = n.kind === "agent" ? bxTask(n.task_id) : null;   // its agent task
   if (task && !preview) {                    // the ring: how far the task has got
@@ -4316,9 +4359,13 @@ function bxCard(n) {
   }
   if ((n.kind === "agent" || n.kind === "train" || n.kind === "dataset") && !preview) {
     const fo = svg("foreignObject",       // the display lives inside the box
-                   { x: n.x + 5, y: n.y + 40,
-                     width: Math.max(80, w - (n.kind === "dataset" ? 24 : 10)),
-                     height: Math.max(40, h - 46), class: "bxlogfo" });
+                   isSheet
+                     ? { x: n.x + 1, y: n.y + 1,           // the sheet fills it all
+                         width: Math.max(80, w - 20), height: Math.max(40, h - 2),
+                         class: "bxlogfo" }
+                     : { x: n.x + 5, y: n.y + 40,
+                         width: Math.max(80, w - 10),
+                         height: Math.max(40, h - 46), class: "bxlogfo" });
     const pane = mk("div", { class: "bxlogpane" });
     pane.setAttribute("data-agent", n.id);
     if (n.kind === "dataset") bxDatasetFill(pane, n);
@@ -4327,7 +4374,7 @@ function bxCard(n) {
     fo.appendChild(pane);
     g.appendChild(fo);
   }
-  if (bxRunErr && bxRunErr.ids && bxRunErr.ids.has(n.id))
+  if (!isSheet && bxRunErr && bxRunErr.ids && bxRunErr.ids.has(n.id))
     g.appendChild(svgText(n.x + 9, n.y + 48,
                           bxClip(bxRunErr.here === n.id
                                  ? String(bxRunErr.msg).replace(/^[^:]{1,80}:\s*/, "")
