@@ -223,8 +223,12 @@
         its own — that's the "nested" in nnstudio. Double-clicking again goes
         deeper; the strip above the canvas shows where you are and takes you back.</li>
     <li><b>Run it</b> — connect <span class="pill grey">Backend ▾</span> first, then
-        <span class="pill grey">Run ▾</span>. Each run leaves its numbers on the
-        boxes (click a box to see the values that passed through it).</li>
+        <span class="pill grey">Run ▾</span>. The <b>mode</b> toggle decides how the
+        weights are held: <b>inference</b> keeps no gradients (the lightest run —
+        dataset boxes stay idle); <b>training</b> lets the non-frozen weights keep
+        gradients, and a dataset box feeds the model's input so the loss runs on
+        its rows. Each run leaves its numbers on the boxes (click a box to see
+        the values that passed through it).</li>
     <li><b>Price it</b> — <span class="pill grey">VRAM ▾</span> shows how much
         memory the design's weights need and where they will live (GPU or system).
         Freeze nothing, move everything, see it change.</li>
@@ -661,6 +665,9 @@
     <li>Let it run. <b>Detach</b> whenever — the run checkpoints itself and the GPU
         is free. Days later, <b>resume</b>: same step, same learning rate, same
         place in the data. This is how you train on monthly GPU credits.</li>
+    <li>Or try the design without a task: <span class="pill grey">Run ▾</span> →
+        <b>training</b> mode. One batch from the dataset box passes through, the
+        loss box reports it, and the non-frozen weights keep gradients.</li>
   </ol>
   <pre><code>POST /api/tasks
 { "type": "train", "name": "my-run",

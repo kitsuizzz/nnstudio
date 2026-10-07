@@ -170,10 +170,12 @@ def usage():
     return u
 
 
-def _canvas_key(canvas, device):
-    """Is this the design the agent already has loaded? Compared by content."""
+def _canvas_key(canvas, device, mode="inference"):
+    """Is this the design the agent already has loaded? Compared by content —
+    and by mode: an inference graph and a training graph hold their weights
+    differently (no gradients vs. kept), so a mode switch is a new graph."""
     return hashlib.sha1(
-        json.dumps([device, canvas], sort_keys=True, separators=(",", ":"),
+        json.dumps([device, mode, canvas], sort_keys=True, separators=(",", ":"),
                    default=str).encode()).hexdigest()
 
 
@@ -352,7 +354,10 @@ def serve_session(sock, name, log):
                     from nn_torch import compile_canvas, estimate_canvas  # the bundled engine
                     device = _device()
                     canvas = msg.get("canvas") or {}
-                    key = _canvas_key(canvas, device)
+                    mode = str(msg.get("mode") or "inference")
+                    if mode not in ("inference", "training"):
+                        mode = "inference"
+                    key = _canvas_key(canvas, device, mode)
                     if (loaded["graph"] is not None and loaded.get("key") == key
                             and loaded.get("report") is not None):
                         rep = dict(loaded["report"])           # already here: no recompile
@@ -370,12 +375,15 @@ def serve_session(sock, name, log):
                         raise CanvasError("", why)
                     total = estimate_canvas(canvas, device)["bytes"]
                     on_box, _prog = _load_progress(rid, total, send, device)
-                    graph = compile_canvas(canvas, device=device, on_box=on_box)
+                    train = (mode == "training")
+                    graph = compile_canvas(canvas, device=device, on_box=on_box,
+                                           native=not train, train=train)
                     if total:
                         send({"type": "progress", "id": rid, "nodes": [], "done": 0,
                               "load": {"bytes": total, "total": total, "done": True}})
-                    graph.eval()
+                    graph.train() if train else graph.eval()
                     rep = graph.weight_report()
+                    rep["mode"] = mode
                     rep["tensors_total"] = len((canvas.get("weights") or {})) or None
                     rep["device"] = device
                     rep["ms"] = int((time.time() - t0) * 1000)
@@ -426,13 +434,17 @@ def serve_session(sock, name, log):
                     from nn_torch import compile_canvas, run_graph   # the bundled engine
                     device = _device()
                     canvas = msg.get("canvas") or {}
-                    key = _canvas_key(canvas, device)
+                    mode = str(msg.get("mode") or "inference")
+                    if mode not in ("inference", "training"):
+                        mode = "inference"
+                    key = _canvas_key(canvas, device, mode)
+                    train = (mode == "training")
                     reused = loaded["graph"] is not None and loaded["key"] == key
                     opts = dict(generate=int(msg.get("generate") or 0),
                                 temperature=float(0.8 if msg.get("temperature") is None
                                                   else msg.get("temperature")),
                                 input_id=msg.get("input"), output_id=msg.get("output"),
-                                sample_seed=int(msg.get("seed") or 1))
+                                sample_seed=int(msg.get("seed") or 1), train=train)
                     seq = []
                     sent = [0]                 # marks not yet streamed
                     last = [time.time()]
@@ -476,9 +488,11 @@ def serve_session(sock, name, log):
                         from nn_torch import estimate_canvas
                         total = estimate_canvas(canvas, device)["bytes"]
                         on_box, _prog = _load_progress(rid, total, send, device)
-                        graph = compile_canvas(canvas, device=device, on_box=on_box)
-                        graph.eval()
+                        graph = compile_canvas(canvas, device=device, on_box=on_box,
+                                               native=not train, train=train)
+                        graph.train() if train else graph.eval()
                         rep = graph.weight_report()
+                        rep["mode"] = mode
                         rep["tensors_total"] = len((canvas.get("weights") or {})) or None
                         rep["device"] = device
                         rep["ms"] = int((time.time() - t0) * 1000)
@@ -492,6 +506,7 @@ def serve_session(sock, name, log):
                         result = run_graph(graph, canvas, msg.get("feeds") or {},
                                            on_node=on_node, on_step=on_step, **opts)
                     result["device"] = device
+                    result["mode"] = mode
                     result["loaded"] = reused
                     if seq:
                         result["flow"] = seq             # the whole order, for the app

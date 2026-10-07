@@ -925,6 +925,7 @@ class Handler(BaseHTTPRequestHandler):
         agent.progress = None                    # a fresh data-flow for this run
         reply = agent.request({"type": "run", "canvas": canvas,
                                "feeds": data.get("feeds") or {},
+                               "mode": str(data.get("mode") or "inference"),
                                "generate": int(data.get("generate") or 0),
                                "temperature": float(0.8 if data.get("temperature") is None
                                                     else data.get("temperature")),
@@ -953,7 +954,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": False,
                         "error": "no backend connected \u2014 Backend \u2192 Local"}, 409)
             return
-        reply = agent.request({"type": "load", "canvas": canvas}, timeout=3600)
+        reply = agent.request({"type": "load", "canvas": canvas,
+                               "mode": str(data.get("mode") or "inference")},
+                              timeout=3600)
         if reply is None:
             self._json({"ok": False,
                         "error": "the backend did not answer (or is gone)"}, 504)

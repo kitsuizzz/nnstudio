@@ -696,7 +696,7 @@ check("the Run menu: dark until a backend is established, then it runs", () => {
      "…with current ram usage");
   ok(specs.indexOf("6.1 / 32.0 GB") >= 0 && specs.indexOf("19%") >= 0,
      "…and current vram usage");
-  ok(chips().indexOf("run the design") >= 0, "…and the run action");
+  ok(chips().some(c => c.indexOf("run the design") >= 0), "…and the run action");
   ok(chips().indexOf("load weights") >= 0 && chips().indexOf("load all on") < 0,
      "…one load button — the ratio bar decides where it goes");
   ok(chips().indexOf("offload") >= 0, "…and the offload button that frees the backend");

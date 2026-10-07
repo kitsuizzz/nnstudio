@@ -749,6 +749,13 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 .bxtbtn:hover { color: var(--ink); border-color: rgba(249,115,22,.6); }
 .bxtbtn.off { opacity: .4; cursor: default; }
 .bxtbtn.off:hover { color: var(--ink-dim); border-color: var(--panel-brd); }
+/* the Run button is the app's main action, so it is filled, not outlined */
+#bxtRunBtn { color: #1a120b; background: var(--accent); border-color: var(--accent);
+             padding: 3px 15px; }
+#bxtRunBtn:hover { color: #1a120b; border-color: var(--accent); }
+#bxtRunBtn.off { opacity: 1; color: var(--ink-dim); cursor: default;
+                 background: rgba(249,115,22,.22); border-color: rgba(249,115,22,.45); }
+#bxtRunBtn.off:hover { color: var(--ink-dim); border-color: rgba(249,115,22,.45); }
 .bxtdrop { position: absolute; top: 32px; left: 10px; z-index: 40; min-width: 158px; padding: 4px;
            max-height: 76vh; overflow-y: auto;
            background: rgba(20,20,20,.98); border: 1px solid var(--panel-brd);
@@ -781,6 +788,15 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 #bxtRunMenu input.bxoff { flex: 1; min-width: 96px; accent-color: var(--accent);
                           height: 16px; }
 #bxtRunMenu .wmode { margin-left: auto; font: 11px var(--mono); color: var(--ink-dim); }
+#bxtRunMenu .modeseg { display: flex; gap: 4px; }
+#bxtRunMenu .mseg { flex: 1 1 0; cursor: pointer; text-align: center;
+                    border: 1px solid var(--panel-brd); border-radius: 0;
+                    background: rgba(0,0,0,.25); padding: 4px 10px;
+                    font: 600 11px var(--mono); color: var(--ink-dim); user-select: none; }
+#bxtRunMenu .mseg:hover { color: var(--ink); border-color: rgba(249,115,22,.6); }
+#bxtRunMenu .mseg.on { color: #1a120b; background: var(--accent); border-color: var(--accent); }
+#bxtRunMenu .mseg.on:hover { color: #1a120b; border-color: var(--accent); }
+#bxtRunMenu .mseg.busy { opacity: .5; cursor: default; }
 .bxtmi { display: block; padding: 5px 9px; border-radius: 0; cursor: pointer;
          font: 12px var(--mono); color: var(--ink); white-space: nowrap; }
 .bxtmi:hover { background: rgba(255,255,255,.07); }
@@ -4942,7 +4958,8 @@ function bxtBackendRender() {
 // a saved Modal key under Remote. Then Run hands the canvas to the agent over
 // the stateful control channel and shows what came back.
 let BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
-              loaded: null, loading: false, loadKey: null, offloading: false,
+              loaded: null, mode: "inference", warmMode: null,
+              loading: false, loadKey: null, offloading: false,
               msg: "", error: false, running: false, gen: 0, temp: 0 };
 let bxUsageTimer = null;                       // a fast usage read while an action runs
 function bxSpecRow(pane, k, v) {
@@ -5216,9 +5233,38 @@ function bxtRunRender() {
     menu.appendChild(mk("div", { class: "bxbhint",
       text: "0 tokens is one forward; temperature 0 picks the most likely id" }));
   }
+  menu.appendChild(mk("div", { class: "mhead", text: "mode" }));
+  const seg = mk("div", { class: "modeseg" });
+  for (const m of ["inference", "training"]) {
+    const on = (BXRUN.mode || "inference") === m;
+    const b = mk("span", { class: "mseg" + (on ? " on" : "") +
+                            ((BXRUN.running || BXRUN.loading) ? " busy" : ""),
+                           text: m });
+    b.title = m === "inference"
+      ? "no gradients are kept \u2014 the lightest run"
+      : "the non-frozen weights keep gradients; the dataset boxes feed the run";
+    b.addEventListener("click", () => {
+      if (BXRUN.running || BXRUN.loading) return;
+      BXRUN.mode = m;
+      bxtRunRender();
+    });
+    seg.appendChild(b);
+  }
+  menu.appendChild(seg);
+  menu.appendChild(mk("div", { class: "bxbhint",
+    text: (BXRUN.mode || "inference") === "training"
+      ? "the non-frozen weights keep gradients; a dataset box feeds the model's "
+      + "input, and the loss runs on its rows"
+      : "the weights need no gradients \u2014 the lightest run; dataset boxes "
+      + "stay idle" }));
+  if (BXRUN.warmMode && BXRUN.warmMode !== (BXRUN.mode || "inference"))
+    menu.appendChild(mk("div", { class: "bxbhint",
+      text: "the warm weights are " + BXRUN.warmMode + " \u2014 the next run "
+          + "rebuilds them for " + (BXRUN.mode || "inference") }));
   const row = mk("div", { class: "rrow" });
   const go = mk("span", { class: "chip tiny",
-                          text: BXRUN.running ? "running\u2026" : "run the design" });
+                          text: BXRUN.running ? "running\u2026"
+                               : "run the design \u00b7 " + (BXRUN.mode || "inference") });
   go.addEventListener("click", () => { if (!BXRUN.running && !BXRUN.loading) bxtRunGo(); });
   row.appendChild(go);
   menu.appendChild(row);
@@ -5274,7 +5320,7 @@ function bxtRunLoad() {                        // the whole design, loaded warm
     }, 900);
   const name = (BXRUN.local.agent && BXRUN.local.agent.name) || "the backend";
   fetch("/api/load", { method: "POST", headers: { "Content-Type": "application/json" },
-                       body: JSON.stringify({ canvas }) })
+                       body: JSON.stringify({ canvas, mode: BXRUN.mode || "inference" }) })
     .then(r => r.json().then(d => ({ ok: r.ok, d })))
     .then(res => {
       BXRUN.loading = false;
@@ -5283,6 +5329,7 @@ function bxtRunLoad() {                        // the whole design, loaded warm
       if (!res.ok || !res.d || !res.d.ok)
         throw new Error((res.d && res.d.error) || "the load failed");
       BXRUN.loaded = res.d;
+      BXRUN.warmMode = (res.d && res.d.mode) || null;
       BXRUN.msg = "";
       bxtRunRender();
       fetchBackend();                          // the agent just measured — show it now
@@ -5291,6 +5338,7 @@ function bxtRunLoad() {                        // the whole design, loaded warm
       BXRUN.loading = false;
       if (prog) clearInterval(prog);
       bxUsageWatch(false);
+      BXRUN.warmMode = null;                   // a failed load frees the backend's weights
       BXRUN.error = true;                      // it stays until the next load/run
       bxtRunMsg("could not load on " + name + " \u2014 " + String((e && e.message) || e));
       fetchBackend();
@@ -5453,6 +5501,7 @@ function bxtRunOffload() {                     // let the backend drop everythin
       if (!res.ok || !res.d || !res.d.ok)
         throw new Error((res.d && res.d.error) || "the offload failed");
       BXRUN.loaded = null;                     // nothing is warm any more
+      BXRUN.warmMode = null;
       const b = res.d.before || {}, a = res.d.after || {};
       const num = (v) => (v == null ? "?" : Number(v).toFixed(1));
       BXRUN.msg = "offloaded \u00b7 ram " + num(b.ram_used_gb) + " \u2192 " + num(a.ram_used_gb)
@@ -5542,7 +5591,7 @@ function bxtRunGo() {
   const grows = BX.nodes.filter(n => n.kind === "tokenize" &&
                                      !BX.edges.some(e => e.to === n.id))
     .concat(BX.nodes.filter(n => n.kind === "input"));
-  const body = { canvas, feeds };
+  const body = { canvas, feeds, mode: BXRUN.mode || "inference" };
   const gen = Math.max(0, Math.round(Number(BXRUN.gen) || 0));
   if (gen > 0 && outs.length && grows.length) {
     body.generate = gen;                       // the loop grows the ids and samples
@@ -5566,6 +5615,7 @@ function bxtRunGo() {
         err.box = res.d && res.d.box;
         throw err;
       }
+      BXRUN.warmMode = (res.d && res.d.mode) || null;   // which mode the warm weights are in
       bxRunResult(res.d);                      // paint it all at once, tail included
       fetchBackend();                          // the run may have moved the memory
     })
@@ -5578,6 +5628,7 @@ function bxtRunGo() {
       if (/out of memory|not enough memory|allocate/i.test(why))
         why += " \u2014 free the backend with offload (weights \u2192 offload), "
              + "or lighten the design";
+      BXRUN.warmMode = null;                   // a failed run frees the backend's weights
       bxMarkRunError({ nid: e && e.nid, box: e && e.box, error: why });
       BXRUN.error = true;                      // it stays until the next run
       bxRender();

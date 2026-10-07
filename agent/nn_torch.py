@@ -8,7 +8,10 @@ order the UI reads its dots in). On top of that:
 
   * `run`   — one forward pass; every box's output is captured (shape + stats)
               so the UI can put the value on the card. An optional generate
-              loop samples ids from an output box.
+              loop samples ids from an output box. `mode` decides how the
+              weights are held: "inference" (the default) asks for no
+              gradients at all; "training" lets the non-frozen weights keep
+              them and reads the design's dataset boxes.
   * `train` — backprop through every weight that is not frozen (the existing
               `frozen` flag, read through nested boxes), AdamW/SGD, char-level
               next-token cross-entropy, eval, samples, a checkpoint.
@@ -570,9 +573,11 @@ _DTYPE_NAMES = {
 _DTYPE_NAMES = {k: v for k, v in _DTYPE_NAMES.items() if v is not None}
 
 
-def param_grad(dtype, frozen):
-    """Only float tensors can ask for gradients — ints and bools never do."""
-    return (not frozen) and (dtype.is_floating_point or dtype.is_complex)
+def param_grad(dtype, frozen, train=False):
+    """Only float tensors can ask for gradients — ints and bools never do.
+    And only in a training graph: an inference run never backprops, so its
+    weights ask for nothing and hold nothing."""
+    return train and (not frozen) and (dtype.is_floating_point or dtype.is_complex)
 
 
 def _rand(shape, dtype, gen, uniform=None, mean=0.0, std=0.02):
@@ -686,11 +691,12 @@ def estimate_canvas(canvas, default_device="cpu"):
 
 class Box(nn.Module):
     """One canvas box. Weight-bearing kinds own parameters; a nested box owns
-    a Graph. `frozen`/`off` are inherited from the enclosing levels."""
+    a Graph. `frozen`/`off` are inherited from the enclosing levels; `train`
+    says the graph will backprop — only then do its weights ask for grads."""
 
     def __init__(self, node, seed=0, parent_path="", frozen=False, off=False,
                  loader=None, dtype=torch.float32, gguf_file=None,
-                 device=None, on_box=None, native=True, store=None):
+                 device=None, on_box=None, native=True, train=False, store=None):
         super().__init__()
         self.node = node
         self.kind = node.get("kind")
@@ -719,7 +725,7 @@ class Box(nn.Module):
         self.last = None
         gen = torch.Generator(device="cpu").manual_seed(_seed_for(seed, node.get("id") or self.name))
         dtype = box_dtype(node, dtype)          # its weights, its own dtype
-        grad = param_grad(dtype, self.frozen)   # ints/bools never ask for gradients
+        grad = param_grad(dtype, self.frozen, train)   # ints/bools (and inference) never ask
 
         if self.kind == "layer":
             din, dout = node.get("din"), node.get("dout")
@@ -794,7 +800,7 @@ class Box(nn.Module):
                                frozen=self.frozen, off=self.off, dtype=dtype,
                                gguf_file=node.get("file") or gguf_file,   # the file reads through
                                device=want, on_box=on_box, native=self.native,
-                               store=store)
+                               train=train, store=store)
         if self.kind != "custom":
             self.to(want)                       # its device, right as it is built: a
                                                 # gpu-bound weight never stages on the cpu
@@ -1387,7 +1393,7 @@ class Graph(nn.Module):
 
     def __init__(self, doc, seed=0, path="", frozen=False, off=False,
                  dtype=torch.float32, gguf_file=None, device=None, on_box=None,
-                 native=True, store=None):
+                 native=True, train=False, store=None):
         super().__init__()
         self.path = path
         self.gguf_file = gguf_file
@@ -1395,6 +1401,7 @@ class Graph(nn.Module):
         self.store = store if store is not None else WeightStore()
         self._ctx_dtype = dtype
         self._ctx_frozen = bool(frozen)
+        self._ctx_train = bool(train)
         self._ctx_device = device
         nodes = [dict(n) for n in (doc.get("nodes") or [])]
         edges = list(doc.get("edges") or [])
@@ -1425,7 +1432,7 @@ class Graph(nn.Module):
                 self.boxes[n["id"]] = Box(n, seed=seed, parent_path=self.path,
                                           frozen=frozen, off=off, loader=self._bind, dtype=dtype,
                                           gguf_file=self.gguf_file, device=device, on_box=on_box,
-                                          native=self.native, store=self.store)
+                                          native=self.native, train=train, store=self.store)
                 if on_box is not None:
                     on_box(n)               # compile progress: every box, any depth
             except CanvasError as e:             # the app marks this box on the canvas
@@ -1463,7 +1470,8 @@ class Graph(nn.Module):
         kind = node.get("kind")
         want = _node_device(node, self._ctx_device)
         dtype = box_dtype(node, self._ctx_dtype)
-        grad = param_grad(dtype, self._ctx_frozen or bool(node.get("frozen")))
+        grad = param_grad(dtype, self._ctx_frozen or bool(node.get("frozen")),
+                          self._ctx_train)
         store = self.store
         weight = blocks = bias = None
         quant = None
@@ -2070,27 +2078,32 @@ def _box_name(canvas, nid):
 
 def run(canvas, feeds, seed=0, device="cpu", generate=0, temperature=0.8,
         top_k=0, top_p=1.0, sample_seed=1, input_id=None, output_id=None,
-        max_len=512, on_node=None, on_step=None, on_box=None):
+        max_len=512, on_node=None, on_step=None, on_box=None, mode="inference"):
     """Compile the design, then run it — one forward pass (or a short
-    generate). Returns per-box values for the UI plus the generated ids."""
-    graph = compile_canvas(canvas, seed=seed, device=device, on_box=on_box)
+    generate). Returns per-box values for the UI plus the generated ids.
+    `mode` is "inference" (the default: the weights need no gradients) or
+    "training" (the non-frozen weights keep them; dataset boxes feed it)."""
+    train = (mode == "training")
+    graph = compile_canvas(canvas, seed=seed, device=device, on_box=on_box,
+                           native=not train, train=train)
     return run_graph(graph, canvas, feeds, generate=generate, temperature=temperature,
                      top_k=top_k, top_p=top_p, sample_seed=sample_seed,
                      input_id=input_id, output_id=output_id, max_len=max_len,
-                     on_step=on_step,
-                     on_node=on_node)
+                     on_step=on_step, on_node=on_node, train=train)
 
 
 def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
               top_k=0, top_p=1.0, sample_seed=1, input_id=None, output_id=None,
-              max_len=512, on_node=None, on_step=None):
+              max_len=512, on_node=None, on_step=None, train=False):
     """The forward itself, on an already-compiled graph — the agent keeps one
     loaded, so a re-run pays no compile. `on_node` hears each box's full path
     as its data lands, data-flow order, nested boxes included. `on_step(k)`
     fires before each forward pass — k = 0 is the prompt, then one per token —
-    so a watcher can re-walk the graph live instead of showing a stale trail."""
+    so a watcher can re-walk the graph live instead of showing a stale trail.
+    `train` marks a training run: the weights keep gradients, and the
+    design's dataset boxes read their rows as the run's batch."""
     t0 = time.time()
-    graph.eval()
+    graph.train() if train else graph.eval()
 
     def prep(feed_map):
         return {k: (v if (torch.is_tensor(v) or isinstance(v, str))
@@ -2111,8 +2124,42 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
             e.nid = next((n.get("id") for n in canvas.get("nodes", [])
                           if n.get("name") == e.box), None)
         raise
+    if train:
+        # the training run reads the design's dataset boxes: their rows are
+        # the batch — ids into the model's input, labels to the loss box
+        def _ds_nodes(nodes):
+            for n in nodes or []:
+                if n.get("kind") == "dataset":
+                    yield n
+                if isinstance(n.get("inner"), dict):
+                    for m in _ds_nodes((n.get("inner") or {}).get("nodes")):
+                        yield m
+        for i, dn in enumerate(list(_ds_nodes(canvas.get("nodes")))):
+            did = dn.get("id")
+            dbox = graph.boxes[did] if did in graph.boxes else None
+            if dbox is None:
+                for b in graph.modules():
+                    if isinstance(b, Box) and b.node.get("id") == dn.get("id"):
+                        dbox = b
+                        break
+            if dbox is None:
+                raise CanvasError(dn.get("name") or "dataset",
+                                  "it sits inside a box the run cannot reach")
+            rows = dataset_rows(dn)
+            if not rows:
+                raise CanvasError(dn.get("name") or "dataset",
+                                  "it has no rows to train on — paste some, "
+                                  "or point it at a file")
+            size = max(1, int(dn.get("batch") or 4))
+            ids, labels = dataset_batch(dn, rows, 0, size)
+            dbox.batch = labels.to(dbox.device or "cpu")
+            if i == 0:
+                iid = _find_kind(canvas, "input")
+                if iid:
+                    feeds[iid] = ids     # the model's input reads the rows
     generated = []
-    with torch.no_grad():
+
+    def passes():
         if on_step:
             on_step(0)                             # the prompt pass
         vals = graph(feeds=feeds, on_node=on_node)
@@ -2139,6 +2186,13 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                 if on_step:
                     on_step(len(generated))                # a fresh sweep: token k
                 vals = graph(feeds=feeds, on_node=on_node)  # the finished text lands too
+        return vals
+
+    if train:
+        vals = passes()               # gradients on: the weights keep them
+    else:
+        with torch.no_grad():
+            vals = passes()
     values = {}
     for path, v in graph.collect().items():
         st = tensor_stats(v)
@@ -2162,16 +2216,18 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
 
 
 def compile_canvas(canvas, seed=0, device="cpu", dtype=torch.float32, gguf_file=None,
-                   on_box=None, native=True):
+                   on_box=None, native=True, train=False):
     """Build the module for a top-level canvas document, every box placed
     where its `place` field says (unset boxes take `device`) — boxes move to
     their device as they are built, so nothing stages on the cpu first.
     `on_box(node)` hears every box as it lands, any nesting depth. `native`
     lets frozen gguf layers keep their raw blocks (training compiles with
-    native=False: masters stay f16/f32, exactly as before)."""
+    native=False: masters stay f16/f32, exactly as before). `train=True`
+    marks a training graph: its non-frozen weights ask for gradients; an
+    inference graph asks for none."""
     try:
         graph = Graph(dict(canvas), seed=seed, path="", dtype=dtype, gguf_file=gguf_file,
-                      device=device or "cpu", on_box=on_box, native=native)
+                      device=device or "cpu", on_box=on_box, native=native, train=train)
     except (MemoryError, RuntimeError) as e:
         msg = str(e)
         if isinstance(e, MemoryError) or "allocate" in msg or "out of memory" in msg.lower():
@@ -2210,7 +2266,7 @@ class Trainer:
         self.progress = progress or (lambda **kw: None)
         self.should_stop = should_stop or (lambda: False)
         self.graph = compile_canvas(canvas, seed=int(self.cfg.get("seed") or 0),
-                                    device=device, native=False)
+                                    device=device, native=False, train=True)
         self.graph.train()
         self.chars, self.stoi, self.itos = build_vocab(text)
         ids = torch.tensor(encode(text, self.stoi), dtype=torch.long)
@@ -2553,7 +2609,7 @@ class DesignTrainer:
         self.canvas = canvas
         self.cfg = cfg
         self.device = device
-        self.graph = compile_canvas(canvas, device=device, native=False)
+        self.graph = compile_canvas(canvas, device=device, native=False, train=True)
         self.graph.train()
         self.input_id = cfg.get("input") or _find_kind(canvas, "input")
         self.loss_id = cfg.get("loss") or _find_kind(canvas, "loss")

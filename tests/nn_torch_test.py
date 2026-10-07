@@ -6,6 +6,8 @@
   * the ops' shapes (reshape, transpose, concat, matmul, rope)
   * char-level training: the loss falls, samples draw, the checkpoint lands
   * frozen boxes are counted and skipped, through nested levels
+  * the run's mode: inference holds no gradients; training keeps them and
+    reads the dataset boxes
   * the generate loop samples valid ids; integer feeds reach a layer
   * a GGUF tensor loads dequantized and oriented [out, in]
   * describe() counts trainable vs frozen; an unwired box is refused by name
@@ -205,6 +207,64 @@ def frozen_skipped():
 
 
 check("freeze is read through and skipped", frozen_skipped)
+
+
+def run_modes():
+    V = 4
+    c = canvas([
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=V, din=1, dout=8),
+        n("layer", "l1", din=8, dout=8, frozen=True),
+        n("layer", "l2", din=8, dout=V),
+        n("output", "logits", din=V),
+        n("dataset", "data", vocab="abcd", text="ab\tcd\nxy\tzq"),
+        n("loss", "loss", din=V),
+    ], [edge("tok", "emb"), edge("emb", "l1"), edge("l1", "l2"),
+        edge("l2", "logits"),
+        edge("data", "loss", 0, 1), edge("logits", "loss", 0, 0)])
+    # the default is an inference graph: nothing asks for gradients
+    g = T.compile_canvas(c)
+    assert not g.boxes["l2"].w.requires_grad
+    assert not g.boxes["l1"].w.requires_grad
+    # a training graph: the non-frozen weights keep gradients, frozen ones do not
+    g = T.compile_canvas(c, train=True)
+    assert g.boxes["l2"].w.requires_grad
+    assert not g.boxes["l1"].w.requires_grad
+    # the loss of a training run keeps its graph, and backprop reaches the
+    # non-frozen weights only
+    ds = [x for x in c["nodes"] if x.get("kind") == "dataset"][0]
+    rows = T.dataset_rows(ds)
+    ids, labels = T.dataset_batch(ds, rows, 0, 4)
+    g.boxes["data"].batch = labels
+    loss = g(feeds={"tok": ids})["loss"]
+    assert loss.requires_grad, "a training run's loss must keep its graph"
+    loss.backward()
+    assert g.boxes["l2"].w.grad is not None, "gradients must reach the non-frozen weights"
+    assert g.boxes["l1"].w.grad is None, "frozen weights take no gradient"
+    # a training run reads the datasets: the loss runs on their rows
+    res = T.run(c, {}, mode="training")
+    assert res["values"]["loss"]["shape"] == [], res["values"]["loss"]
+    assert res["values"]["loss"]["scalar"] is not None
+    # an inference run of the same design still refuses its idle dataset
+    try:
+        T.run(c, {}, mode="inference")
+        raise AssertionError("an inference run must not feed the dataset")
+    except T.CanvasError:
+        pass
+    # without a dataset box, a training run is just a forward that keeps grads
+    c2 = canvas([
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=V, din=1, dout=8),
+        n("layer", "l2", din=8, dout=V),
+        n("output", "logits", din=V),
+    ], [edge("tok", "emb"), edge("emb", "l2"), edge("l2", "logits")])
+    assert not T.compile_canvas(c2)(feeds={"tok": torch.tensor([0, 1])})["logits"].requires_grad
+    assert T.compile_canvas(c2, train=True)(feeds={"tok": torch.tensor([0, 1])})["logits"].requires_grad
+    res = T.run(c2, {"tok": [0, 1]}, mode="training")
+    assert res["values"]["logits"]["shape"] == [2, V], res["values"]["logits"]
+
+
+check("the run's mode: inference holds no grads, training keeps them", run_modes)
 
 
 def generate_samples():
