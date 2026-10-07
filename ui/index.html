@@ -285,8 +285,10 @@
   .bxlogpane { position: relative; width: 100%; height: 100%; display: flex;
                flex-direction: column; background: #14171a; border: 1px solid #2a2f34;
                border-radius: 8px; overflow: hidden; font-size: 12px; color: #c9ced3; }
-  /* the dataset box's table: nothing but straight lines and text — no pane
-     look, no text boxes; an editor appears only while a cell is being typed */
+  /* the dataset box is a card like every other box; its sheet sits inset
+     inside the card as a flat grid of square block cells — straight lines
+     only, and a cell being edited keeps the square highlight, never a text
+     box */
   .bxflat { border: 0 !important; border-radius: 0 !important; }
   .bxsheet { overflow: auto; }
   .bxdf { border-collapse: collapse; width: 100%; font-size: 11.5px;
@@ -803,6 +805,8 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 ::selection { background: rgba(249,115,22,.32); }
 html { color-scheme: dark; }
 :focus-visible { outline: 2px solid rgba(249,115,22,.6); outline-offset: 1px; border-radius: 6px; }
+  /* …except the dataset's cells: their editors stay square blocks */
+  .bxcell:focus-visible, .bxcolname:focus-visible { border-radius: 0; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); border-radius: 8px;
@@ -3069,8 +3073,7 @@ function bxDatasetFill(pane, n) {              // the table: lines and text
                                 text: "showing " + CAP + " of " + rows.length + " rows" }));
   const noTok = !(String(n.repo || "").trim() || String(n.vocab || "").length);
   const strip = mk("div", { class: "bxhint2" + (noTok ? " warn" : "") });
-  strip.textContent = (n.name ? n.name + " \u00b7 " : "")
-    + rows.length + " rows \u00d7 " + cols.length + " cols \u00b7 " + t.format
+  strip.textContent = rows.length + " rows \u00d7 " + cols.length + " cols \u00b7 " + t.format
     + (n.repo ? " \u00b7 " + String(n.repo).split("/").pop()
       : n.vocab ? " \u00b7 vocab " + String(n.vocab).length
       : " \u00b7 no tokenizer");
@@ -4309,11 +4312,10 @@ function bxCard(n) {
   if (outs.length)
     g.appendChild(svg("rect", { x: n.x + w - 9, y: n.y + 2, width: 18, height: h - 4, rx: 7,
                                 class: "drail out", "data-node": n.id }));
-  const isSheet = n.kind === "dataset";       // the table is the box: no card
+  const isSheet = n.kind === "dataset";       // its sheet is inset inside the card
   g.appendChild(svg("rect", { x: n.x, y: n.y, width: w, height: h,
-                              rx: isSheet ? 0 : 9, class: "drect" }));
-  if (!isSheet)
-    g.appendChild(svgText(n.x + 9, n.y + 15, bxKindLabel(n.kind), "dtype " + n.kind));
+                              rx: 9, class: "drect" }));
+  g.appendChild(svgText(n.x + 9, n.y + 15, bxKindLabel(n.kind), "dtype " + n.kind));
   let rightX = w - 9;                          // the corner marks stack right-to-left
   if (err) { g.appendChild(svgText(n.x + rightX, n.y + 15, "!", "dwarn")); rightX -= 14; }
   else if (warn) { g.appendChild(svgText(n.x + rightX, n.y + 15, "!", "dwarn2")); rightX -= 14; }
@@ -4358,14 +4360,10 @@ function bxCard(n) {
                           Math.round(100 * bxTaskFraction(task)) + "%", "dringnum"));
   }
   if ((n.kind === "agent" || n.kind === "train" || n.kind === "dataset") && !preview) {
-    const fo = svg("foreignObject",       // the display lives inside the box
-                   isSheet
-                     ? { x: n.x + 1, y: n.y + 1,           // the sheet fills it all
-                         width: Math.max(80, w - 20), height: Math.max(40, h - 2),
-                         class: "bxlogfo" }
-                     : { x: n.x + 5, y: n.y + 40,
-                         width: Math.max(80, w - 10),
-                         height: Math.max(40, h - 46), class: "bxlogfo" });
+    const fo = svg("foreignObject",       // the display lives inside the card
+                   { x: n.x + 5, y: n.y + 40,
+                     width: Math.max(80, w - 10),
+                     height: Math.max(40, h - 46), class: "bxlogfo" });
     const pane = mk("div", { class: "bxlogpane" });
     pane.setAttribute("data-agent", n.id);
     if (n.kind === "dataset") bxDatasetFill(pane, n);
