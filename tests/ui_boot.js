@@ -216,7 +216,7 @@ globalThis.__t = {
   bxTaskFraction, bxArcPath, bxTaskSupersede,
   bxTasksFetch, bxTaskLogFetch, bxTasksApply, bxLogApply, bxLogState,
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
-  bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill,
+  bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
   bxTableRead, bxTableWrite, bxTableType, bxTableSetCell, bxTableRenameCol,
   bxTableInsertCol, bxTableDeleteCol, bxTableAddRow, bxTableDeleteRow,
@@ -412,6 +412,8 @@ check("the right-click menus: three add items, or remove", () => {
   eql(__t.bxKindLabel("layer"), "Fully Connected", "a layer box is labelled Fully Connected");
   eql(__t.bxKindLabel("custom"), "Nested", "…and a custom box is called Nested");
   eql(__t.bxKindLabel("input"), "input", "…the others keep their names");
+  eql(__t.bxKindLabel("train"), "Run", "…the train kind is labelled Run");
+  eql(__t.bxDefaultName("train"), "run 1", "…and a fresh one is named run 1");
   const tmp = __t.bxAdd("layer", 0, 0, {});
   ok(/^fully connected \d+$/.test(tmp.name), "a new one is named like: " + tmp.name);
   __t.bxRemove(tmp.id);
@@ -557,11 +559,12 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output", "tokenize", "detokenize", "hf"],
     "text holds the tokenizer pair and the huggingface model");
-  // the Dataset category holds the dataset box and the train box — the hub
+  // the Dataset category holds only the dataset box; the Run box is added
+  // from the Run menu
   menu.children.find(c => c.textContent === "Dataset").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
-    ["input", "output", "dataset", "train"],
-    "Dataset holds the dataset box and the train box");
+    ["input", "output", "dataset"],
+    "Dataset holds only the dataset box (the Run box is in the Run menu)");
   // one category at a time: opening another closes the first
   menu.children.find(c => c.textContent === "tensor ops").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
@@ -808,6 +811,46 @@ check("the Run menu: dark until a backend is established, then it runs", () => {
   ok(__t.bxtRunToggle() === true && !m.hidden, "…and Run opens");
   ok(state().indexOf("not wired yet") >= 0, "…saying the Modal transport is not wired yet");
   __t.bxtRunToggle();
+  __t.BX_BACKEND.mode = "local";
+  __t.BX_BACKEND.key = "";
+  __t.bxtRunRefresh();
+});
+
+check("the Run menu deploys the Run box when the canvas has none", () => {
+  const m = getEl("bxtRunMenu");
+  const state = () => m.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
+  const chips = () => m.querySelectorAll(".chip").map(e => e.textContent);
+  const trainCount = () => __t.BX.nodes.filter(n => n.kind === "train").length;
+  const disconnected = { local: { connected: false, agent: null }, inputs: {}, last: null,
+                         loaded: null, loading: false, loadKey: null, msg: "", running: false };
+  // a connected backend, and the canvas has no Run box yet
+  __t.BX_BACKEND.mode = "local";
+  __t.BX_BACKEND.key = "";
+  __t.BXRUN = { local: { connected: true, agent: { name: "gpu-box", remote: "127.0.0.1:1",
+      since: 1, last_seen: 1, specs: { name: "gpu-box", os: "Linux-test", cpu: "Test CPU",
+      cores: 16, ram_gb: 64, gpu: "NVIDIA RTX 5090", vram_gb: 32, device: "cuda",
+      cuda: true, torch: "2.13.0" } } },
+      inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
+      msg: "", running: false };
+  ok(trainCount() === 0, "the canvas starts with no Run box");
+  ok(__t.bxtRunToggle() === true && !m.hidden, "…and Run opens");
+  ok(chips().indexOf("add a Run box") >= 0, "…offering to add a Run box in the default inference state");
+  ok(state().indexOf("no Run box") >= 0, "…and explaining what the Run box is for");
+  // the chip deploys the box and dismisses the menu so the box shows on the canvas
+  const offer = m.querySelectorAll(".chip").find(c => c.textContent === "add a Run box");
+  offer.click();
+  const hub = __t.BX.nodes.find(n => n.kind === "train");
+  ok(hub && hub.name === "run 1", "the chip deploys a Run box named run 1");
+  ok(__t.bxTrainHub() && __t.bxTrainHub().id === hub.id, "…and it becomes the training hub");
+  ok(m.hidden, "…and the menu dismisses");
+  // re-open: the offer is gone, and the menu points at the box for the mode switch
+  ok(__t.bxtRunToggle() === true && !m.hidden, "…and it opens again");
+  ok(chips().indexOf("add a Run box") < 0, "…the offer is gone once a Run box exists");
+  ok(state().indexOf("live in the Run box") >= 0, "…pointing at the box for the mode switch");
+  // leave the canvas and the backend as the next block found them
+  __t.bxtRunToggle();
+  __t.bxRemove(hub.id);
+  __t.BXRUN = disconnected;
   __t.BX_BACKEND.mode = "local";
   __t.BX_BACKEND.key = "";
   __t.bxtRunRefresh();
@@ -3479,7 +3522,7 @@ check("the dataset table: csv rows, columns, dtypes — and the cells edit", () 
   ok(String(thumbs[0].src).indexOf(id) >= 0, "…served by its id");
 });
 
-check("the train box: the hub of the training — data, columns, signal, parameters", () => {
+check("the Run box: the hub of the training — data, columns, signal, parameters", () => {
   const tr = __t.bxAdd("train", 0, 0, {});
   const ds = __t.bxAdd("dataset", 0, 120, {});
   const out = __t.bxAdd("output", 0, 240, { din: 8 });
@@ -3520,7 +3563,7 @@ check("the train box: the hub of the training — data, columns, signal, paramet
   const tp = document.createElement("div");
   __t.bxTrainFill(tp, tr);
   eql(tp.querySelectorAll(".mhead").map(e => e.textContent), ["mode"],
-     "the train box's window opens with the mode switch");
+     "the Run box's window opens with the mode switch");
   const segs = tp.querySelectorAll(".mseg");
   eql(segs.map(e => e.textContent), ["inference", "training"],
      "…inference or training");

@@ -1128,6 +1128,7 @@ function bxKindLabel(kind) {
        : kind === "sample" ? "Sample"
        : kind === "hf" ? "HF model"
        : kind === "agent" ? "Agent"
+       : kind === "train" ? "Run"
        : kind === "custom" ? "Nested"
        : kind;
 }
@@ -1374,6 +1375,7 @@ function bxDefaultName(kind) {
              : kind === "sample" ? "sample"
              : kind === "hf" ? "hf model"
              : kind === "agent" ? "agent"
+             : kind === "train" ? "run"
              : kind === "custom" ? "nested" : kind;
   return word + " " + n;
 }
@@ -3189,7 +3191,7 @@ function bxDatasetFill(pane, n) {              // the table: lines and text
       let hasTrain = false;
       bxEveryBox(x => { if (x.kind === "train") hasTrain = true; });
       if (hasTrain) pane.appendChild(mk("div", { class: "bxhint2",
-        text: "training \u00b7 no train box reads this data" }));
+        text: "training \u00b7 no Run box reads this data" }));
     }
   }
   const grip = mk("div", { class: "bxgrip" });
@@ -3288,7 +3290,7 @@ function bxTrainSummary(h) {                       // what the engine will do, i
   if (!h.dataset) missing.push("no dataset bound");
   else {
     const ds = find(h.dataset);
-    if (!ds) missing.push("the train box's dataset is off the canvas");
+    if (!ds) missing.push("the Run box's dataset is off the canvas");
     else {
       const bits = [ds.name || h.dataset];
       let rows = null;
@@ -3345,7 +3347,7 @@ function bxTrainSummary(h) {                       // what the engine will do, i
       + (rl ? " — the policy, scored by the reward box"
             : " — the implicit loss on its output"));
   } else missing.push(rl
-    ? "rl training needs a target output box to sample from — bind one in the train box"
+    ? "rl training needs a target output box to sample from — bind one in the Run box"
     : "no signal — bind a target, or wire a dataset to a loss box");
   if (rl) {
     if (!h.reward) missing.push("no reward box — rl is scored by the reward box");
@@ -5592,28 +5594,30 @@ function bxtRunRender() {
       menu.appendChild(mk("div", { class: "bxbhint",
         text: "\u26a0 " + (is.box || "?") + ": " + is.what }));
   }
-  if ((BXRUN.mode || "inference") === "training") {
-    // the mode switch and the training's setup live in the train box now
-    const hub = bxTrainHub();
-    if (!hub) {
-      menu.appendChild(mk("div", { class: "mhead", text: "training" }));
-      menu.appendChild(mk("div", { class: "bxbhint",
-        text: "training mode needs a train box on the canvas \u2014 it holds "
-             + "the data, the signal and the mode switch" }));
-      const row = mk("div", { class: "rrow" });
-      const b = mk("span", { class: "chip tiny", text: "add a train box" });
-      b.addEventListener("click", () => {
-        bxMenuClose();
-        bxDropPalette("train", null);
-        bxtRunToggle();
-      });
-      row.appendChild(b);
-      menu.appendChild(row);
-    } else
-      menu.appendChild(mk("div", { class: "bxbhint",
-        text: "the mode switch and the training's setup live in the train box "
-             + "\u2014 the run here is one step; the full training starts there" }));
-  } else bxRunFeeds(menu);
+  // the Run box: the mode switch and the training's home. It is deployed
+  // from this menu (not the palette), so it is offered in every mode,
+  // including the default inference, where a Run box is what lets the
+  // design flip over to training.
+  menu.appendChild(mk("div", { class: "mhead", text: "run box" }));
+  const hub = bxTrainHub();
+  if (!hub) {
+    menu.appendChild(mk("div", { class: "bxbhint",
+      text: "no Run box on the canvas \u2014 it holds the mode switch, the "
+           + "data and the signal, and it's where the full training runs" }));
+    const row = mk("div", { class: "rrow" });
+    const b = mk("span", { class: "chip tiny", text: "add a Run box" });
+    b.addEventListener("click", () => {
+      bxMenuClose();
+      bxDropPalette("train", null);
+      bxtRunToggle();
+    });
+    row.appendChild(b);
+    menu.appendChild(row);
+  } else
+    menu.appendChild(mk("div", { class: "bxbhint",
+      text: "the mode switch and the training's setup live in the Run box "
+           + "\u2014 the run here is one step; the full training starts there" }));
+  if ((BXRUN.mode || "inference") !== "training") bxRunFeeds(menu);
   if (BXRUN.warmMode && BXRUN.warmMode !== (BXRUN.mode || "inference"))
     menu.appendChild(mk("div", { class: "bxbhint",
       text: "the warm weights are " + BXRUN.warmMode + " \u2014 the next run "
@@ -7640,7 +7644,7 @@ const BX_PALETTE = () => [
                ["norm", "norm box"]]],
   ["text", [["tokenize", "tokenizer box"], ["detokenize", "de-tokenizer box"],
             ["hf", "huggingface model box"]]],
-  ["Dataset", [["dataset", "dataset box"], ["train", "train box"]]],
+  ["Dataset", [["dataset", "dataset box"]]],
   ["tensor ops", [["act", "activation box"], ["op", "operation box"],
                   ["script", "script box"], ["sample", "sample box"]]],
   ["blocks", [["attn", "attention box"], ["ssm", "state space box"],
