@@ -41,6 +41,7 @@ function el(id) {
     appendChild(c) { c._parent = this; this.children.push(c); return c; },
     removeChild(c) { this.children = this.children.filter(x => x !== c); return c; },
     remove() { if (this._parent) this._parent.removeChild(this); },
+    get parentNode() { return this._parent; },
     insertAdjacentHTML() {}, setRangeText() {}, focus() {}, blur() {},
     scrollIntoView() {}, getBoundingClientRect() { return { x: 0, y: 0, width: 600, height: 400,
                                                             left: 0, top: 0, right: 600, bottom: 400 }; },
@@ -556,10 +557,11 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output", "tokenize", "detokenize", "hf"],
     "text holds the tokenizer pair and the huggingface model");
-  // the Dataset category holds the dataset box
+  // the Dataset category holds the dataset box and the train box — the hub
   menu.children.find(c => c.textContent === "Dataset").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
-    ["input", "output", "dataset"], "Dataset holds the dataset box");
+    ["input", "output", "dataset", "train"],
+    "Dataset holds the dataset box and the train box");
   // one category at a time: opening another closes the first
   menu.children.find(c => c.textContent === "tensor ops").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
@@ -3475,6 +3477,48 @@ check("the dataset table: csv rows, columns, dtypes — and the cells edit", () 
   const thumbs = pane2.querySelectorAll(".bxthumb");
   eql(thumbs.length, 1, "a blob cell renders a thumbnail");
   ok(String(thumbs[0].src).indexOf(id) >= 0, "…served by its id");
+});
+
+check("the train box: the hub of the training — data, columns, signal, parameters", () => {
+  const tr = __t.bxAdd("train", 0, 0, {});
+  const ds = __t.bxAdd("dataset", 0, 120, {});
+  const out = __t.bxAdd("output", 0, 240, { din: 8 });
+  // the form: every hub field, in order
+  __t.bxForm("train", null, tr, "train");
+  const labels = Array.from(getEl("bxmenu").children[0].children)
+    .filter(c => c.textContent);   // the field labels (the chip row carries no text)
+  eql(labels.map(c => c.textContent),
+      ["name", "data", "test data", "x col", "y col", "classes", "paradigm",
+       "target", "reward", "learning rate", "optimizer", "weight decay",
+       "batch", "steps", "grad clip", "save every", "eval every",
+       "temperature (rl)", "max tokens (rl)", "n samples (rl)"],
+      "the form names the data, the columns, the signal and every parameter");
+  const lab = (t) => labels.find(c => c.textContent === t);
+  ok(lab("reward").hidden, "the reward picker stays hidden while supervised");
+  ok(lab("temperature (rl)").hidden, "…and so do the rl sampling fields");
+  lab("paradigm").children[0].value = "rl";
+  lab("paradigm").children[0].dispatchEvent({ type: "change" });
+  ok(!lab("reward").hidden, "rl brings the reward picker back");
+  ok(!lab("n samples (rl)").hidden, "…and its sample fields");
+  __t.bxMenuClose();
+  // configuring lands the hub in the node
+  ok(__t.bxConfigure(tr.id, { name: "hub", dataset: ds.id, x_col: "a", y_col: "b",
+                                classes: "cat dog", paradigm: "supervised", target: out.id,
+                                lr: 0.01, batch: 8, steps: 40 }), "configuring lands");
+  eql([tr.name, tr.dataset, tr.x_col, tr.y_col, tr.paradigm, tr.target],
+      ["hub", ds.id, "A", "B", "supervised", out.id],
+      "the node binds the data, the columns and the signal");
+  eql(tr.classes, ["cat", "dog"], "…and the classes land as a list");
+  eql([tr.lr, tr.batch, tr.steps], [0.01, 8, 40], "…and the parameters as numbers");
+  // and it all travels with the design
+  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(tr));
+  eql([back.dataset, back.x_col, back.y_col, back.paradigm, back.target],
+      [ds.id, "A", "B", "supervised", out.id], "the hub survives the JSON round trip");
+  eql(back.classes, ["cat", "dog"], "…so do the classes");
+  eql([back.lr, back.batch, back.steps], [0.01, 8, 40], "…and so do the parameters");
+  __t.bxRemove(tr.id);
+  __t.bxRemove(ds.id);
+  __t.bxRemove(out.id);
 });
 
 if (failed) { console.log("ui_boot: " + failed + " failure(s)"); process.exit(1); }

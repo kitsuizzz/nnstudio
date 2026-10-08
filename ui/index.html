@@ -277,6 +277,17 @@
   .dedge.hot { stroke: #fbbf24; stroke-width: 2.4; }
   /* the data flow: a lit box, and light running along its wires */
   .dnode.flow .drect { stroke: #fdba74; stroke-width: 2; }
+  /* the training signal: where the labels come from, and what they score */
+  .dnode.tsrc .drect { stroke: #86efac; stroke-width: 2; }       /* the data's home */
+  .dnode.ttest .drect { stroke: #93c5fd; stroke-width: 2; }      /* the hold-out */
+  .dnode.tscored .drect, .dnode.tpolicy .drect,
+  .dnode.tscorer .drect { stroke: #fbbf24; stroke-width: 2.2; }  /* the signal's head */
+  .dedge.tgrad { stroke: #86efac; stroke-width: 2; stroke-dasharray: 5 9;
+                 animation: bxflow .5s linear infinite reverse; } /* gradients run backward */
+  .dtag { font-size: 9px; font-weight: 700; }
+  .dtag.tsrc { fill: #86efac; }
+  .dtag.ttest { fill: #93c5fd; }
+  .dtag.tscored, .dtag.tpolicy, .dtag.tscorer { fill: #fbbf24; }
   .dringbg { fill: none; stroke: #33383d; stroke-width: 4; }
   .dring { fill: none; stroke: #fdba74; stroke-width: 4; stroke-linecap: round; }
   .dringnum { fill: #c9c9c9; font-size: 8px; text-anchor: middle; }
@@ -976,6 +987,7 @@ let bxFlowNow = null;                          // the newest mark — where data
 let bxFlowRendered = 0;                        // batched draws: one per 40 ms
 let bxFlowPending = null;                      // the throttled draw, when one is due
 let bxFlowStep = null;                         // the forward pass the marks belong to
+let bxTrainTint = null;                        // the training signal's marks, at this level
 let bxRunErr = null;                           // the block a failed run pointed at
 let bxAudit = null;                            // connection problems on the design
 function bxCommit() {
@@ -2451,6 +2463,48 @@ function bxConfigure(id, vals) {
     bxPruneWires();              // an operation set back to one wire loses the extra dot
     bxSyncDoc();                 // …and the box that owns this list is told
   }
+  if (n.kind === "train") {                   // the hub: data, columns, signal, parameters
+    const onCanvas = (id) => {
+      if (!id) return false;
+      let hit = false;
+      bxEveryBox(x => { if (x.id === id) hit = true; });
+      return hit;
+    };
+    const bind = (key) => {                   // a stale id is dropped, not kept
+      if (vals[key] === undefined) return;
+      const id = String(vals[key] == null ? "" : vals[key]).trim();
+      n[key] = id && onCanvas(id) ? id : null;
+    };
+    bind("dataset"); bind("test_dataset"); bind("target"); bind("reward");
+    const col = (key) => {
+      if (vals[key] === undefined) return;
+      const c = String(vals[key] == null ? "" : vals[key]).trim().toUpperCase();
+      if (c) n[key] = bxClip(c, 8);
+    };
+    col("x_col"); col("y_col");
+    if (vals.classes !== undefined) {
+      const cs = String(vals.classes == null ? "" : vals.classes)
+        .split(/\s+/).filter(x => x).map(x => bxClip(x, 40));
+      n.classes = cs.length ? cs : null;      // y is a class label, not a row
+    }
+    if (vals.paradigm !== undefined)
+      n.paradigm = String(vals.paradigm) === "rl" ? "rl" : "supervised";
+    if (vals.optimizer !== undefined) {
+      const o = String(vals.optimizer == null ? "" : vals.optimizer);
+      if (o === "adamw" || o === "sgd") n.optimizer = o;
+    }
+    const num = (key, min) => {
+      if (vals[key] === undefined) return;
+      const raw = String(vals[key] == null ? "" : vals[key]).trim();
+      if (raw === "") return;                      // a blank field keeps the old value
+      const v = Number(raw);
+      if (isFinite(v) && v >= min) n[key] = v;    // junk keeps the old value
+    };
+    num("lr", 0); num("weight_decay", 0);
+    num("batch", 1); num("steps", 0); num("clip", 0);
+    num("save_every", 0); num("eval_every", 0);
+    num("temperature", 0); num("max_tokens", 0); num("n_samples", 1);
+  }
   if (vals.t !== undefined) {
     const bind = String(vals.t == null ? "" : vals.t).trim();
     n.t = bind ? bxClip(bind, 200) : null;               // the tensor(s) this box reads
@@ -3121,6 +3175,23 @@ function bxDatasetFill(pane, n) {              // the table: lines and text
     pane.appendChild(ctl);
   }
   if (note) pane.appendChild(mk("div", { class: "bxhint2", text: note }));
+  {                                     // which train box reads this data
+    const users = [];
+    bxEveryBox(x => {
+      if (x.kind !== "train") return;
+      if (x.dataset === n.id) users.push((x.name || x.id) + " \u00b7 training data");
+      else if (x.test_dataset === n.id) users.push((x.name || x.id) + " \u00b7 test split");
+    });
+    if (users.length)
+      pane.appendChild(mk("div", { class: "bxhint2",
+        text: "training \u00b7 " + users.join("  ") }));
+    else if ((BXRUN.mode || "inference") === "training") {
+      let hasTrain = false;
+      bxEveryBox(x => { if (x.kind === "train") hasTrain = true; });
+      if (hasTrain) pane.appendChild(mk("div", { class: "bxhint2",
+        text: "training \u00b7 no train box reads this data" }));
+    }
+  }
   const grip = mk("div", { class: "bxgrip" });
   grip.addEventListener("mousedown", (ev) => bxAgentGrip(ev, n));
   pane.appendChild(grip);
@@ -3155,45 +3226,324 @@ function bxColResize(ev, n, i, table) {        // drag the header edge
     window.addEventListener("mouseup", up);
   }
 }
-function bxTrainFill(pane, n) {              // the training display: loss, step,
-  pane.innerHTML = "";                        // samples — and the controls
+const TINT_TAG = { tsrc: "src", ttest: "test", tscored: "scored",
+                    tpolicy: "policy", tscorer: "scorer" };
+function bxTrainHub() {                           // the train node: training's home
+  for (const n of BX.nodes || []) if (n.kind === "train") return n;
+  return null;
+}
+function bxEdgePairs() {                          // mirrors the engine's _edge_pairs
+  const pairs = [];
+  const walk = (doc) => {
+    const byId = {};
+    for (const n of (doc.nodes || [])) byId[n.id] = n;
+    for (const e of (doc.edges || [])) {
+      const s = byId[e.from], d = byId[e.to];
+      if (s && d) pairs.push([s, d]);
+    }
+    for (const n of (doc.nodes || []))
+      if (n.kind === "custom" && n.inner) walk(n.inner);
+  };
+  walk({ nodes: BX.nodes, edges: BX.edges });
+  return pairs;
+}
+function bxTrainTintInfo() {                      // who carries the signal, at this level
+  if ((BXRUN.mode || "inference") !== "training") return null;
+  const hub = bxTrainHub();
+  if (!hub) return null;
+  const marks = new Map(), heads = [];
+  const mark = (id, cls) => { if (id && !marks.has(id)) marks.set(id, cls); };
+  if (hub.dataset) mark(hub.dataset, "tsrc");
+  if (hub.test_dataset) mark(hub.test_dataset, "ttest");
+  let wired = null;
+  for (const e of (BX.edges || [])) {             // a dataset→loss wire beats the binding
+    const s = bxNode(e.from), d = bxNode(e.to);
+    if (s && d && s.kind === "dataset" && d.kind === "loss") { wired = [s, d]; break; }
+  }
+  if (wired) {
+    mark(wired[0].id, "tsrc");
+    mark(wired[1].id, "tscored");
+    heads.push(wired[1].id);
+  } else if (hub.target) {
+    mark(hub.target, hub.paradigm === "rl" ? "tpolicy" : "tscored");
+    heads.push(hub.target);
+  }
+  if (hub.paradigm === "rl" && hub.reward) {
+    mark(hub.reward, "tscorer");
+    heads.push(hub.reward);
+  }
+  const edges = new Set();
+  for (const e of (BX.edges || []))
+    if (heads.indexOf(e.from) >= 0) edges.add(bxPathId(e.from));
+  return { marks, edges };
+}
+function bxTrainSummary(h) {                       // what the engine will do, in words
+  const lines = [], missing = [];
+  const rl = h.paradigm === "rl";
+  const find = (id) => {
+    let out = null;
+    if (id) bxEveryBox(x => { if (x.id === id) out = x; });
+    return out;
+  };
+  if (!h.dataset) missing.push("no dataset bound");
+  else {
+    const ds = find(h.dataset);
+    if (!ds) missing.push("the train box's dataset is off the canvas");
+    else {
+      const bits = [ds.name || h.dataset];
+      let rows = null;
+      if (ds.file) {
+        bits.push("rows in " + String(ds.file).split("/").pop());
+        const hit = (BX.dsCache || {})[ds.file];
+        if (hit && hit.ok) rows = (hit.rows || []).length;
+      } else {
+        rows = (bxTableRead(ds).rows || []).length;
+        if (rows) bits.push(rows + " rows");
+      }
+      bits.push("x " + (h.x_col || "A") + " \u2192 y " + (h.y_col || "B"));
+      if (h.classes && h.classes.length)
+        bits.push("y is a class label (" + h.classes.join(", ") + ")");
+      lines.push("data \u00b7 " + bits.join(" \u00b7 "));
+      if (rows === 0) missing.push("the dataset has no rows");
+    }
+  }
+  if (h.test_dataset) {
+    if (h.test_dataset === h.dataset) missing.push("the test split is the training dataset");
+    else {
+      const ts = find(h.test_dataset);
+      if (!ts) missing.push("the test dataset is off the canvas");
+      else {
+        const bits = [ts.name || h.test_dataset];
+        if (ts.file) bits.push("rows in " + String(ts.file).split("/").pop());
+        else {
+          const rows = (bxTableRead(ts).rows || []).length;
+          if (rows) bits.push(rows + " rows");
+          else bits.push("no rows yet");
+        }
+        lines.push("test \u00b7 " + bits.join(" \u00b7 "));
+      }
+    }
+  } else lines.push("test \u00b7 none — the curves stay train-only");
+  const wired = (function () {
+    for (const p of bxEdgePairs())
+      if (p[0].kind === "dataset" && p[1].kind === "loss") return p;
+    return null;
+  })();
+  if (wired)
+    lines.push("signal \u00b7 " + (wired[1].name || wired[1].id)
+               + " — a dataset\u2192loss wire beats the binding");
+  else if (h.target) {
+    const tg = find(h.target);
+    if (!tg) missing.push("the target output box is off the canvas");
+    else lines.push("signal \u00b7 " + (tg.name || h.target)
+      + (rl ? " — the policy, scored by the reward box"
+            : " — the implicit loss on its output"));
+  } else missing.push("no signal — bind a target, or wire a dataset to a loss box");
+  if (rl) {
+    if (!h.reward) missing.push("no reward box — rl is scored by the reward box");
+    else {
+      const rw = find(h.reward);
+      if (!rw) missing.push("the reward box is off the canvas");
+      else lines.push("reward \u00b7 " + (rw.name || h.reward));
+    }
+  }
+  let iid = null;
+  bxEveryBox(x => { if (x.kind === "input" && !iid) iid = x; });
+  if (!iid) missing.push("no input box for the model to read the rows");
+  let unfrozen = 0;
+  bxEveryBox(x => { if (bxWeightedBox(x) && !bxBoxFrozen(x)) unfrozen++; });
+  if (!unfrozen) missing.push("nothing to train — unfreeze a box first");
+  const pb = ["lr " + (h.lr != null ? h.lr : "3e-4"), h.optimizer || "adamw",
+              "batch " + (h.batch != null ? h.batch : 4),
+              h.steps ? "steps " + h.steps : "steps until detach",
+              "save every " + (h.save_every != null ? h.save_every : 50),
+              "eval every " + (h.eval_every != null ? h.eval_every : 50)];
+  if (h.weight_decay) pb.push("weight decay " + h.weight_decay);
+  if (h.clip != null && h.clip !== 1) pb.push("grad clip " + h.clip);
+  if (rl) pb.push("temperature " + (h.temperature != null ? h.temperature : 1),
+                  "max " + (h.max_tokens != null ? h.max_tokens : 16) + " tokens",
+                  (h.n_samples != null ? h.n_samples : 4) + " samples per row");
+  lines.push("params \u00b7 " + pb.join(" \u00b7 "));
+  return { lines, missing };
+}
+function bxTrainNote(n, msg) {
+  BXRUN.trainNotes = BXRUN.trainNotes || {};
+  if (msg) BXRUN.trainNotes[n.id] = msg; else delete BXRUN.trainNotes[n.id];
+  bxRender();
+}
+function bxTrainStart(n) {                        // the run button, for training
+  const sum = bxTrainSummary(n);
+  if (sum.missing.length) {
+    bxTrainNote(n, "fix before starting: " + sum.missing.join("; "));
+    return;
+  }
+  if (typeof fetch !== "function") {
+    bxTrainNote(n, "the app cannot reach the server");
+    return;
+  }
+  const canvas = (typeof bxExportCanvas === "function") ? bxExportCanvas() : null;
+  if (!canvas) { bxTrainNote(n, "the design cannot be exported from here"); return; }
+  fetch("/api/tasks", { method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ type: "train",
+                                                name: n.name || "training",
+                                                design: canvas }) })
+    .then(r => r.json())
+    .then(d => {
+      if (!d || !d.ok || !d.task)
+        throw new Error((d && d.error) || "the task could not start");
+      BXTASKS.byId[d.task.id] = d.task;
+      n.task_id = d.task.id;
+      bxCommit();
+      BXRUN.trainState = BXRUN.trainState || {};
+      BXRUN.trainState[n.id] = {};
+      BXRUN.trainHist = BXRUN.trainHist || {};
+      BXRUN.trainHist[n.id] = [];
+      BXRUN.trainSeen = BXRUN.trainSeen || {};
+      delete BXRUN.trainSeen[n.id];
+      bxTrainNote(n, "");
+      bxAgentSync();                               // the task list, and the box's chips
+      bxTrainPoll(true);
+    })
+    .catch(e => bxTrainNote(n, String((e && e.message) || e)));
+}
+function bxTrainLoadCkpt(n, st) {                 // train → inference, with the trained weights
+  if (typeof fetch !== "function" || !st || !st.saved_at) return;
+  if (BXRUN.running || BXRUN.loading) {
+    bxTrainNote(n, "wait for the run to finish first");
+    return;
+  }
+  BXRUN.mode = "inference";
+  const canvas = (typeof bxExportCanvas === "function") ? bxExportCanvas() : null;
+  if (!canvas) { bxTrainNote(n, "the design cannot be exported from here"); return; }
+  BXRUN.loading = true;
+  BXRUN.loadKey = "load";
+  BXRUN.error = false;
+  BXRUN.msg = "loading the last checkpoint\u2026";
+  bxRender();
+  bxtRunRender();
+  fetch("/api/load", { method: "POST", headers: { "Content-Type": "application/json" },
+                       body: JSON.stringify({ canvas, mode: "inference",
+                                               checkpoint: st.saved_at }) })
+    .then(r => r.json().then(d => ({ ok: r.ok, d })))
+    .then(res => {
+      BXRUN.loading = false;
+      if (!res.ok || !res.d || !res.d.ok)
+        throw new Error((res.d && res.d.error) || "the checkpoint could not be loaded");
+      BXRUN.loaded = res.d;
+      BXRUN.warmMode = (res.d && res.d.mode) || "inference";
+      bxtRunRender();
+      bxRender();
+      bxTrainNote(n, "loaded — the graph now carries the trained weights");
+      fetchBackend();
+    })
+    .catch(e => {
+      BXRUN.loading = false;
+      bxtRunRender();
+      bxRender();
+      bxTrainNote(n, String((e && e.message) || e));
+    });
+}
+function bxTrainFill(pane, n) {                   // the hub: setup, curves, the run's controls
+  pane.innerHTML = "";
+  bxBehaveInside(pane);
   const st = (BXRUN.trainState || {})[n.id] || {};
+  const t = n.task_id ? bxTask(n.task_id) : null;
+  const live = !!n.task_id && !st.error && (!t || t.status === "running");
+  const sum = bxTrainSummary(n);
   const head = mk("div", { class: "bxlogrow" });
   head.appendChild(mk("b", { text: n.task_id ? "training · " + n.task_id.slice(-6) : "training · no task" }));
   pane.appendChild(head);
+  for (const line of sum.lines)
+    pane.appendChild(mk("div", { class: "panehint", text: line }));
+  for (const why of sum.missing)
+    pane.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + why }));
   const strip = mk("div", { class: "panehint" });
   strip.textContent = "step " + (st.step != null ? st.step : "—")
       + (st.loss != null ? "  ·  loss " + Number(st.loss).toFixed(4) : "")
+      + (st.acc != null ? "  ·  acc " + Number(st.acc).toFixed(3) : "")
+      + (st.tloss != null ? "  ·  test loss " + Number(st.tloss).toFixed(4) : "")
+      + (st.tacc != null ? "  ·  test acc " + Number(st.tacc).toFixed(3) : "")
       + (st.saved_at ? "  ·  saved " + String(st.saved_at).split("/").slice(-1)[0] : "");
   pane.appendChild(strip);
   const hist = (BXRUN.trainHist || {})[n.id] || [];
-  if (hist.length > 1) {                       // the loss curve, as it happens
-    const w = 220, h = 54, max = Math.max(...hist), min = Math.min(...hist);
-    const span = Math.max(max - min, 1e-6);
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 " + w + " " + h);
-    svg.setAttribute("style", "width:100%;height:" + h + "px");
-    const pts = hist.map((v, i) => (i / (hist.length - 1) * w).toFixed(1) + "," +
-                                   (h - 3 - (v - min) / span * (h - 6)).toFixed(1)).join(" ");
-    const pl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-    pl.setAttribute("points", pts);
-    pl.setAttribute("fill", "none");
-    pl.setAttribute("stroke", "#f97316");
-    pl.setAttribute("stroke-width", "1.5");
-    svg.appendChild(pl);
-    pane.appendChild(svg);
+  if (hist.length > 1) {                          // solid: the train split · dashed: the test
+    const dual = (getTrain, getTest, color) => {
+      const all = [];
+      for (const h0 of hist) {
+        const a = getTrain(h0), b = getTest(h0);
+        if (a != null) all.push(a);
+        if (b != null) all.push(b);
+      }
+      if (all.length < 2) return;
+      const max = Math.max.apply(null, all), min = Math.min.apply(null, all);
+      const span = Math.max(max - min, 1e-6);
+      const w = 220, h = 54;
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+      svg.setAttribute("style", "width:100%;height:" + h + "px");
+      const line = (get, stroke, dash) => {
+        const ps = [];
+        for (let i = 0; i < hist.length; i++) {
+          const v = get(hist[i]);
+          if (v == null) continue;
+          ps.push((i / (hist.length - 1) * w).toFixed(1) + "," +
+                  (h - 3 - (v - min) / span * (h - 6)).toFixed(1));
+        }
+        if (ps.length < 2) return;
+        const pl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+        pl.setAttribute("points", ps.join(" "));
+        pl.setAttribute("fill", "none");
+        pl.setAttribute("stroke", stroke);
+        pl.setAttribute("stroke-width", "1.5");
+        if (dash) pl.setAttribute("stroke-dasharray", "4 3");
+        svg.appendChild(pl);
+      };
+      line(getTrain, color, false);
+      line(getTest, color, true);
+      pane.appendChild(svg);
+    };
+    dual(h0 => h0.loss, h0 => h0.tloss, "#f97316");
+    dual(h0 => h0.acc, h0 => h0.tacc, "#22c55e");
+    pane.appendChild(mk("div", { class: "bxbhint",
+      text: "solid — the train split · dashed — the test split" }));
   }
   const row = mk("div", { class: "rrow" });
-  const btn = (label, cmd, title) => {
-    const b = mk("span", { class: "chip tiny", text: label, title: title || "" });
-    b.addEventListener("click", () => bxTrainCmd(n, cmd));
+  const chip = (label, fn, title, off) => {
+    const b = mk("span", { class: "chip tiny" + (off ? " off" : ""),
+                            text: label, title: title || "" });
+    b.addEventListener("mousedown", (e) => { if (e && e.stopPropagation) e.stopPropagation(); });
+    b.addEventListener("click", () => {
+      if (off) { if (title) bxTrainNote(n, title); return; }
+      if (fn) fn();
+    });
     return b;
   };
-  row.appendChild(btn("save now", "save", "land a checkpoint where it stands"));
-  row.appendChild(btn("detach", "detach", "checkpoint and let the gpu go — resume later"));
-  row.appendChild(btn("resume", "resume", "pick up from the last checkpoint"));
-  row.appendChild(btn("hold", "pause", "stop stepping, keep the gpu"));
+  row.appendChild(chip("set up the training …",
+    () => { bxMenuClose(); bxForm("train", null, n, "train"); },
+    "the hub: data, columns, signal, parameters"));
+  if (live) {
+    row.appendChild(chip("start — already running", null,
+      "the task is live — save, hold or detach it", true));
+    row.appendChild(chip("save now", () => bxTrainCmd(n, "save"), "land a checkpoint where it stands"));
+    row.appendChild(chip("hold", () => bxTrainCmd(n, "pause"), "stop stepping, keep the gpu"));
+    row.appendChild(chip("detach", () => bxTrainCmd(n, "detach"), "checkpoint and let the gpu go"));
+  } else {
+    const first = sum.missing[0] || "ready";
+    row.appendChild(chip("start — " + first,
+      () => bxTrainStart(n),
+      sum.missing.length ? "fix before starting: " + sum.missing.join("; ") : "start training",
+      !!sum.missing.length));
+    if (n.task_id)
+      row.appendChild(chip("resume", () => bxTrainCmd(n, "resume"),
+        "pick up from the last checkpoint"));
+  }
+  if (st.saved_at)
+    row.appendChild(chip("load last checkpoint", () => bxTrainLoadCkpt(n, st),
+      "train → inference: run with the trained weights"));
   pane.appendChild(row);
+  if ((BXRUN.trainNotes || {})[n.id])
+    pane.appendChild(mk("div", { class: "bxbhint", text: BXRUN.trainNotes[n.id] }));
   if (st.error) pane.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + st.error }));
 }
 function bxTrainCmd(n, cmd) {
@@ -3220,10 +3570,11 @@ function bxTrainPoll(force) {                  // one poller for every train box
         BXRUN.trainState[n.id] = st;
         if (st.step != null && seen[n.id] !== st.step) {
           seen[n.id] = st.step;
-          BXRUN.trainHist = BXRUN.trainHist || {};
-          const hist = BXRUN.trainHist[n.id] = BXRUN.trainHist[n.id] || [];
-          if (st.loss != null) {
-            hist.push(st.loss);
+          if (st.loss != null || st.acc != null ||
+              st.tloss != null || st.tacc != null) {
+            BXRUN.trainHist = BXRUN.trainHist || {};
+            const hist = BXRUN.trainHist[n.id] = BXRUN.trainHist[n.id] || [];
+            hist.push({ loss: st.loss, acc: st.acc, tloss: st.tloss, tacc: st.tacc });
             if (hist.length > 200) hist.shift();
           }
         }
@@ -3485,10 +3836,27 @@ function bxJSONNode(n) {
     if (n.temperature != null) o.temperature = n.temperature;
     if (n.sample_seed != null) o.sample_seed = n.sample_seed;
   }
-  else if (n.kind === "agent" || n.kind === "train") {
+  else if (n.kind === "agent") {
     if (n.task_id) o.task_id = n.task_id;
     if (n.box) o.box = { w: Math.round(n.box.w || 480), h: Math.round(n.box.h || 320) };
     if (n.panel) o.panel = n.panel;      // {lines, autoscroll, debug, expand}
+    if (n.collapsed) o.collapsed = true;
+  }
+  else if (n.kind === "train") {
+    if (n.task_id) o.task_id = n.task_id;
+    if (n.dataset) o.dataset = n.dataset;
+    if (n.test_dataset) o.test_dataset = n.test_dataset;
+    if (n.x_col) o.x_col = n.x_col;
+    if (n.y_col) o.y_col = n.y_col;
+    if (n.classes) o.classes = n.classes;
+    if (n.paradigm) o.paradigm = n.paradigm;
+    if (n.target) o.target = n.target;
+    if (n.reward) o.reward = n.reward;
+    for (const k of ["lr", "weight_decay", "batch", "steps", "clip",
+                     "save_every", "eval_every", "temperature", "max_tokens", "n_samples"])
+      if (n[k] != null) o[k] = n[k];
+    if (n.box) o.box = { w: Math.round(n.box.w || 480), h: Math.round(n.box.h || 320) };
+    if (n.panel) o.panel = n.panel;      // {expand} — the display's size
     if (n.collapsed) o.collapsed = true;
   }
   else if (n.kind === "dataset") {
@@ -3823,8 +4191,32 @@ function bxJSONNodeFrom(o) {
   else if (o.kind === "loss") {
     if (typeof o.loss === "string") n.loss = o.loss;
   }
-  else if (o.kind === "agent" || o.kind === "train") {
+  else if (o.kind === "agent") {
     if (typeof o.task_id === "string" && o.task_id) n.task_id = o.task_id;
+    if (o.box && typeof o.box === "object")
+      n.box = { w: bxSize(o.box.w, 480), h: bxSize(o.box.h, 320) };
+    if (o.panel && typeof o.panel === "object") {
+      const p = o.panel;
+      n.panel = { lines: bxSize(p.lines, 200), autoscroll: p.autoscroll !== false,
+                  debug: !!p.debug, expand: !!p.expand };
+    }
+    if (o.collapsed) n.collapsed = true;
+  }
+  else if (o.kind === "train") {
+    if (typeof o.task_id === "string" && o.task_id) n.task_id = o.task_id;
+    for (const k of ["dataset", "test_dataset", "target", "reward"])
+      if (typeof o[k] === "string" && o[k]) n[k] = o[k];
+    for (const k of ["x_col", "y_col"])
+      if (typeof o[k] === "string" && o[k]) n[k] = o[k].trim().toUpperCase();
+    if (o.classes && typeof o.classes === "object" && o.classes.length)
+      n.classes = o.classes.map(x => String(x)).filter(x => x);
+    if (o.paradigm === "rl" || o.paradigm === "supervised") n.paradigm = o.paradigm;
+    if (o.optimizer === "adamw" || o.optimizer === "sgd") n.optimizer = o.optimizer;
+    for (const k of ["lr", "weight_decay", "batch", "steps", "clip",
+                     "save_every", "eval_every", "temperature", "max_tokens", "n_samples"]) {
+      const v = Number(o[k]);
+      if (o[k] != null && isFinite(v)) n[k] = v;
+    }
     if (o.box && typeof o.box === "object")
       n.box = { w: bxSize(o.box.w, 480), h: bxSize(o.box.h, 320) };
     if (o.panel && typeof o.panel === "object") {
@@ -4216,10 +4608,12 @@ function bxCard(n) {
   const warned = !preview && bxWarnBoxes.has(n.id);
   const warn = warned && !err;
   const fmark = preview ? null : bxNodePath(n);   // the mark this box carries
+  const tint = !preview && bxTrainTint ? bxTrainTint.marks.get(n.id) : null;
   const g = svg("g", { class: "dnode" + (bxSelBox(n.id) ? " sel" : "") + (err ? " err" : "") +
                             (warn ? " warn" : "") + (off ? " off" : "") +
                             (fmark != null && bxFlowSet.has(fmark) ? " flow" : "") +
                             (fmark != null && bxFlowLive(fmark) ? " now" : "") +
+                            (tint ? " " + tint : "") +
                             (bxRunErr && bxRunErr.ids && bxRunErr.ids.has(n.id) ? " runerr" : "") +
                             (bxAudit && bxAudit.ids && bxAudit.ids.has(n.id) ? " audit" : ""),
                        "data-id": n.id });
@@ -4339,6 +4733,10 @@ function bxCard(n) {
                               rx: 9, class: "drect" }));
   g.appendChild(svgText(n.x + 9, n.y + 15, bxKindLabel(n.kind), "dtype " + n.kind));
   let rightX = w - 9;                          // the corner marks stack right-to-left
+  if (tint) {                                  // the training signal's mark
+    g.appendChild(svgText(n.x + rightX, n.y + 15, TINT_TAG[tint] || "?", "dtag " + tint));
+    rightX -= 14;
+  }
   if (err) { g.appendChild(svgText(n.x + rightX, n.y + 15, "!", "dwarn")); rightX -= 14; }
   else if (warn) { g.appendChild(svgText(n.x + rightX, n.y + 15, "!", "dwarn2")); rightX -= 14; }
   if (frozen) {                              // a tiny six-pointed snowflake
@@ -4455,6 +4853,7 @@ function bxRender() {
   bxHotBadge = null;
   bxErrBoxes = bxErrorSet({ nodes: BX.nodes, edges: BX.edges });
   bxWarnBoxes = bxWarnSet({ nodes: BX.nodes, edges: BX.edges });
+  bxTrainTint = bxTrainTintInfo();              // the training signal's marks
   if ($("bxvram")) bxRenderEstimate();
   for (const e of BX.edges) {
     const a = bxNode(e.from), b = bxNode(e.to);
@@ -4464,7 +4863,8 @@ function bxRender() {
     const state = bxWireState(e);
     const sel = bxSelEdge(e) ? " sel" : "";
     const attrs = { d, class: "dedge" + (state === "match" ? "" : " " + state) + sel +
-                            (bxFlowSet.has(bxPathId(e.from)) ? " flow" : ""),
+                            (bxFlowSet.has(bxPathId(e.from)) ? " flow" : "") +
+                            (bxTrainTint && bxTrainTint.edges.has(bxPathId(e.from)) ? " tgrad" : ""),
                     "data-from": e.from, "data-to": e.to,
                     "data-fp": e.fromPort || 0, "data-tp": e.toPort || 0 };
     const vis = svg("path", attrs);
@@ -4621,12 +5021,15 @@ function bxMenuBuild(mode, id, ev) {
          () => { bxMenuClose(); bxCopyBoxes(many ? selIds : [n.id]); }],
       ];
       if (n.kind === "act") mine.push(["set the activation", () => bxForm(n.kind, null, n, "activation")]);
-      else if (n.kind === "agent" || n.kind === "train")
+      else if (n.kind === "agent" || n.kind === "train") {
+        if (n.kind === "train")
+          mine.push(["set up the training …", () => bxForm("train", null, n, "train")]);
         mine.push(["expand / shrink the display", () => { bxMenuClose();
           const p = n.panel || (n.panel = {});
           p.expand = !p.expand;
           n.box = p.expand ? { w: 800, h: 480 } : { w: 480, h: 320 };
           bxRender(); }]);
+      }
       else if (n.kind === "op") mine.push(["set the operation", () => bxForm(n.kind, null, n, "operation")]);
       else if (n.kind === "embed") mine.push(["set the embedding", () => bxForm(n.kind, null, n, "embed")]);
       else if (n.kind === "norm") mine.push(["set the norm", () => bxForm(n.kind, null, n, "norm")]);
@@ -5157,6 +5560,81 @@ function bxtRunRender() {
       menu.appendChild(mk("div", { class: "bxbhint",
         text: "\u26a0 " + (is.box || "?") + ": " + is.what }));
   }
+  if ((BXRUN.mode || "inference") === "training") bxRunTrainingSection(menu);
+  else bxRunFeeds(menu);
+  menu.appendChild(mk("div", { class: "mhead", text: "mode" }));
+  const seg = mk("div", { class: "modeseg" });
+  for (const m of ["inference", "training"]) {
+    const on = (BXRUN.mode || "inference") === m;
+    const b = mk("span", { class: "mseg" + (on ? " on" : "") +
+                            ((BXRUN.running || BXRUN.loading) ? " busy" : ""),
+                           text: m });
+    b.title = m === "inference"
+      ? "no gradients are kept \u2014 the lightest run"
+      : "the non-frozen weights keep gradients; the dataset boxes feed the run";
+    b.addEventListener("click", () => {
+      if (BXRUN.running || BXRUN.loading) return;
+      BXRUN.mode = m;
+      bxtRunRender();
+      bxRender();                          // the signal's marks follow the mode
+    });
+    seg.appendChild(b);
+  }
+  menu.appendChild(seg);
+  menu.appendChild(mk("div", { class: "bxbhint",
+    text: (BXRUN.mode || "inference") === "training"
+      ? "the train box is the hub: it names the data, the columns and the "
+      + "signal \u2014 and starts the training"
+      : "the weights need no gradients \u2014 the lightest run; dataset boxes "
+      + "stay idle" }));
+  if (BXRUN.warmMode && BXRUN.warmMode !== (BXRUN.mode || "inference"))
+    menu.appendChild(mk("div", { class: "bxbhint",
+      text: "the warm weights are " + BXRUN.warmMode + " \u2014 the next run "
+          + "rebuilds them for " + (BXRUN.mode || "inference") }));
+  const row = mk("div", { class: "rrow" });
+  const go = mk("span", { class: "chip tiny",
+                          text: BXRUN.running ? "running\u2026"
+                               : (BXRUN.mode || "inference") === "training"
+                                 ? "train the design"
+                                 : "run the design" });
+  go.addEventListener("click", () => { if (!BXRUN.running && !BXRUN.loading) bxtRunGo(); });
+  row.appendChild(go);
+  menu.appendChild(row);
+  if (BXRUN.msg) menu.appendChild(mk("div", { class: "bxbhint", text: BXRUN.msg }));
+  if (BXRUN.last) {                            // what the backend sent back
+    const r = BXRUN.last;
+    menu.appendChild(mk("div", { class: "mhead", text: "result" }));
+    menu.appendChild(mk("div", { class: "bxbhint",
+      text: "ran " + (Object.keys(r.values || {}).length +
+                      Object.keys(r.texts || {}).length) + " boxes \u00b7 "
+          + (r.ms || 0) + " ms on " + ((r.backend || "backend")
+          + (r.device ? " (" + r.device + ")" : ""))
+          + (r.loaded ? " \u00b7 using the loaded weights" : "") }));
+    if (r.probe) {                         // the training's own readout
+      const pb = [];
+      if (r.probe.loss != null) pb.push("loss " + Number(r.probe.loss).toFixed(4));
+      if (r.probe.acc != null) pb.push("acc " + Number(r.probe.acc).toFixed(3));
+      if (r.probe.tloss != null) pb.push("test " + Number(r.probe.tloss).toFixed(4));
+      if (r.probe.tacc != null) pb.push("test acc " + Number(r.probe.tacc).toFixed(3));
+      if (pb.length)
+        menu.appendChild(mk("div", { class: "bxbhint",
+          text: "probe \u00b7 " + pb.join(" \u00b7 ") }));
+    }
+    for (const [path, st] of Object.entries(r.values || {}).slice(0, 12)) {
+      const tail = path.split("/").pop();
+      const node = (typeof bxNode === "function") ? bxNode(tail) : null;
+      bxSpecRow(menu, (node && node.name) || tail,
+                JSON.stringify(st.shape) + " \u00b7 \u03bc " + st.mean);
+    }
+    if ((r.generated || []).length)
+      bxSpecRow(menu, "generated", r.generated.join(" "));
+    for (const [id, text] of Object.entries(r.texts || {})) {
+      const node = (typeof bxNode === "function") ? bxNode(id) : null;
+      bxSpecRow(menu, (node && node.name) || id, "\u201c" + bxClip(text, 40) + "\u201d");
+    }
+  }
+}
+function bxRunFeeds(menu) {                       // inference: what the model reads
   const ins = BX.nodes.filter(n => n.kind === "input");
   if (ins.length) {
     menu.appendChild(mk("div", { class: "mhead", text: "inputs" }));
@@ -5233,64 +5711,45 @@ function bxtRunRender() {
     menu.appendChild(mk("div", { class: "bxbhint",
       text: "0 tokens is one forward; temperature 0 picks the most likely id" }));
   }
-  menu.appendChild(mk("div", { class: "mhead", text: "mode" }));
-  const seg = mk("div", { class: "modeseg" });
-  for (const m of ["inference", "training"]) {
-    const on = (BXRUN.mode || "inference") === m;
-    const b = mk("span", { class: "mseg" + (on ? " on" : "") +
-                            ((BXRUN.running || BXRUN.loading) ? " busy" : ""),
-                           text: m });
-    b.title = m === "inference"
-      ? "no gradients are kept \u2014 the lightest run"
-      : "the non-frozen weights keep gradients; the dataset boxes feed the run";
+}
+function bxRunTrainingSection(menu) {             // training: the run is the console
+  const hub = bxTrainHub();
+  menu.appendChild(mk("div", { class: "mhead", text: "training" }));
+  if (!hub) {
+    menu.appendChild(mk("div", { class: "bxbhint",
+      text: "there is no train box on the canvas \u2014 it holds the data, the "
+           + "columns, the signal and the parameters" }));
+    const row = mk("div", { class: "rrow" });
+    const b = mk("span", { class: "chip tiny", text: "add a train box" });
     b.addEventListener("click", () => {
-      if (BXRUN.running || BXRUN.loading) return;
-      BXRUN.mode = m;
-      bxtRunRender();
+      bxMenuClose();
+      bxDropPalette("train", null);
+      bxtRunToggle();                             // the console now has a hub
     });
-    seg.appendChild(b);
+    row.appendChild(b);
+    menu.appendChild(row);
+    return;
   }
-  menu.appendChild(seg);
-  menu.appendChild(mk("div", { class: "bxbhint",
-    text: (BXRUN.mode || "inference") === "training"
-      ? "the non-frozen weights keep gradients; a dataset box feeds the model's "
-      + "input, and the loss runs on its rows"
-      : "the weights need no gradients \u2014 the lightest run; dataset boxes "
-      + "stay idle" }));
-  if (BXRUN.warmMode && BXRUN.warmMode !== (BXRUN.mode || "inference"))
-    menu.appendChild(mk("div", { class: "bxbhint",
-      text: "the warm weights are " + BXRUN.warmMode + " \u2014 the next run "
-          + "rebuilds them for " + (BXRUN.mode || "inference") }));
+  const sum = bxTrainSummary(hub);
+  for (const line of sum.lines)
+    menu.appendChild(mk("div", { class: "bxbhint", text: line }));
+  for (const why of sum.missing)
+    menu.appendChild(mk("div", { class: "bxbhint", text: "\u26a0 " + why }));
   const row = mk("div", { class: "rrow" });
-  const go = mk("span", { class: "chip tiny",
-                          text: BXRUN.running ? "running\u2026"
-                               : "run the design \u00b7 " + (BXRUN.mode || "inference") });
-  go.addEventListener("click", () => { if (!BXRUN.running && !BXRUN.loading) bxtRunGo(); });
-  row.appendChild(go);
+  const b = mk("span", { class: "chip tiny" + (sum.missing.length ? " off" : ""),
+                         text: "configure the train box" });
+  b.addEventListener("click", () => bxForm("train", null, hub, "train"));
+  row.appendChild(b);
+  if (hub.task_id && (BXTASKS.byId[hub.task_id] || {}).status === "running")
+    row.appendChild(mk("span", { class: "chip tiny off", text: "training \u2026" }));
   menu.appendChild(row);
-  if (BXRUN.msg) menu.appendChild(mk("div", { class: "bxbhint", text: BXRUN.msg }));
-  if (BXRUN.last) {                            // what the backend sent back
-    const r = BXRUN.last;
-    menu.appendChild(mk("div", { class: "mhead", text: "result" }));
+  if (sum.missing.length)
     menu.appendChild(mk("div", { class: "bxbhint",
-      text: "ran " + (Object.keys(r.values || {}).length +
-                      Object.keys(r.texts || {}).length) + " boxes \u00b7 "
-          + (r.ms || 0) + " ms on " + ((r.backend || "backend")
-          + (r.device ? " (" + r.device + ")" : ""))
-          + (r.loaded ? " \u00b7 using the loaded weights" : "") }));
-    for (const [path, st] of Object.entries(r.values || {}).slice(0, 12)) {
-      const tail = path.split("/").pop();
-      const node = (typeof bxNode === "function") ? bxNode(tail) : null;
-      bxSpecRow(menu, (node && node.name) || tail,
-                JSON.stringify(st.shape) + " \u00b7 \u03bc " + st.mean);
-    }
-    if ((r.generated || []).length)
-      bxSpecRow(menu, "generated", r.generated.join(" "));
-    for (const [id, text] of Object.entries(r.texts || {})) {
-      const node = (typeof bxNode === "function") ? bxNode(id) : null;
-      bxSpecRow(menu, (node && node.name) || id, "\u201c" + bxClip(text, 40) + "\u201d");
-    }
-  }
+      text: "fix the warnings, then start the full training from the train box" }));
+  else
+    menu.appendChild(mk("div", { class: "bxbhint",
+      text: "run the design here for a single step \u2014 the full training "
+           + "starts from the train box" }));
 }
 function bxtRunLoad() {                        // the whole design, loaded warm
   bxApplyOffload("gpu");                       // the ratio writes the places
@@ -5525,27 +5984,30 @@ function bxtRunGo() {
     return;
   }
   const feeds = {};
-  for (const n of BX.nodes.filter(n => (n.kind === "tokenize" || n.kind === "hf") &&
-                                       !BX.edges.some(e => e.to === n.id))) {
-    const store = BXRUN.texts || (BXRUN.texts = {});
-    const raw = String(store[n.id] != null ? store[n.id] : (n.text || ""));
-    if (raw) feeds[n.id] = raw;                // a string: the backend tokenizes it
-  }                                            // (or continues it, for an hf model)
-  for (const n of BX.nodes.filter(n => n.kind === "input")) {
-    if (n.input_mode === "text") {
+  const training = (BXRUN.mode || "inference") === "training";
+  if (!training) {                             // in training, the dataset feeds the input
+    for (const n of BX.nodes.filter(n => (n.kind === "tokenize" || n.kind === "hf") &&
+                                         !BX.edges.some(e => e.to === n.id))) {
       const store = BXRUN.texts || (BXRUN.texts = {});
       const raw = String(store[n.id] != null ? store[n.id] : (n.text || ""));
-      if (raw) feeds[n.id] = raw;              // a string: the tokenizer downstream reads it
-      continue;
+      if (raw) feeds[n.id] = raw;              // a string: the backend tokenizes it
+    }                                          // (or continues it, for an hf model)
+    for (const n of BX.nodes.filter(n => n.kind === "input")) {
+      if (n.input_mode === "text") {
+        const store = BXRUN.texts || (BXRUN.texts = {});
+        const raw = String(store[n.id] != null ? store[n.id] : (n.text || ""));
+        if (raw) feeds[n.id] = raw;            // a string: the tokenizer downstream reads it
+        continue;
+      }
+      if (n.input_mode === "python" || n.input_mode === "random") continue;  // the box defines it
+      const raw = String(BXRUN.inputs[n.id] != null ? BXRUN.inputs[n.id] : "1");
+      const parts = raw.replace(/,/g, " ").split(/\s+/).filter(Boolean).map(Number);
+      if (!parts.length || parts.some(isNaN)) {
+        bxtRunMsg("input \u201c" + (n.name || n.id) + "\u201d needs numbers");
+        return;
+      }
+      feeds[n.id] = parts;
     }
-    if (n.input_mode === "python" || n.input_mode === "random") continue;  // the box defines it
-    const raw = String(BXRUN.inputs[n.id] != null ? BXRUN.inputs[n.id] : "1");
-    const parts = raw.replace(/,/g, " ").split(/\s+/).filter(Boolean).map(Number);
-    if (!parts.length || parts.some(isNaN)) {
-      bxtRunMsg("input \u201c" + (n.name || n.id) + "\u201d needs numbers");
-      return;
-    }
-    feeds[n.id] = parts;
   }
   BXRUN.running = true;
   BXRUN.msg = "";
@@ -5592,7 +6054,7 @@ function bxtRunGo() {
                                      !BX.edges.some(e => e.to === n.id))
     .concat(BX.nodes.filter(n => n.kind === "input"));
   const body = { canvas, feeds, mode: BXRUN.mode || "inference" };
-  const gen = Math.max(0, Math.round(Number(BXRUN.gen) || 0));
+  const gen = training ? 0 : Math.max(0, Math.round(Number(BXRUN.gen) || 0));
   if (gen > 0 && outs.length && grows.length) {
     body.generate = gen;                       // the loop grows the ids and samples
     body.input = grows[0].id;                  // from the design's own logits
@@ -5639,6 +6101,16 @@ function bxtRunGo() {
 function fetchBackend() {                      // the stateful channel, from the app's view
   if (typeof bxTrainPoll === "function") bxTrainPoll();
   if (typeof fetch !== "function") return;
+  {                                           // a train box whose task the list
+    let needList = false;                     // doesn't know (or that is live)
+    for (const n of BX.nodes || []) {         // keeps the task list honest
+      if (n.kind !== "train" || !n.task_id) continue;
+      const t = bxTask(n.task_id);
+      if (!t || t.status === "running" || t.status === "paused") { needList = true; break; }
+    }
+    if (needList && typeof bxTasksFetch === "function" && typeof bxAgentSync === "function")
+      bxTasksFetch(bxAgentSync);
+  }
   fetch("/api/backend", { cache: "no-store" })
     .then(r => (r.ok ? r.json() : null))
     .then(d => {
@@ -5815,6 +6287,7 @@ const BX_TASK_TYPES = {
              fields: [{ key: "repo", label: "HF repo id", ph: "org/name" }] },
   python:  { label: "python agent",
              fields: [{ key: "prompt", label: "the task", ph: "what should it do?" }] },
+  train:   { label: "training", fields: [] },
 };
 let BXTASKS = { list: [], byId: {}, timer: null, timer2: null, log: {}, sig: "" };
 
@@ -5823,7 +6296,7 @@ function bxTaskLabel(t) {
   const type = (t && BX_TASK_TYPES[t.type]) || null;
   const base = (type && type.label) || (t && t.type) || "task";
   const params = (t && t.params) || {};
-  const who = params.repo || params.prompt || "";
+  const who = params.repo || params.prompt || params.name || "";
   return who ? base + " \u00b7 " + bxClip(String(who), 42) : base;
 }
 function bxTaskChip(t) {
@@ -6190,7 +6663,10 @@ function bxAgentSync() {                       // every pane follows the state, 
     for (const pane of root.querySelectorAll(".bxlogpane")) {
       const id = pane.getAttribute ? pane.getAttribute("data-agent") : null;
       const n = id ? bxNode(id) : null;
-      if (n) bxAgentFill(pane, n);
+      if (!n) continue;
+      if (n.kind === "dataset") bxDatasetFill(pane, n);
+      else if (n.kind === "train") bxTrainFill(pane, n);
+      else bxAgentFill(pane, n);
     }
   }
   bxAgentTick();
@@ -6203,9 +6679,11 @@ function bxAgentSync() {                       // every pane follows the state, 
 }
 function bxAgentTick(now) {                    // one log poll for every live box
   const any = (BX.nodes || []).some(n => {
-    if (n.kind !== "agent") return false;
+    if (n.kind !== "agent" && n.kind !== "train") return false;
+    if (!n.task_id) return n.kind === "train";  // a hub with no task still wants the list
     const t = bxTask(n.task_id);
-    return t && (t.status === "running" || t.status === "paused");
+    if (!t) return n.kind === "train";          // unknown task: the box knows best
+    return t.status === "running" || t.status === "paused";
   });
   const pullLogs = () => {
     for (const n of BX.nodes || [])
@@ -6698,9 +7176,9 @@ function bxForm(kind, ev, node, mode) {
     wrap.appendChild(lab);
     return sel;
   };
-  const numField = (label, value) => {
+  const numField = (label, value, ph) => {
     const lab = mk("label", { text: label });
-    const inp = mk("input", { type: "number", placeholder: "?",
+    const inp = mk("input", { type: "number", placeholder: ph || "?",
                               value: value == null ? "" : String(value) });
     lab.appendChild(inp);
     wrap.appendChild(lab);
@@ -6731,6 +7209,32 @@ function bxForm(kind, ev, node, mode) {
     lab.appendChild(inp);
     wrap.appendChild(lab);
     return inp;
+  };
+  const optsOf = (kind) => {                    // [id, name] for every box of a kind
+    const out = [];
+    if (typeof bxEveryBox === "function")
+      bxEveryBox(n => { if (n.kind === kind) out.push([n.id, n.name || n.id]); });
+    return out;
+  };
+  const pickField = (label, options, value) => { // bind a box by id; a stale id reads (none)
+    const lab = mk("label", { text: label });
+    const sel = mk("select", { class: "bxsel" });
+    sel.appendChild(mk("option", { value: "", text: "(none)" }));
+    for (const o of options || [])
+      sel.appendChild(mk("option", { value: o[0], text: o[1] }));
+    if (value != null && (options || []).some(o => o[0] === value)) sel.value = String(value);
+    lab.appendChild(sel);
+    wrap.appendChild(lab);
+    return sel;
+  };
+  const selField = (label, options, value) => {
+    const lab = mk("label", { text: label });
+    const sel = mk("select", { class: "bxsel" });
+    for (const o of options) sel.appendChild(mk("option", { value: o, text: o }));
+    sel.value = options.indexOf(value) >= 0 ? value : options[0];
+    lab.appendChild(sel);
+    wrap.appendChild(lab);
+    return sel;
   };
   const textField = (label, value, ph) => {
     const lab = mk("label", { text: label });
@@ -6929,8 +7433,29 @@ function bxForm(kind, ev, node, mode) {
     f.expr = textField("reward expr", node ? node.expr || "" : "1.0", "python over prompt/output");
     f.pattern = textField("regex (optional)", node ? node.pattern || "" : "");
     f.match = textField("exact match (optional)", node ? node.match || "" : "");
-  } else if (mode === "train") {
-    f.name = nameField(bxDefaultName(kind));
+  } else if ((mode === "add" && kind === "train") || mode === "train") {
+    f.name = nameField(node ? node.name : bxDefaultName(kind));
+    f.dataset = pickField("data", optsOf("dataset"), node ? node.dataset : null);
+    f.test_dataset = pickField("test data", optsOf("dataset"), node ? node.test_dataset : null);
+    f.x_col = textField("x col", node ? node.x_col || "A" : "A");
+    f.y_col = textField("y col", node ? node.y_col || "B" : "B");
+    f.classes = textField("classes", Array.isArray(node && node.classes) ? node.classes.join(" ") : "",
+                           "y is a class label, not a row — comma or space separated");
+    f.paradigm = selField("paradigm", ["supervised", "rl"],
+                           node ? node.paradigm || "supervised" : "supervised");
+    f.target = pickField("target", optsOf("output"), node ? node.target : null);
+    f.reward = pickField("reward", optsOf("reward"), node ? node.reward : null);
+    f.lr = numField("learning rate", node ? (node.lr != null ? node.lr : 0.0003) : 0.0003);
+    f.optimizer = selField("optimizer", ["adamw", "sgd"], node ? node.optimizer || "adamw" : "adamw");
+    f.weight_decay = numField("weight decay", node ? (node.weight_decay != null ? node.weight_decay : 0.01) : 0.01);
+    f.batch = numField("batch", node ? (node.batch || 4) : 4);
+    f.steps = numField("steps", node ? node.steps : null, "blank = until detach");
+    f.clip = numField("grad clip", node ? (node.clip != null ? node.clip : 1.0) : 1.0);
+    f.save_every = numField("save every", node ? (node.save_every || 50) : 50);
+    f.eval_every = numField("eval every", node ? node.eval_every || 50 : 50);
+    f.temperature = numField("temperature (rl)", node ? node.temperature : null);
+    f.max_tokens = numField("max tokens (rl)", node ? node.max_tokens : null);
+    f.n_samples = numField("n samples (rl)", node ? (node.n_samples || 4) : 4);
   } else {                                   // "resize" (or adding an output)
     if (kind === "input") f.a = numField("size", node ? node.dout : null);
     else if (kind === "output") f.a = numField("size", node ? node.din : null);
@@ -6939,13 +7464,24 @@ function bxForm(kind, ev, node, mode) {
   }
   if (mode !== "add" && mode !== "resize" && mode !== "rename" &&
       mode !== "script" && mode !== "matrix" && mode !== "token" &&
-      mode !== "sample" && mode !== "hf")
+      mode !== "sample" && mode !== "hf" && mode !== "dataset" &&
+      mode !== "reward" && mode !== "train")
     f.t = textField("tensor", node ? node.t || "" : "", "blk.0.attn_q.weight");
   if (f.op) {                                 // the output-dim field only fits reshape
     const lab = f.dims && f.dims.parentNode;
     const sync = () => { if (lab) lab.hidden = f.op.value !== "reshape"; };
     f.op.addEventListener("change", () => { sync(); bxMenuPlace(); });
     sync();
+  }
+  if (f.paradigm) {                           // the rl fields ride on the paradigm
+    const rlFields = [f.reward, f.temperature, f.max_tokens, f.n_samples];
+    const syncRl = () => {
+      for (const i of rlFields)
+        if (i && i.parentNode) i.parentNode.hidden = f.paradigm.value !== "rl";
+      bxMenuPlace();
+    };
+    f.paradigm.addEventListener("change", syncRl);
+    syncRl();
   }
   if (f.mode && f.icode) {                    // code fits python, text a string, rows random
     const syncInput = () => {
@@ -6987,6 +7523,25 @@ function bxForm(kind, ev, node, mode) {
     if (f.match) v.match = f.match.value;
     if (f.seed) v.sample_seed = f.seed.value;
     if (f.code) v.script = f.code.value;
+    if (f.dataset) v.dataset = f.dataset.value;
+    if (f.test_dataset) v.test_dataset = f.test_dataset.value;
+    if (f.x_col) v.x_col = f.x_col.value;
+    if (f.y_col) v.y_col = f.y_col.value;
+    if (f.classes) v.classes = f.classes.value.replace(/,/g, " ");
+    if (f.paradigm) v.paradigm = f.paradigm.value;
+    if (f.target) v.target = f.target.value;
+    if (f.reward) v.reward = f.reward.value;
+    if (f.lr) v.lr = f.lr.value;
+    if (f.optimizer) v.optimizer = f.optimizer.value;
+    if (f.weight_decay) v.weight_decay = f.weight_decay.value;
+    if (f.batch) v.batch = f.batch.value;
+    if (f.steps) v.steps = f.steps.value;
+    if (f.clip) f.clip.value !== "" && (v.clip = f.clip.value);
+    if (f.save_every) f.save_every.value !== "" && (v.save_every = f.save_every.value);
+    if (f.eval_every) f.eval_every.value !== "" && (v.eval_every = f.eval_every.value);
+    if (f.temperature) f.temperature.value !== "" && (v.temperature = f.temperature.value);
+    if (f.max_tokens) f.max_tokens.value !== "" && (v.max_tokens = f.max_tokens.value);
+    if (f.n_samples) f.n_samples.value !== "" && (v.n_samples = f.n_samples.value);
     if (mode !== "add" && mode !== "resize") return v;   // settings forms carry no sizes
     if (kind === "input") { v.dout = f.a.value; return v; }
     if (kind === "output") { v.din = f.a.value; return v; }
@@ -7074,7 +7629,7 @@ const BX_PALETTE = () => [
                ["norm", "norm box"]]],
   ["text", [["tokenize", "tokenizer box"], ["detokenize", "de-tokenizer box"],
             ["hf", "huggingface model box"]]],
-  ["Dataset", [["dataset", "dataset box"]]],
+  ["Dataset", [["dataset", "dataset box"], ["train", "train box"]]],
   ["tensor ops", [["act", "activation box"], ["op", "operation box"],
                   ["script", "script box"], ["sample", "sample box"]]],
   ["blocks", [["attn", "attention box"], ["ssm", "state space box"],

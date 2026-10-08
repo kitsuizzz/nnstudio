@@ -447,7 +447,11 @@ def _fire_train(task):
            "--name", str(p.get("name") or task["id"])]
     for flag, key in (("--checkpoint", "checkpoint"), ("--batch", "batch"),
                       ("--lr", "lr"), ("--steps", "steps"),
-                      ("--save-every", "save_every")):
+                      ("--save-every", "save_every"),
+                      ("--eval-every", "eval_every"),
+                      ("--optimizer", "optimizer"),
+                      ("--weight-decay", "weight_decay"),
+                      ("--clip", "clip")):
         if p.get(key) not in (None, ""):
             cmd += [flag, str(p[key])]
     try:
@@ -955,7 +959,8 @@ class Handler(BaseHTTPRequestHandler):
                         "error": "no backend connected \u2014 Backend \u2192 Local"}, 409)
             return
         reply = agent.request({"type": "load", "canvas": canvas,
-                               "mode": str(data.get("mode") or "inference")},
+                               "mode": str(data.get("mode") or "inference"),
+                               "checkpoint": str(data.get("checkpoint") or "")},
                               timeout=3600)
         if reply is None:
             self._json({"ok": False,

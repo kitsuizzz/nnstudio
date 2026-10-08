@@ -33,19 +33,51 @@ def main():
     ap.add_argument("--batch", type=int, default=0)
     ap.add_argument("--lr", type=float, default=0.0)
     ap.add_argument("--save-every", type=int, default=0)
+    ap.add_argument("--eval-every", type=int, default=0)
+    ap.add_argument("--optimizer", default="")
+    ap.add_argument("--weight-decay", type=float, default=0.0)
+    ap.add_argument("--clip", type=float, default=0.0)
     a = ap.parse_args()
 
     import nn_torch
 
     with open(a.design, encoding="utf-8") as fh:
         canvas = json.load(fh)
+
+    # the train node is the hub — data, columns, signal, every parameter;
+    # the command-line flags only override it
+    hub = {}
+
+    def _hub(nodes):
+        for n in nodes or []:
+            if n.get("kind") == "train":
+                hub.update(n)
+                return
+            if isinstance(n.get("inner"), dict):
+                _hub((n.get("inner") or {}).get("nodes"))
+
+    _hub(canvas.get("nodes"))
+
     cfg = {"name": a.name or a.task, "checkpoints": os.path.join(ROOT, "checkpoints")}
+    for key in ("dataset", "test_dataset", "x_col", "y_col", "classes",
+                "target", "paradigm", "reward", "lr", "optimizer",
+                "weight_decay", "batch", "clip", "save_every", "eval_every"):
+        if hub.get(key) not in (None, "", []):
+            cfg[key] = hub[key]
     if a.batch:
         cfg["batch"] = a.batch
     if a.lr:
         cfg["lr"] = a.lr
     if a.save_every:
         cfg["save_every"] = a.save_every
+    if a.eval_every:
+        cfg["eval_every"] = a.eval_every
+    if a.optimizer:
+        cfg["optimizer"] = a.optimizer
+    if a.weight_decay:
+        cfg["weight_decay"] = a.weight_decay
+    if a.clip:
+        cfg["clip"] = a.clip
 
     state_path = os.path.join(ROOT, "agents", a.task + ".state.json")
     cmd_path = os.path.join(ROOT, "agents", a.task + ".cmd")
@@ -85,9 +117,16 @@ def main():
     def on_event(ev):
         if ev.get("type") == "loss":
             write_state(step=ev["step"], loss=ev["loss"],
+                        tloss=ev.get("tloss"), acc=ev.get("acc"),
+                        tacc=ev.get("tacc"),
                         saved_at=ev.get("saved_at"),
                         rows=len(tr.rows), elapsed=time.time() - t0)
-            print("step %d  loss %.4f" % (ev["step"], ev["loss"]))
+            extra = ""
+            if ev.get("tloss") is not None:
+                extra = "   test loss %.4f" % ev["tloss"]
+            elif ev.get("acc") is not None:
+                extra = "   acc %.2f" % ev["acc"]
+            print("step %d  loss %.4f%s" % (ev["step"], ev["loss"], extra))
         elif ev.get("type") == "checkpoint":
             write_state(step=tr.step,
                         loss=tr.history[-1] if tr.history else None,
@@ -95,7 +134,7 @@ def main():
                         rows=len(tr.rows), elapsed=time.time() - t0)
             print("checkpoint %s" % ev.get("path"))
 
-    steps = a.steps
+    steps = a.steps if a.steps else int(hub.get("steps") or 0)
     try:
         while True:
             if steps:

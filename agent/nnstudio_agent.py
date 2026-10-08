@@ -357,9 +357,11 @@ def serve_session(sock, name, log):
                     mode = str(msg.get("mode") or "inference")
                     if mode not in ("inference", "training"):
                         mode = "inference"
+                    ckpt = str(msg.get("checkpoint") or "")     # trained weights to apply
                     key = _canvas_key(canvas, device, mode)
                     if (loaded["graph"] is not None and loaded.get("key") == key
-                            and loaded.get("report") is not None):
+                            and loaded.get("report") is not None
+                            and (loaded.get("checkpoint") or "") == ckpt):
                         rep = dict(loaded["report"])           # already here: no recompile
                         rep["cached"] = True
                         rep["ms"] = int((time.time() - t0) * 1000)
@@ -382,14 +384,21 @@ def serve_session(sock, name, log):
                         send({"type": "progress", "id": rid, "nodes": [], "done": 0,
                               "load": {"bytes": total, "total": total, "done": True}})
                     graph.train() if train else graph.eval()
+                    if ckpt:
+                        from nn_torch import apply_checkpoint
+                        rep_ckpt_step = apply_checkpoint(graph, ckpt, device)
                     rep = graph.weight_report()
                     rep["mode"] = mode
+                    if ckpt:
+                        rep["checkpoint"] = ckpt
+                        rep["checkpoint_step"] = rep_ckpt_step
                     rep["tensors_total"] = len((canvas.get("weights") or {})) or None
                     rep["device"] = device
                     rep["ms"] = int((time.time() - t0) * 1000)
                     loaded["key"] = key
                     loaded["graph"] = graph
                     loaded["report"] = rep
+                    loaded["checkpoint"] = ckpt
                     log("load %s — %d params, %.1f GB on %s, %.1f GB on system, %d ms" %
                         (rid or "?", rep["params"],
                          rep["on_gpu_bytes"] / 2 ** 30, device,

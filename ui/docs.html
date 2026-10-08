@@ -226,9 +226,11 @@
         <span class="pill grey">Run ▾</span>. The <b>mode</b> toggle decides how the
         weights are held: <b>inference</b> keeps no gradients (the lightest run —
         dataset boxes stay idle); <b>training</b> lets the non-frozen weights keep
-        gradients, and a dataset box feeds the model's input so the loss runs on
-        its rows. Each run leaves its numbers on the boxes (click a box to see
-        the values that passed through it).</li>
+        gradients, and the run focuses on the <span class="pill">train</span> box —
+        the hub: it names the data, the columns and the signal, its dataset feeds
+        the model's input, and the run reports the loss (and accuracy) on its rows.
+        Each run leaves its numbers on the boxes (click a box to see the values
+        that passed through it).</li>
     <li><b>Price it</b> — <span class="pill grey">VRAM ▾</span> shows how much
         memory the design's weights need and where they will live (GPU or system).
         Freeze nothing, move everything, see it change.</li>
@@ -603,17 +605,31 @@
   <div class="boxref">
     <div>
       <div class="bname">train</div>
-      <div class="bwires">none — a display, not maths</div>
+      <div class="bwires">none — the hub, not maths</div>
     </div>
     <div class="bdet">
-      <p>The training window: step counter, live loss and its curve, the latest
-      checkpoint, and the controls that matter when a GPU's clock is ticking —
-      <b>save now</b> (land a checkpoint where it stands), <b>detach</b> (checkpoint
-      and stop cleanly, freeing the GPU), <b>resume</b> (continue exactly where it
-      stopped), <b>hold</b> (stop stepping but keep the machine). Bind it to a
-      training task's <code>task_id</code> and it follows that run.</p>
-      <p class="bfields"><b>Fields:</b> <code>task_id</code>, display
-      <code>box</code> size, <code>panel</code> options.</p>
+      <p>The <b>hub of the training</b>: it owns the data (which dataset feeds the
+      run, which is the held-out test split), the columns (<b>x</b> conditions,
+      <b>y</b> is what the model is scored on), the classes (when y is a label),
+      the signal — the <b>target</b> output box it scores, or, in <b>rl</b>, the
+      reward box — and every parameter of the run. Its window shows the setup,
+      the step counter, live loss and accuracy curves (solid train, dashed test)
+      and the controls that matter when a GPU's clock is ticking: <b>start</b>,
+      <b>save now</b> (land a checkpoint where it stands), <b>hold</b> (stop
+      stepping but keep the machine), <b>detach</b> (checkpoint and stop cleanly,
+      freeing the GPU), <b>resume</b> (continue exactly where it stopped) and
+      <b>load last checkpoint</b> (warm a fresh graph with the trained weights).
+      Right-click → <b>set up the training …</b> to edit it; the Run menu in
+      training mode shows the same summary.</p>
+      <p class="bfields"><b>Fields:</b> <code>dataset</code>,
+      <code>test_dataset</code>, <code>x_col</code>, <code>y_col</code>,
+      <code>classes</code>, <code>paradigm</code> (supervised | rl),
+      <code>target</code>, <code>reward</code>, <code>lr</code>,
+      <code>optimizer</code>, <code>weight_decay</code>, <code>batch</code>,
+      <code>steps</code>, <code>clip</code>, <code>save_every</code>,
+      <code>eval_every</code>, <code>temperature</code>, <code>max_tokens</code>,
+      <code>n_samples</code>, <code>task_id</code>, display <code>box</code> size,
+      <code>panel</code> options.</p>
     </div>
   </div>
 
@@ -655,19 +671,27 @@
         vocabulary (a layer sized to the vocab).</li>
     <li>Open <span class="pill grey">Palette ▾</span> → <b>Dataset</b>, drag out
         the <span class="pill">dataset</span> box; give it rows
-        (<code>prompt&lt;TAB&gt;completion</code> or JSONL).</li>
-    <li>Add a <span class="pill">loss</span> box. Wire the model's scores into its
-        <b>first</b> dot, the dataset box into its <b>second</b>.</li>
-    <li>Add a <span class="pill">train</span> box.</li>
-    <li>Start a training task with this design — ask the agent box to do it, or
-        POST it to the tasks API (below). The train box shows the step count, the
-        loss, and the curve as it happens.</li>
+        (<code>prompt&lt;TAB&gt;completion</code> or JSONL). A second dataset box
+        is the held-out test split, if you have one.</li>
+    <li>Add a <span class="pill">train</span> box — the <b>hub of the training</b>.
+        Right-click it → <b>set up the training …</b>: bind the dataset (and the
+        test split), name the <b>x</b> column (the model's input) and the
+        <b>y</b> column (what the model is scored on), pick the <b>target</b> —
+        the output box the training scores — and set the parameters (learning
+        rate, optimizer, batch, steps…).</li>
+    <li>Start it from the train box — its <b>start</b> chip fires the training
+        task. The Run menu in <b>training</b> mode shows the same summary and the
+        same go chip: <b>train the design</b>.</li>
     <li>Let it run. <b>Detach</b> whenever — the run checkpoints itself and the GPU
         is free. Days later, <b>resume</b>: same step, same learning rate, same
-        place in the data. This is how you train on monthly GPU credits.</li>
-    <li>Or try the design without a task: <span class="pill grey">Run ▾</span> →
-        <b>training</b> mode. One batch from the dataset box passes through, the
-        loss box reports it, and the non-frozen weights keep gradients.</li>
+        place in the data. This is how you train on monthly GPU credits. The
+        <b>load last checkpoint</b> chip warms a fresh graph with the trained
+        weights — switch back to inference and run it.</li>
+    <li>Advanced: wire a custom loss — a <span class="pill">loss</span> box with
+        the model's scores on its <b>first</b> dot and a dataset on its
+        <b>second</b>. A dataset→loss wire <b>beats the hub's binding</b>: that
+        dataset's rows and that loss run the training instead of the built-in
+        score on the target.</li>
   </ol>
   <pre><code>POST /api/tasks
 { "type": "train", "name": "my-run",
@@ -677,6 +701,20 @@
 POST /api/tasks/cmd   { "task": "t_…", "cmd": "save" }     // checkpoint now
 POST /api/tasks/cmd   { "task": "t_…", "cmd": "detach" }   // checkpoint + stop
 POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly</code></pre>
+
+  <h2>Train a classifier</h2>
+  <ol>
+    <li>A dataset box with rows of <code>text&lt;TAB&gt;label</code> — the text is
+        column A, the label is column B. Held-out rows get a second dataset box.</li>
+    <li>The network as in the recipe above, ending in a layer sized to the number
+        of classes.</li>
+    <li>The train box: bind the dataset, <b>x</b> → A, <b>y</b> → B, and list the
+        classes — <code>cat dog bird</code>. With classes set, y is a label: the
+        run reports <b>accuracy</b> (the share of rows the model gets right)
+        alongside the loss, on the train split and the test split.</li>
+    <li>Start it; watch the accuracy climb to the ceiling the data allows. Freeze
+        the boxes you trust, train the rest.</li>
+  </ol>
 
   <h2>Score outputs with a reward</h2>
   <ol>
@@ -782,7 +820,7 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         <rect x="290" y="30" width="150" height="54" rx="12"
               fill="rgba(249,115,22,.10)" stroke="rgba(249,115,22,.55)"/>
         <text x="365" y="53" fill="#f2f2f2" text-anchor="middle">2 · score</text>
-        <text x="365" y="70" fill="#8a8a8a" text-anchor="middle" font-size="10">the loss box</text>
+        <text x="365" y="70" fill="#8a8a8a" text-anchor="middle" font-size="10">loss on the target</text>
 
         <rect x="550" y="30" width="150" height="54" rx="12"
               fill="rgba(255,255,255,.05)" stroke="rgba(255,255,255,.14)"/>
@@ -807,12 +845,37 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     <div class="cap">Predict, score, nudge, repeat — the whole of training.</div>
   </div>
 
+  <h2>The hub: the train box</h2>
+  <p>
+    Training needs one place to say <i>what</i> the model learns from and
+    <i>how</i>. That place is the <span class="pill">train</span> box — the hub.
+    It owns the data (the <code>dataset</code> that feeds the run, and an optional
+    <code>test_dataset</code> the trainer scores but never trains on), the columns
+    (<code>x_col</code> conditions, <code>y_col</code> is the target), the
+    <code>classes</code> (when y is a label) and the signal — the
+    <code>target</code> output box it scores, or, in <b>rl</b>, the
+    <code>reward</code> box that scores the model's samples. It also holds every
+    parameter of the run.
+  </p>
+  <p>
+    One exception, for the veterans: wire a <span class="pill">loss</span> box
+    from a dataset the way the old designs did, and that wire beats the hub —
+    that dataset and that loss run the training.
+  </p>
+  <p>
+    In training mode the canvas shows the backward pass: the dataset the training
+    reads from, the target it scores (or samples, in rl) and — in rl — the reward
+    box that does the scoring, with the wires between them tinted in the direction
+    the signal flows.
+  </p>
+
   <h2>The vocabulary of training</h2>
   <ul>
-    <li><b>Loss</b> — one number saying how wrong the model was on this batch. The
-        <span class="pill">loss</span> box computes it: compare the model's scores
-        with what the <span class="pill">dataset</span> box says <i>should</i> have
-        come out.</li>
+    <li><b>Loss</b> — one number saying how wrong the model was on this batch:
+        compare the model's output with what the <span class="pill">dataset</span>
+        box's <b>y</b> column says <i>should</i> have come out. The train box's
+        built-in score does that against its <b>target</b>; a wired
+        <span class="pill">loss</span> box computes its own.</li>
     <li><b>Gradient</b> — for every weight: if this weight were a little higher,
         would the loss go up or down, and by how much? Computed automatically
         (backpropagation) from the loss.</li>
@@ -892,17 +955,20 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
 
   <h2>Three ways to train</h2>
   <ul>
-    <li><b>Supervised</b> — you hold the answers: dataset rows of prompt +
-        completion. The loss measures distance from your answers. Simplest, and the
-        right first thing to try.</li>
-    <li><b>Reinforcement (RL)</b> — no answers, only a score. The model produces
-        outputs, the <span class="pill">reward</span> box scores them, and training
+    <li><b>Supervised</b> — you hold the answers: the train box names the
+        dataset, the <b>x</b>/<b>y</b> columns and the target the model is scored
+        on, and the loss measures the distance from your answers. The paradigm's
+        default — simplest, and the right first thing to try.</li>
+    <li><b>Reinforcement (RL)</b> — no answers, only a score. The train box's
+        paradigm is <b>rl</b>: the model samples outputs from its target, the
+        <span class="pill">reward</span> box it names scores them, and training
         nudges the model toward higher scores. Use it when "good" is easy to check
         but hard to write out (passes the tests, ends with a period, matches the
         schema).</li>
     <li><b>RLHF</b> — reinforcement learning from <i>human</i> feedback: people
         compare outputs (this one better than that one), and training treats those
-        comparisons as the reward. For when "good" is a matter of judgment.</li>
+        comparisons as the reward. The same <b>rl</b> paradigm — today the score
+        comes from a reward box; the human-feedback channel is on the way.</li>
   </ul>
 </section>
 

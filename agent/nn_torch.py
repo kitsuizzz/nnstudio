@@ -814,8 +814,8 @@ class Box(nn.Module):
             raise
 
     def forward(self, *xs):
-        if self.off or self.kind == "agent":
-            self.last = None               # an agent box runs no maths of its own
+        if self.off or self.kind in ("agent", "train"):
+            self.last = None               # a config box runs no maths of its own
             return None
         k = self.kind
         if k in ("layer", "norm", "act", "op"):
@@ -867,7 +867,17 @@ class Box(nn.Module):
         elif k == "loss":
             if len(xs) < 2:
                 raise CanvasError(self.name, "wants the logits and the dataset's labels")
-            out = _cross_entropy(xs[0], xs[1])
+            if xs[1].dim() == 1:
+                # 1-D labels are class indices, one per sample: the dataset
+                # left-pads X, so the class is picked at the sequence's end
+                lg = xs[0].float()
+                last = lg[:, -1, :] if lg.dim() == 3 else \
+                    lg.reshape(-1, lg.shape[-1])[-xs[1].shape[0]:]
+                out = F.cross_entropy(last, xs[1].long())
+                with torch.no_grad():
+                    self.last_acc = (last.argmax(-1) == xs[1].long()).float().mean()
+            else:
+                out = _cross_entropy(xs[0], xs[1])
         elif k == "logprobs":
             if len(xs) < 2:
                 raise CanvasError(self.name, "wants the logits and the picked ids")
@@ -1627,8 +1637,8 @@ class Graph(nn.Module):
         vals = {}
         for nid in self.order:
             box = self.boxes[nid]
-            if box.loose or box.off or box.kind in ("agent", "reward"):
-                vals[nid] = None               # drawn, not run / off / an agent box
+            if box.loose or box.off or box.kind in ("agent", "reward", "train"):
+                vals[nid] = None               # drawn, not run / off / a config box
                 continue
             ins = []
             for e in self.incoming.get(nid, []):
@@ -2125,38 +2135,67 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                           if n.get("name") == e.box), None)
         raise
     if train:
-        # the training run reads the design's dataset boxes: their rows are
-        # the batch — ids into the model's input, labels to the loss box
-        def _ds_nodes(nodes):
+        # the train node is the hub: it names the dataset that feeds the run
+        # — the test split stays idle in the run, the trainer scores it.
+        # Without a train node the first dataset box feeds, as before.
+        def _all(nodes):
             for n in nodes or []:
-                if n.get("kind") == "dataset":
-                    yield n
+                yield n
                 if isinstance(n.get("inner"), dict):
-                    for m in _ds_nodes((n.get("inner") or {}).get("nodes")):
+                    for m in _all((n.get("inner") or {}).get("nodes")):
                         yield m
-        for i, dn in enumerate(list(_ds_nodes(canvas.get("nodes")))):
+
+        all_nodes = list(_all(canvas.get("nodes")))
+        hub = next((n for n in all_nodes if n.get("kind") == "train"), None) or {}
+        test_id = hub.get("test_dataset")
+        if hub.get("dataset"):
+            train_dn = next((n for n in all_nodes
+                              if n.get("id") == hub.get("dataset")), None)
+        else:
+            train_dn = next((n for n in all_nodes
+                             if n.get("kind") == "dataset" and n.get("id") != test_id),
+                            None)
+        test_dn = (next((n for n in all_nodes if n.get("id") == test_id), None)
+                   if test_id else None)
+        if train_dn is None and any(n.get("kind") == "dataset" for n in all_nodes):
+            raise CanvasError("run", "training mode needs a dataset with rows — "
+                                  "the train box names which one feeds the run")
+        x_col = col_index(hub.get("x_col")) if hub.get("x_col") else 0
+        y_col = col_index(hub.get("y_col")) if hub.get("y_col") else 1
+        classes = list(hub.get("classes") or []) or None
+        train_labels = None
+
+        def _dbox(dn):
             did = dn.get("id")
-            dbox = graph.boxes[did] if did in graph.boxes else None
-            if dbox is None:
-                for b in graph.modules():
-                    if isinstance(b, Box) and b.node.get("id") == dn.get("id"):
-                        dbox = b
-                        break
-            if dbox is None:
-                raise CanvasError(dn.get("name") or "dataset",
-                                  "it sits inside a box the run cannot reach")
-            rows = dataset_rows(dn)
+            if did in graph.boxes:
+                return graph.boxes[did]
+            for b in graph.modules():
+                if isinstance(b, Box) and b.node.get("id") == did:
+                    return b
+            return None
+        if train_dn is not None:
+            rows = dataset_rows(train_dn)
             if not rows:
-                raise CanvasError(dn.get("name") or "dataset",
+                raise CanvasError(train_dn.get("name") or "dataset",
                                   "it has no rows to train on — paste some, "
                                   "or point it at a file")
-            size = max(1, int(dn.get("batch") or 4))
-            ids, labels = dataset_batch(dn, rows, 0, size)
-            dbox.batch = labels.to(dbox.device or "cpu")
-            if i == 0:
-                iid = _find_kind(canvas, "input")
-                if iid:
-                    feeds[iid] = ids     # the model's input reads the rows
+            size = max(1, int(train_dn.get("batch") or 4))
+            ids, train_labels = dataset_batch(train_dn, rows, 0, size,
+                                               x_col, y_col, classes)
+            tbox = _dbox(train_dn)
+            if tbox is None:
+                raise CanvasError(train_dn.get("name") or "dataset",
+                                  "it sits inside a box the run cannot reach")
+            # every dataset box carries the train batch, so an idle test split
+            # cannot fail wanting rows
+            for dn in all_nodes:
+                if dn.get("kind") == "dataset":
+                    b = _dbox(dn)
+                    if b is not None:
+                        b.batch = train_labels.to(b.device or "cpu")
+            iid = _find_kind(canvas, "input")
+            if iid:
+                feeds[iid] = ids     # the model's input reads the rows
     generated = []
 
     def passes():
@@ -2203,7 +2242,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
     for n in canvas.get("nodes", []):
         if n.get("kind") in ("detokenize", "hf") and isinstance(last.get(n["id"]), str):
             texts[n["id"]] = last[n["id"]]
-    return {
+    out = {
         "ok": True,
         "values": values,
         "generated": generated,
@@ -2213,6 +2252,34 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                     for n in canvas.get("nodes", []) if n.get("kind") == "output"],
         "ms": int((time.time() - t0) * 1000),
     }
+    if train:
+        # the probe: this batch's signal, and the test split's — one extra
+        # forward each, so the console can show the setup before it's started
+        try:
+            probe = {"loss": None, "acc": None, "tloss": None, "tacc": None}
+            if train_labels is not None:
+                probe["loss"], probe["acc"] = _probe_loss(canvas, hub, vals,
+                                                           train_labels, graph)
+            if test_dn is not None:
+                tbox = _dbox(test_dn)
+                trows = dataset_rows(test_dn) if tbox is not None else []
+                if trows:
+                    tsize = max(1, int(test_dn.get("batch") or 4))
+                    tids, tlabels = dataset_batch(test_dn, trows, 0, tsize,
+                                                   x_col, y_col, classes)
+                    tbox.batch = tlabels.to(tbox.device or "cpu")
+                    tfeeds = dict(feeds)
+                    iid = _find_kind(canvas, "input")
+                    if iid:
+                        tfeeds[iid] = tids
+                    with torch.no_grad():
+                        tvals = graph(feeds=tfeeds)
+                    probe["tloss"], probe["tacc"] = _probe_loss(canvas, hub, tvals,
+                                                                 tlabels, graph)
+            out["probe"] = probe
+        except Exception:
+            pass                       # a broken test split must not kill the run
+    return out
 
 
 def compile_canvas(canvas, seed=0, device="cpu", dtype=torch.float32, gguf_file=None,
@@ -2470,8 +2537,10 @@ def dataset_rows(node):
                 continue
             except ValueError:
                 pass
-        a, sep, b = line.partition("\t")
-        rows.append({"prompt": a, "completion": b if sep else ""})
+        parts = line.split("\t")
+        rows.append({"prompt": parts[0],
+                     "completion": parts[1] if len(parts) > 1 else "",
+                     "cells": parts})          # every column, for the train node's X/Y
     return rows
 
 
@@ -2502,7 +2571,8 @@ def _csv_rows(node, text):
         def get(i):
             return str(r[i]) if i is not None and i < len(r) else ""
 
-        rows.append({"prompt": get(pi), "completion": get(ci)})
+        rows.append({"prompt": get(pi), "completion": get(ci),
+                     "cells": [str(x) for x in r]})
     return rows
 
 
@@ -2517,17 +2587,56 @@ def _ds_encode(node, text):
     return [look[ch] for ch in str(text) if ch in look]
 
 
-def dataset_batch(node, rows, start, size):
-    """One batch: ids = prompt+completion, labels = the same ids with the
-    prompt masked to -100 (the loss reads completion only). Padded right."""
+def col_index(letter):
+    """A sheet column letter to a 0-based index: A->0 … Z->25, AA->26.
+    None for an empty or non-letter value."""
+    n = 0
+    for ch in str(letter or "").strip().upper():
+        if not "A" <= ch <= "Z":
+            return None
+        n = n * 26 + (ord(ch) - 64)
+    return n - 1 if n else None
+
+
+def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None):
+    """One batch: ids = X+Y, labels = the same ids with the X span masked to
+    -100 (the loss reads Y only), padded right. `x_col`/`y_col` pick the
+    conditioning and target columns (0-based; None keeps A/B). With `classes`,
+    Y is a class label: the ids carry X only, left-padded so the class falls
+    at the sequence's end, and the labels are the class indices (1-D) the
+    model must pick at that position."""
     want = rows[start:start + size]
     if not want:
         want = rows[:size]
+
+    def cell(r, col, default):
+        cells = r.get("cells")
+        if col is not None and cells and col < len(cells):
+            return str(cells[col])
+        return str(default if default is not None else "")
+
+    if classes:
+        seqs, cls = [], []
+        for r in want:
+            seqs.append(_ds_encode(node, cell(r, x_col, r.get("prompt"))))
+            y = cell(r, y_col, r.get("completion") if r.get("completion") is not None
+                     else r.get("output"))
+            if y not in classes:
+                raise CanvasError(node.get("name") or "dataset",
+                                  "class %r is not among the train node's classes %s"
+                                  % (y, ", ".join(map(str, classes))))
+            cls.append(classes.index(y))
+        width = max((len(s) for s in seqs), default=1)
+        ids = torch.zeros(len(seqs), width, dtype=torch.long)
+        for i, s in enumerate(seqs):
+            pad = width - len(s)
+            ids[i, pad:pad + len(s)] = torch.tensor(s, dtype=torch.long)
+        return ids, torch.tensor(cls, dtype=torch.long)
     seqs, labs = [], []
     for r in want:
-        prompt = str(r.get("prompt") or "")
-        comp = str(r.get("completion") if r.get("completion") is not None
-                   else r.get("output") or "")
+        prompt = cell(r, x_col, r.get("prompt"))
+        comp = cell(r, y_col, r.get("completion") if r.get("completion") is not None
+                    else r.get("output"))
         p = _ds_encode(node, prompt)
         c = _ds_encode(node, comp)
         seqs.append(p + c)
@@ -2597,6 +2706,82 @@ def _gather_logprobs(logits, ids):
     return out
 
 
+def _edge_pairs(canvas):
+    """Every (source, destination) box pair of every edge, at every nesting
+    level — the dataset->loss wiring the training signal rides on."""
+    pairs = []
+
+    def walk(doc):
+        nodes = (doc or {}).get("nodes") or []
+        by_id = {n.get("id"): n for n in nodes}
+        for e in (doc or {}).get("edges") or []:
+            src = by_id.get(e.get("from"))
+            dst = by_id.get(e.get("to"))
+            if src is not None and dst is not None:
+                pairs.append((src, dst))
+        for n in nodes:
+            if isinstance(n.get("inner"), dict):
+                walk(n["inner"])
+
+    walk(canvas)
+    return pairs
+
+
+def training_setup(canvas, hub):
+    """What scores the training: a loss box wired from a dataset box on the
+    canvas wins (existing designs keep their wiring); otherwise the hub's
+    target output box is the signal and the loss is computed around it.
+    Returns the loss box id (or None), the box the logits come from, the
+    dataset box that carries the labels, and whether the loss is implicit."""
+    hub = hub or {}
+    for src, dst in _edge_pairs(canvas):
+        if src.get("kind") == "dataset" and dst.get("kind") == "loss":
+            return {"loss_id": dst.get("id"), "target_id": None,
+                    "carrier_id": src.get("id"), "implicit": False}
+    target = hub.get("target")
+    return {"loss_id": None, "target_id": target,
+            "carrier_id": hub.get("dataset"), "implicit": target is not None}
+
+
+def _probe_loss(canvas, hub, vals, labels, graph=None):
+    """The training signal of one forward: the wired loss box's scalar, or —
+    with no loss box — cross entropy of the hub's target output against the
+    carried labels. Returns (loss, acc); acc is set for class labels."""
+    hub = hub or {}
+    loss_id = None
+    for src, dst in _edge_pairs(canvas):
+        if src.get("kind") == "dataset" and dst.get("kind") == "loss":
+            loss_id = dst.get("id")
+            break
+    if loss_id is not None and vals.get(loss_id) is not None:
+        v = vals[loss_id]
+        loss = float(v.detach()) if torch.is_tensor(v) else v
+        acc = None
+        if graph is not None:
+            box = graph.boxes.get(loss_id) if loss_id in (graph.boxes or {}) else None
+            if box is None:
+                for b in graph.modules():
+                    if isinstance(b, Box) and b.node.get("id") == loss_id:
+                        box = b
+                        break
+            if box is not None and getattr(box, "last_acc", None) is not None:
+                acc = float(box.last_acc)
+        return loss, acc
+    target = hub.get("target")
+    if target and labels is not None and vals.get(target) is not None:
+        lg = vals[target]
+        if labels.dim() == 1:                       # class labels: the end position
+            lgf = lg.float()
+            last = lgf[:, -1, :] if lgf.dim() == 3 else \
+                lgf.reshape(-1, lgf.shape[-1])[-labels.shape[0]:]
+            loss = F.cross_entropy(last.detach(), labels.long())
+            with torch.no_grad():
+                acc = (last.argmax(-1) == labels.long()).float().mean()
+            return float(loss), float(acc)
+        return float(_cross_entropy(lg, labels).detach()), None
+    return None, None
+
+
 class DesignTrainer:
     """Training on a design: a dataset box's rows in, a loss box's scalar out,
     one optimizer step per batch. Trainable boxes are those not `frozen`; the
@@ -2609,26 +2794,65 @@ class DesignTrainer:
         self.canvas = canvas
         self.cfg = cfg
         self.device = device
+        self.paradigm = str(cfg.get("paradigm") or "supervised")
         self.graph = compile_canvas(canvas, device=device, native=False, train=True)
         self.graph.train()
         self.input_id = cfg.get("input") or _find_kind(canvas, "input")
-        self.loss_id = cfg.get("loss") or _find_kind(canvas, "loss")
-        ds_id = cfg.get("dataset") or _find_kind(canvas, "dataset")
-        if not self.input_id or not self.loss_id or not ds_id:
-            raise CanvasError("", "training needs a dataset box wired to a loss, "
-                                  "and an input the model reads")
+        # the signal: a loss box wired on the canvas wins (existing designs),
+        # else the hub's target output box is scored and the loss is implicit
+        setup = training_setup(canvas, cfg)
+        self.loss_id = cfg.get("loss") or setup["loss_id"]
+        self.target_id = setup["target_id"]
+        self.implicit = self.loss_id is None and self.target_id is not None
+        if not self.loss_id and not self.target_id:
+            raise CanvasError("", "training needs an output box to score — bind a "
+                                  "target in the train box, or wire a loss box")
+        ds_id = (setup["carrier_id"] or cfg.get("dataset")
+                 or _find_kind(canvas, "dataset"))
+        if not self.input_id or not ds_id:
+            raise CanvasError("", "training needs an input box the model reads, "
+                                  "and a dataset with rows")
+        self.dataset_id = ds_id
         self.dataset_box = self._box(ds_id)
+        if self.dataset_box is None:
+            raise CanvasError("", "the train node's dataset is not on the canvas")
         self.rows = dataset_rows(self.dataset_box.node)
         if not self.rows:
-            raise CanvasError("dataset", "it has no rows — paste or point it at a file")
+            raise CanvasError("dataset", "it has no rows — paste some, "
+                                   "or point it at a file")
+        # the hub's columns: letters like a sheet, A/B as before
+        self.x_col = col_index(cfg.get("x_col")) if cfg.get("x_col") else 0
+        self.y_col = col_index(cfg.get("y_col")) if cfg.get("y_col") else 1
+        self.classes = list(cfg.get("classes") or []) or None
+        self.class_mode = bool(self.classes)
+        # the test split: scored every eval_every steps, never trained
+        self.test_id = cfg.get("test_dataset") or None
+        self.test_box = None
+        self.test_rows = []
+        if self.test_id:
+            self.test_box = self._box(self.test_id)
+            if self.test_box is None:
+                raise CanvasError("", "the train node's test dataset "
+                                       "is not on the canvas")
+            self.test_rows = dataset_rows(self.test_box.node)
+        # every dataset box on the graph runs in the forward and each one
+        # wants a batch — the carrier wears the split that is being scored,
+        # the idle ones ride along on the same labels
+        self.dataset_boxes = [self._box(nid) for nid in _find_kinds(canvas, "dataset")]
+        self.dataset_boxes = [b for b in self.dataset_boxes if b is not None]
+        self._tpos = 0
         self.trainable = [(n, p) for n, p in self.graph.named_parameters()
                           if p.requires_grad]
         if not self.trainable:
             raise CanvasError("", "nothing to train — unfreeze a box first")
-        self.optim = torch.optim.AdamW(
-            [p for _, p in self.trainable],
-            lr=float(cfg.get("lr") or 3e-4),
-            weight_decay=float(cfg.get("weight_decay") or 0.0))
+        opt = str(cfg.get("optimizer") or "adamw").lower()
+        lr = float(cfg.get("lr") or 3e-4)
+        wd = float(cfg.get("weight_decay") or 0.0)
+        self.optim = (torch.optim.SGD([p for _, p in self.trainable], lr=lr,
+                                       momentum=0.9, weight_decay=wd)
+                      if opt == "sgd" else
+                      torch.optim.AdamW([p for _, p in self.trainable], lr=lr,
+                                         weight_decay=wd))
         self.batch_size = max(1, int(cfg.get("batch") or 4))
         self.step = 0
         self.history = []
@@ -2648,13 +2872,60 @@ class DesignTrainer:
 
     def _batch(self):
         ids, labels = dataset_batch(self.dataset_box.node, self.rows,
-                                    self._pos, self.batch_size)
+                                    self._pos, self.batch_size,
+                                    self.x_col, self.y_col, self.classes)
         self._pos = (self._pos + self.batch_size) % max(len(self.rows), 1)
         return ids.to(self.device), labels.to(self.device)
 
+    def _test_batch(self):
+        ids, labels = dataset_batch(self.test_box.node, self.test_rows,
+                                    self._tpos, self.batch_size,
+                                    self.x_col, self.y_col, self.classes)
+        self._tpos = (self._tpos + self.batch_size) % max(len(self.test_rows), 1)
+        return ids.to(self.device), labels.to(self.device)
+
+    def _loss(self, vals, labels):
+        """The signal of one forward: the wired loss box's scalar, or — with
+        no loss box on the canvas — the hub's target output scored against
+        the batch's labels. Returns (loss, acc); acc is set for classes."""
+        if self.loss_id is not None:
+            loss = vals.get(self.loss_id)
+            if loss is None:
+                return None, None
+            box = self._box(self.loss_id)
+            acc = getattr(box, "last_acc", None) if box is not None else None
+            return loss, (float(acc) if acc is not None else None)
+        logits = vals.get(self.target_id)
+        if logits is None:
+            return None, None
+        if labels.dim() == 1:                       # class labels: pick at the end
+            lg = logits.float()
+            last = lg[:, -1, :] if lg.dim() == 3 else \
+                lg.reshape(-1, lg.shape[-1])[-labels.shape[0]:]
+            loss = F.cross_entropy(last, labels.long())
+            with torch.no_grad():
+                acc = (last.argmax(-1) == labels.long()).float().mean()
+            return loss, float(acc)
+        return _cross_entropy(logits, labels), None
+
+    def _eval(self):
+        """One pass over the test split: its loss (and accuracy) without
+        touching the weights. The carrier box wears the test labels for the
+        pass, so a wired loss box scores the split too."""
+        if self.test_box is None or not self.test_rows:
+            return None, None
+        ids, labels = self._test_batch()
+        for b in self.dataset_boxes:
+            b.batch = labels       # the whole graph wears the test labels for the pass
+        with torch.no_grad():
+            vals = self.graph(feeds={self.input_id: ids})
+            return self._loss(vals, labels)
+
     def run(self, steps=1, on_event=None, command=None):
         """One training session. `command()` may answer 'save' or 'detach';
-        detach is graceful — it lands a checkpoint before it returns."""
+        detach is graceful — it lands a checkpoint before it returns. Every
+        `eval_every` steps the test split is scored and rides the event in
+        `tloss`/`tacc`."""
         say = on_event or (lambda e: None)
         for _ in range(int(steps)):
             cmd = command() if command else None
@@ -2666,9 +2937,10 @@ class DesignTrainer:
                 say({"type": "checkpoint", "path": path, "detached": True})
                 return {"state": "detached", "step": self.step, "checkpoint": path}
             ids, labels = self._batch()
-            self.dataset_box.batch = labels
+            for b in self.dataset_boxes:
+                b.batch = labels       # every dataset box runs in the forward
             vals = self.graph(feeds={self.input_id: ids})
-            loss = vals.get(self.loss_id)
+            loss, acc = self._loss(vals, labels)
             if loss is None:
                 raise CanvasError("loss", "the design produced no loss")
             self.optim.zero_grad(set_to_none=True)
@@ -2679,7 +2951,17 @@ class DesignTrainer:
             self.step += 1
             self.history.append(float(loss.detach()))
             self.history = self.history[-400:]
-            say({"type": "loss", "step": self.step, "loss": float(loss.detach())})
+            ev = {"type": "loss", "step": self.step, "loss": float(loss.detach())}
+            if acc is not None:
+                ev["acc"] = acc
+            if (self.test_box is not None and self.test_rows
+                    and self.step % max(1, int(self.cfg.get("eval_every") or 50)) == 0):
+                tloss, tacc = self._eval()
+                if tloss is not None:
+                    ev["tloss"] = float(tloss.detach())
+                if tacc is not None:
+                    ev["tacc"] = tacc
+            say(ev)
             if self.step % max(1, int(self.cfg.get("save_every") or 50)) == 0:
                 say({"type": "checkpoint", "path": self.save()})
         return {"state": "ok", "step": self.step,
@@ -2693,7 +2975,7 @@ class DesignTrainer:
         os.makedirs(path, exist_ok=True)
         state = {"step": self.step, "config": dict(self.cfg),
                  "trainable": {n: p.detach().cpu() for n, p in self.trainable},
-                 "optim": self.optim.state_dict()}
+                 "optim": self.optim.state_dict(), "tpos": self._tpos}
         torch.save(state, os.path.join(path, "state.pt"))
         with open(os.path.join(path, "meta.json"), "w", encoding="utf-8") as fh:
             json.dump({"step": self.step,
@@ -2709,7 +2991,7 @@ class DesignTrainer:
 
     def load(self, path):
         """Resume: the trainable tensors, the optimizer and the step come back
-        where they were — including the row position."""
+        where they were — including the row positions of both splits."""
         if os.path.isdir(path) and os.path.isfile(os.path.join(path, "latest.json")):
             with open(os.path.join(path, "latest.json"), encoding="utf-8") as fh:
                 path = json.load(fh).get("checkpoint") or path
@@ -2725,7 +3007,32 @@ class DesignTrainer:
             self.optim.load_state_dict(state["optim"])
         self.step = int(state.get("step") or 0)
         self._pos = self.step * self.batch_size % max(len(self.rows), 1)
+        self._tpos = int(state.get("tpos") or 0)
         return path
+
+
+def apply_checkpoint(graph, path, device="cpu"):
+    """A checkpoint's trained tensors onto a fresh graph — the weights of a
+    finished run, on the design's live weights, so a trained design can be
+    run (or kept warm) without retraining. Names must match the design.
+    Returns the step the checkpoint landed at."""
+    if os.path.isdir(path) and os.path.isfile(os.path.join(path, "latest.json")):
+        with open(os.path.join(path, "latest.json"), encoding="utf-8") as fh:
+            path = json.load(fh).get("checkpoint") or path
+    f = os.path.join(path, "state.pt")
+    if not os.path.isfile(f):
+        raise CanvasError("", "no checkpoint at %s" % path)
+    state = torch.load(f, map_location=device, weights_only=False)
+    own = dict(graph.named_parameters())
+    hit = 0
+    for name, t in (state.get("trainable") or {}).items():
+        if name in own:
+            with torch.no_grad():
+                own[name].data.copy_(t.to(device))
+            hit += 1
+    if not hit:
+        raise CanvasError("", "the checkpoint's tensors match no box of this design")
+    return int(state.get("step") or 0)
 
 
 def _find_kind(canvas, kind):
@@ -2739,3 +3046,19 @@ def _find_kind(canvas, kind):
                     return hit
         return None
     return walk((canvas or {}).get("nodes"))
+
+
+def _find_kinds(canvas, kind):
+    """Every node of a kind, at every nesting level — the id list _find_kind
+    truncates."""
+    found = []
+
+    def walk(nodes):
+        for n in nodes or []:
+            if n.get("kind") == kind:
+                found.append(n.get("id"))
+            if isinstance(n.get("inner"), dict):
+                walk((n.get("inner") or {}).get("nodes"))
+
+    walk((canvas or {}).get("nodes"))
+    return found

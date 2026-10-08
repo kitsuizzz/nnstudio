@@ -1621,14 +1621,18 @@ def dataset_csv_reads_like_a_frame():
     node = {"id": "d", "kind": "dataset", "name": "rows", "format": "csv",
             "text": 'prompt,completion,note\n"a, b","say ""hi""",x\nq,"multi\nline",y'}
     rows = T.dataset_rows(node)
-    assert rows == [{"prompt": "a, b", "completion": 'say "hi"'},
-                    {"prompt": "q", "completion": "multi\nline"}], rows
+    assert rows == [{"prompt": "a, b", "completion": 'say "hi"',
+                     "cells": ["a, b", 'say "hi"', "x"]},
+                    {"prompt": "q", "completion": "multi\nline",
+                     "cells": ["q", "multi\nline", "y"]}], rows
     named = {"id": "d2", "kind": "dataset", "format": "csv", "vocab": "hiter",
              "text": "question,answer\nhi,there"}
-    assert T.dataset_rows(named) == [{"prompt": "hi", "completion": "there"}], \
-        "columns map by name (question/answer)"
+    assert T.dataset_rows(named) == [{"prompt": "hi", "completion": "there",
+                                       "cells": ["hi", "there"]}], \
+        "columns map by name (question/answer), and every column rides along"
     fell = {"id": "d3", "kind": "dataset", "format": "csv", "text": "x,y\n1,2"}
-    assert T.dataset_rows(fell) == [{"prompt": "1", "completion": "2"}], \
+    assert T.dataset_rows(fell) == [{"prompt": "1", "completion": "2",
+                                     "cells": ["1", "2"]}], \
         "unknown names fall back to the first two columns"
     ids, labels = T.dataset_batch(named, T.dataset_rows(named), 0, 2)
     lab = labels[0].tolist()
@@ -1638,6 +1642,202 @@ def dataset_csv_reads_like_a_frame():
 
 check("a csv dataset reads like a dataframe: headers map, quotes survive",
       dataset_csv_reads_like_a_frame)
+
+# ------------------------------------------------- the train node is the hub --
+
+def _hub_canvas(with_test=True):
+    nodes = [
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=8, din=1, dout=4),
+        n("layer", "l1", din=4, dout=4),
+        n("layer", "l2", din=4, dout=8),
+        n("output", "logits", din=8),
+        n("dataset", "data", vocab="cdxyzabr",
+          text="c\tx\ta\nd\ty\tb\nc\tz\ta"),
+    ]
+    if with_test:
+        nodes.append(n("dataset", "test", vocab="cdxyzabr",
+                       text="c\tq\ta\nd\tr\tb"))
+    nodes.append(n("train", "hub", name="train", dataset="data",
+                   test_dataset="test" if with_test else None,
+                   x_col="A", y_col="C", classes=["a", "b"],
+                   target="logits", paradigm="supervised",
+                   batch=2, steps=4, lr=0.05, eval_every=2, save_every=1))
+    return canvas(nodes, [edge("tok", "emb"), edge("emb", "l1"),
+                          edge("l1", "l2"), edge("l2", "logits")])
+
+
+def hub_columns_and_classes():
+    c = _hub_canvas()
+    ds = [x for x in c["nodes"] if x["id"] == "data"][0]
+    rows = T.dataset_rows(ds)
+    assert all(len(r["cells"]) == 3 for r in rows), rows
+    # x=A, y=C, classes: the B column is ignored, the labels are 1-D indices
+    ids, labels = T.dataset_batch(ds, rows, 0, 3, 0, 2, ["a", "b"])
+    assert labels.dim() == 1 and labels.tolist() == [0, 1, 0], labels.tolist()
+    assert ids.shape[1] == 1, "every X is one char, so the batch is width 1"
+    try:
+        bad = dict(ds, name="bad", text="c\tx\tfish")
+        T.dataset_batch(bad, T.dataset_rows(bad), 0, 1, 0, 2, ["a", "b"])
+        raise AssertionError("no error for a class outside the hub's")
+    except T.CanvasError as e:
+        assert "fish" in str(e) and "bad" in str(e), e
+    assert T.col_index("A") == 0 and T.col_index("Z") == 25 and T.col_index("AA") == 26
+    assert T.col_index("") is None and T.col_index("1") is None
+
+
+check("the hub picks the X/Y columns; classes become 1-D label indices",
+      hub_columns_and_classes)
+
+
+def hub_left_pads_the_class_input():
+    ds = {"id": "d", "kind": "dataset", "name": "rows", "x": 0, "y": 0,
+          "vocab": "abxyzwoneut", "text": "a\tz\tone\nxy\tw\ttwo"}
+    rows = T.dataset_rows(ds)
+    ids, labels = T.dataset_batch(ds, rows, 0, 2, 0, 2, ["one", "two"])
+    assert ids.shape == (2, 2), ids.shape
+    enc_a = T._ds_encode(ds, "a")
+    enc_xy = T._ds_encode(ds, "xy")
+    assert ids[0].tolist()[-1] == enc_a[0], "the short X sits at the sequence's end"
+    assert ids[1].tolist() == enc_xy, "the long X fills its row"
+    assert labels.tolist() == [0, 1], labels.tolist()
+
+
+check("class mode left-pads X so the class falls at the sequence's end",
+      hub_left_pads_the_class_input)
+
+
+def training_setup_resolves_the_signal():
+    c = _hub_canvas()
+    hub = [x for x in c["nodes"] if x["kind"] == "train"][0]
+    assert T.training_setup(c, hub) == {"loss_id": None, "target_id": "logits",
+                                         "carrier_id": "data", "implicit": True}
+    c2 = canvas([
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=4, din=1, dout=4),
+        n("layer", "l2", din=4, dout=4),
+        n("output", "logits", din=4),
+        n("dataset", "data", vocab="abcd", text="ab\tcd"),
+        n("loss", "loss", din=4),
+        n("train", "hub", name="train", dataset="data", target="logits"),
+    ], [edge("tok", "emb"), edge("emb", "l2"), edge("l2", "logits"),
+       edge("data", "loss", 0, 1), edge("logits", "loss", 0, 0)])
+    hub2 = [x for x in c2["nodes"] if x["kind"] == "train"][0]
+    s = T.training_setup(c2, hub2)
+    assert s["loss_id"] == "loss" and s["implicit"] is False, \
+        "a wired dataset->loss box outranks the hub's target"
+    assert s["carrier_id"] == "data", s
+
+
+check("the signal: a wired loss box wins, else the hub's target is implicit",
+      training_setup_resolves_the_signal)
+
+
+def the_trainer_scores_both_splits():
+    import shutil
+    c = _hub_canvas()
+    hub = [x for x in c["nodes"] if x["kind"] == "train"][0]
+    d = tempfile.mkdtemp()
+    try:
+        cfg = {"name": "hubrun", "checkpoints": d}
+        for key in ("dataset", "test_dataset", "x_col", "y_col", "classes",
+                    "target", "paradigm", "batch", "lr", "eval_every",
+                    "save_every"):
+            if hub.get(key) not in (None, "", []):
+                cfg[key] = hub[key]
+        tr = T.DesignTrainer(c, cfg)
+        assert tr.loss_id is None and tr.target_id == "logits" and tr.implicit
+        assert [b.node.get("id") for b in tr.dataset_boxes] == ["data", "test"], \
+            "every dataset box on the canvas wears a batch"
+        events = []
+        tr.run(steps=4, on_event=lambda e: events.append(e))
+        losses = [e for e in events if e["type"] == "loss"]
+        assert len(losses) == 4, len(losses)
+        assert all(e.get("acc") is not None for e in losses), \
+            "class mode reports accuracy with every loss"
+        ev = [e for e in losses if e["step"] == 2][0]
+        assert ev.get("tloss") is not None and ev.get("tacc") is not None, \
+            "the test split rides the event at eval_every: %s" % ev
+        ck = [e for e in events if e["type"] == "checkpoint"]
+        assert ck and os.path.isfile(os.path.join(ck[-1]["path"], "state.pt"))
+        path = tr.save()
+        tr2 = T.DesignTrainer(c, cfg)
+        tr2.load(path)
+        assert tr2.step == 4, "resume restores the step"
+        assert tr2._tpos == tr._tpos, "…and the test-split row position"
+        g = T.compile_canvas(c, device="cpu", native=False, train=True)
+        before = [p.clone() for _, p in g.named_parameters() if p.requires_grad]
+        T.apply_checkpoint(g, path, "cpu")
+        after = [p for _, p in g.named_parameters() if p.requires_grad]
+        assert any(not torch.equal(a, b) for a, b in zip(before, after)), \
+            "apply_checkpoint puts the trained weights on a fresh graph"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+check("the trainer: hub columns, acc on both splits, resume, warm start",
+      the_trainer_scores_both_splits)
+
+
+def the_run_menu_probes_the_setup():
+    c = _hub_canvas()
+    res = T.run(c, {}, mode="training")
+    probe = res.get("probe")
+    assert probe is not None, "a training run reports its probe"
+    assert probe["loss"] is not None and probe["acc"] is not None, probe
+    assert probe["tloss"] is not None and probe["tacc"] is not None, \
+        "the idle test split is scored by the probe, not the run"
+    # no test split: the run stands, the probe just says so
+    c2 = canvas([x for x in _hub_canvas()["nodes"] if x["id"] != "test"],
+                [edge("tok", "emb"), edge("emb", "l1"), edge("l1", "l2"),
+                 edge("l2", "logits")])
+    for x in c2["nodes"]:
+        if x["kind"] == "train":
+            x["test_dataset"] = None
+    res2 = T.run(c2, {}, mode="training")
+    assert res2["probe"]["loss"] is not None and res2["probe"]["tloss"] is None
+    # without a train node the old feeding path stands, and there is no probe
+    c3 = canvas([
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=4, din=1, dout=4),
+        n("layer", "l2", din=4, dout=4),
+        n("output", "logits", din=4),
+        n("dataset", "data", vocab="abcd", text="ab\tcd"),
+    ], [edge("tok", "emb"), edge("emb", "l2"), edge("l2", "logits")])
+    res3 = T.run(c3, {}, mode="training")
+    assert "probe" not in res3 or res3["probe"]["loss"] is None
+    # the hub points at a dataset that is not on the canvas
+    c4 = canvas([
+        n("input", "tok", dout=1),
+        n("dataset", "other", name="rows", vocab="abcd", text="ab\tcd"),
+        n("train", "hub", name="train", dataset="ghost"),
+    ], [])
+    try:
+        T.run(c4, {}, mode="training")
+        raise AssertionError("no error for a hub pointing at a missing dataset")
+    except T.CanvasError as e:
+        assert "the train box names" in str(e), e
+    # the hub's dataset has no rows: the error names the box
+    c5 = canvas([
+        n("input", "tok", dout=1),
+        n("dataset", "rows", name="rows", vocab="abcd", text=""),
+        n("train", "hub", name="train", dataset="rows"),
+    ], [])
+    try:
+        T.run(c5, {}, mode="training")
+        raise AssertionError("no error for an empty hub dataset")
+    except T.CanvasError as e:
+        assert "rows" in str(e), e
+    # an inference run of a design with a hub is refused on its dataset, as before
+    try:
+        T.run(c4, {}, mode="inference")
+        raise AssertionError("an inference run must not feed the dataset")
+    except T.CanvasError:
+        pass
+
+
+check("the run menu: the hub feeds the run, the probe scores both splits",
+      the_run_menu_probes_the_setup)
 
 if FAILED:
     print("nn_torch_test: %d failure(s): %s" % (len(FAILED), ", ".join(FAILED)))
