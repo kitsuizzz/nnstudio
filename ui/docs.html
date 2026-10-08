@@ -609,12 +609,14 @@
     </div>
     <div class="bdet">
       <p>The <b>hub of the training</b>: it owns the data (which dataset feeds the
-      run, which is the held-out test split), the columns (<b>x</b> conditions,
-      <b>y</b> is what the model is scored on), the classes (when y is a label),
-      the signal — the <b>target</b> output box it scores, or, in <b>rl</b>, the
-      reward box — and every parameter of the run. Its window shows the setup,
-      the step counter, live loss and accuracy curves (solid train, dashed test)
-      and the controls that matter when a GPU's clock is ticking: <b>start</b>,
+      run, which is the held-out test split — idle in rl), the columns (<b>x</b>
+      conditions; <b>y</b> is what the model is scored on, in supervised), the
+      classes (when y is a label), the signal — the <b>target</b> output box it
+      scores, or, in <b>rl</b>, the reward box — and every parameter of the run.
+      Its window shows the setup, the step counter, and the live curves: loss and
+      accuracy (solid train, dashed test) — in rl, the mean reward and its
+      baseline — and the controls that matter when a GPU's clock is ticking:
+      <b>start</b>,
       <b>save now</b> (land a checkpoint where it stands), <b>hold</b> (stop
       stepping but keep the machine), <b>detach</b> (checkpoint and stop cleanly,
       freeing the GPU), <b>resume</b> (continue exactly where it stopped) and
@@ -716,14 +718,29 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         the boxes you trust, train the rest.</li>
   </ol>
 
-  <h2>Score outputs with a reward</h2>
+  <h2>Train with a reward (rl)</h2>
   <ol>
+    <li>A dataset box of <b>prompts</b> — column A is all the data gives. There is
+        no y column: in rl the <b>reward box is the signal</b>, so a loss box has
+        nothing to do and must not be wired to the dataset.</li>
+    <li>The network as in the recipe above, ending in the output box the policy
+        samples from.</li>
     <li>Add a <span class="pill">reward</span> box; pick its kind and write it —
-        e.g. <code>expr = "1.0 if output.strip().endswith('.') else 0.0"</code>.</li>
-    <li>Training runs score generated samples with it. The score is deterministic —
-        the same output always earns the same reward, so runs are reproducible.</li>
-    <li>Watch rewards climb alongside the loss on the train box. Higher reward is
-        the reinforcement-learning objective; lower loss is the supervised one.</li>
+        e.g. <code>expr = "1.0 if output.strip().endswith('!') else 0.0"</code>.
+        The score is deterministic — the same output always earns the same reward,
+        so runs are reproducible. Keep it partly soft (a little reward even for
+        imperfect outputs), or the policy can starve on a row that keeps scoring
+        zero.</li>
+    <li>The train box: set the <b>paradigm</b> to <b>rl</b>, bind the dataset, name
+        the <b>x</b> column, pick the <b>target</b> — the output box the policy
+        samples from — and bind the <b>reward</b> box. Set <code>temperature</code>,
+        <code>max_tokens</code> and <code>n_samples</code> — how the sampling goes,
+        and how many samples one row of the dataset earns per step.</li>
+    <li>Start it and watch the <b>reward</b> climb: solid — the mean reward, dashed
+        — its baseline, the policy's decaying average of past rewards. Each step
+        draws <code>n_samples</code> samples from one row, scores each with the
+        reward box, and nudges the policy toward whatever out-earned the baseline.
+        The test split stays idle — every sample the policy draws is scored.</li>
   </ol>
 </section>
 

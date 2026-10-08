@@ -37,6 +37,9 @@ def main():
     ap.add_argument("--optimizer", default="")
     ap.add_argument("--weight-decay", type=float, default=0.0)
     ap.add_argument("--clip", type=float, default=0.0)
+    ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--max-tokens", type=int, default=0)
+    ap.add_argument("--n-samples", type=int, default=0)
     a = ap.parse_args()
 
     import nn_torch
@@ -61,7 +64,8 @@ def main():
     cfg = {"name": a.name or a.task, "checkpoints": os.path.join(ROOT, "checkpoints")}
     for key in ("dataset", "test_dataset", "x_col", "y_col", "classes",
                 "target", "paradigm", "reward", "lr", "optimizer",
-                "weight_decay", "batch", "clip", "save_every", "eval_every"):
+                "weight_decay", "batch", "clip", "save_every", "eval_every",
+                "temperature", "max_tokens", "n_samples"):
         if hub.get(key) not in (None, "", []):
             cfg[key] = hub[key]
     if a.batch:
@@ -78,6 +82,12 @@ def main():
         cfg["weight_decay"] = a.weight_decay
     if a.clip:
         cfg["clip"] = a.clip
+    if a.temperature:
+        cfg["temperature"] = a.temperature
+    if a.max_tokens:
+        cfg["max_tokens"] = a.max_tokens
+    if a.n_samples:
+        cfg["n_samples"] = a.n_samples
 
     state_path = os.path.join(ROOT, "agents", a.task + ".state.json")
     cmd_path = os.path.join(ROOT, "agents", a.task + ".cmd")
@@ -116,17 +126,25 @@ def main():
 
     def on_event(ev):
         if ev.get("type") == "loss":
-            write_state(step=ev["step"], loss=ev["loss"],
-                        tloss=ev.get("tloss"), acc=ev.get("acc"),
-                        tacc=ev.get("tacc"),
-                        saved_at=ev.get("saved_at"),
-                        rows=len(tr.rows), elapsed=time.time() - t0)
-            extra = ""
-            if ev.get("tloss") is not None:
-                extra = "   test loss %.4f" % ev["tloss"]
-            elif ev.get("acc") is not None:
-                extra = "   acc %.2f" % ev["acc"]
-            print("step %d  loss %.4f%s" % (ev["step"], ev["loss"], extra))
+            kw = dict(step=ev["step"], loss=ev["loss"],
+                      tloss=ev.get("tloss"), acc=ev.get("acc"),
+                      tacc=ev.get("tacc"),
+                      saved_at=ev.get("saved_at"),
+                      rows=len(tr.rows), elapsed=time.time() - t0)
+            if ev.get("sample") is not None:
+                kw["sample"] = ev["sample"]
+            write_state(**kw)
+            if ev.get("reward") is not None:
+                # rl: the mean reward and the baseline ride the test slots
+                print("step %d  reward %.4f   baseline %.4f"
+                      % (ev["step"], ev["reward"], ev["tacc"]))
+            else:
+                extra = ""
+                if ev.get("tloss") is not None:
+                    extra = "   test loss %.4f" % ev["tloss"]
+                elif ev.get("acc") is not None:
+                    extra = "   acc %.2f" % ev["acc"]
+                print("step %d  loss %.4f%s" % (ev["step"], ev["loss"], extra))
         elif ev.get("type") == "checkpoint":
             write_state(step=tr.step,
                         loss=tr.history[-1] if tr.history else None,

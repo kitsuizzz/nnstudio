@@ -3300,15 +3300,17 @@ function bxTrainSummary(h) {                       // what the engine will do, i
         rows = (bxTableRead(ds).rows || []).length;
         if (rows) bits.push(rows + " rows");
       }
-      bits.push("x " + (h.x_col || "A") + " \u2192 y " + (h.y_col || "B"));
-      if (h.classes && h.classes.length)
+      bits.push(rl ? "x " + (h.x_col || "A") + " only — the reward is the signal"
+                   : "x " + (h.x_col || "A") + " \u2192 y " + (h.y_col || "B"));
+      if (h.classes && h.classes.length && !rl)
         bits.push("y is a class label (" + h.classes.join(", ") + ")");
       lines.push("data \u00b7 " + bits.join(" \u00b7 "));
       if (rows === 0) missing.push("the dataset has no rows");
     }
   }
   if (h.test_dataset) {
-    if (h.test_dataset === h.dataset) missing.push("the test split is the training dataset");
+    if (h.test_dataset === h.dataset && !rl)
+      missing.push("the test split is the training dataset");
     else {
       const ts = find(h.test_dataset);
       if (!ts) missing.push("the test dataset is off the canvas");
@@ -3320,16 +3322,20 @@ function bxTrainSummary(h) {                       // what the engine will do, i
           if (rows) bits.push(rows + " rows");
           else bits.push("no rows yet");
         }
+        if (rl) bits.push("idle in rl");
         lines.push("test \u00b7 " + bits.join(" \u00b7 "));
       }
     }
-  } else lines.push("test \u00b7 none — the curves stay train-only");
+  } else lines.push("test \u00b7 "
+    + (rl ? "idle — rl scores every sample" : "none — the curves stay train-only"));
   const wired = (function () {
     for (const p of bxEdgePairs())
       if (p[0].kind === "dataset" && p[1].kind === "loss") return p;
     return null;
   })();
-  if (wired)
+  if (wired && rl)
+    missing.push("the reward is the signal in rl — a wired dataset\u2192loss box is a supervised leftover");
+  else if (wired)
     lines.push("signal \u00b7 " + (wired[1].name || wired[1].id)
                + " — a dataset\u2192loss wire beats the binding");
   else if (h.target) {
@@ -3338,7 +3344,9 @@ function bxTrainSummary(h) {                       // what the engine will do, i
     else lines.push("signal \u00b7 " + (tg.name || h.target)
       + (rl ? " — the policy, scored by the reward box"
             : " — the implicit loss on its output"));
-  } else missing.push("no signal — bind a target, or wire a dataset to a loss box");
+  } else missing.push(rl
+    ? "rl training needs a target output box to sample from — bind one in the train box"
+    : "no signal — bind a target, or wire a dataset to a loss box");
   if (rl) {
     if (!h.reward) missing.push("no reward box — rl is scored by the reward box");
     else {
@@ -3459,12 +3467,19 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
   for (const why of sum.missing)
     pane.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + why }));
   const strip = mk("div", { class: "panehint" });
-  strip.textContent = "step " + (st.step != null ? st.step : "—")
-      + (st.loss != null ? "  ·  loss " + Number(st.loss).toFixed(4) : "")
-      + (st.acc != null ? "  ·  acc " + Number(st.acc).toFixed(3) : "")
-      + (st.tloss != null ? "  ·  test loss " + Number(st.tloss).toFixed(4) : "")
-      + (st.tacc != null ? "  ·  test acc " + Number(st.tacc).toFixed(3) : "")
-      + (st.saved_at ? "  ·  saved " + String(st.saved_at).split("/").slice(-1)[0] : "");
+  if ((n.paradigm || "supervised") === "rl")
+    strip.textContent = "step " + (st.step != null ? st.step : "—")
+        + (st.tloss != null ? "  ·  reward " + Number(st.tloss).toFixed(4) : "")
+        + (st.tacc != null ? "  ·  baseline " + Number(st.tacc).toFixed(4) : "")
+        + (st.sample ? "  ·  \u201c" + String(st.sample).slice(0, 40) + "\u201d" : "")
+        + (st.saved_at ? "  ·  saved " + String(st.saved_at).split("/").slice(-1)[0] : "");
+  else
+    strip.textContent = "step " + (st.step != null ? st.step : "—")
+        + (st.loss != null ? "  ·  loss " + Number(st.loss).toFixed(4) : "")
+        + (st.acc != null ? "  ·  acc " + Number(st.acc).toFixed(3) : "")
+        + (st.tloss != null ? "  ·  test loss " + Number(st.tloss).toFixed(4) : "")
+        + (st.tacc != null ? "  ·  test acc " + Number(st.tacc).toFixed(3) : "")
+        + (st.saved_at ? "  ·  saved " + String(st.saved_at).split("/").slice(-1)[0] : "");
   pane.appendChild(strip);
   const hist = (BXRUN.trainHist || {})[n.id] || [];
   if (hist.length > 1) {                          // solid: the train split · dashed: the test
@@ -3503,10 +3518,17 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
       line(getTest, color, true);
       pane.appendChild(svg);
     };
-    dual(h0 => h0.loss, h0 => h0.tloss, "#f97316");
-    dual(h0 => h0.acc, h0 => h0.tacc, "#22c55e");
-    pane.appendChild(mk("div", { class: "bxbhint",
-      text: "solid — the train split · dashed — the test split" }));
+    if ((n.paradigm || "supervised") === "rl") {
+      // rl: the mean reward and the baseline ride the test slots
+      dual(h0 => h0.tloss, h0 => h0.tacc, "#f97316");
+      pane.appendChild(mk("div", { class: "bxbhint",
+        text: "solid — the mean reward · dashed — the baseline" }));
+    } else {
+      dual(h0 => h0.loss, h0 => h0.tloss, "#f97316");
+      dual(h0 => h0.acc, h0 => h0.tacc, "#22c55e");
+      pane.appendChild(mk("div", { class: "bxbhint",
+        text: "solid — the train split · dashed — the test split" }));
+    }
   }
   const row = mk("div", { class: "rrow" });
   const chip = (label, fn, title, off) => {
@@ -5616,6 +5638,9 @@ function bxtRunRender() {
       if (r.probe.acc != null) pb.push("acc " + Number(r.probe.acc).toFixed(3));
       if (r.probe.tloss != null) pb.push("test " + Number(r.probe.tloss).toFixed(4));
       if (r.probe.tacc != null) pb.push("test acc " + Number(r.probe.tacc).toFixed(3));
+      if (r.probe.reward != null) pb.push("reward " + Number(r.probe.reward).toFixed(4));
+      if (r.probe.sample) pb.push("\u201c" + r.probe.sample + "\u201d");
+      if (r.probe.reason) pb.push(r.probe.reason);
       if (pb.length)
         menu.appendChild(mk("div", { class: "bxbhint",
           text: "probe \u00b7 " + pb.join(" \u00b7 ") }));

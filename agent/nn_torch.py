@@ -2160,9 +2160,11 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
         if train_dn is None and any(n.get("kind") == "dataset" for n in all_nodes):
             raise CanvasError("run", "training mode needs a dataset with rows — "
                                   "the train box names which one feeds the run")
+        paradigm = str(hub.get("paradigm") or "supervised")
         x_col = col_index(hub.get("x_col")) if hub.get("x_col") else 0
         y_col = col_index(hub.get("y_col")) if hub.get("y_col") else 1
-        classes = list(hub.get("classes") or []) or None
+        classes = None if paradigm == "rl" else (
+            list(hub.get("classes") or []) or None)
         train_labels = None
 
         def _dbox(dn):
@@ -2180,8 +2182,20 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                                   "it has no rows to train on — paste some, "
                                   "or point it at a file")
             size = max(1, int(train_dn.get("batch") or 4))
-            ids, train_labels = dataset_batch(train_dn, rows, 0, size,
-                                               x_col, y_col, classes)
+            if paradigm == "rl":
+                # the reward box is the signal in rl; a wired loss box is a
+                # supervised leftover, and its labels would not fit the
+                # growing samples the probe draws
+                if any(src.get("kind") == "dataset" and dst.get("kind") == "loss"
+                       for src, dst in _edge_pairs(canvas)):
+                    raise CanvasError("loss",
+                                      "the reward is the signal in rl — a wired "
+                                      "loss box is a supervised leftover")
+                ids, train_labels = dataset_batch(train_dn, rows, 0, size,
+                                                   x_col, x_only=True)
+            else:
+                ids, train_labels = dataset_batch(train_dn, rows, 0, size,
+                                                   x_col, y_col, classes)
             tbox = _dbox(train_dn)
             if tbox is None:
                 raise CanvasError(train_dn.get("name") or "dataset",
@@ -2257,28 +2271,35 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
         # forward each, so the console can show the setup before it's started
         try:
             probe = {"loss": None, "acc": None, "tloss": None, "tacc": None}
-            if train_labels is not None:
-                probe["loss"], probe["acc"] = _probe_loss(canvas, hub, vals,
-                                                           train_labels, graph)
-            if test_dn is not None:
-                tbox = _dbox(test_dn)
-                trows = dataset_rows(test_dn) if tbox is not None else []
-                if trows:
-                    tsize = max(1, int(test_dn.get("batch") or 4))
-                    tids, tlabels = dataset_batch(test_dn, trows, 0, tsize,
-                                                   x_col, y_col, classes)
-                    tbox.batch = tlabels.to(tbox.device or "cpu")
-                    tfeeds = dict(feeds)
-                    iid = _find_kind(canvas, "input")
-                    if iid:
-                        tfeeds[iid] = tids
-                    with torch.no_grad():
-                        tvals = graph(feeds=tfeeds)
-                    probe["tloss"], probe["tacc"] = _probe_loss(canvas, hub, tvals,
-                                                                 tlabels, graph)
+            if paradigm == "rl":
+                # the rl probe is the policy itself: one sample from the first
+                # row, scored by the reward box
+                probe.update(_rl_probe(canvas, hub, graph, train_dn,
+                                        rows if train_dn is not None else [],
+                                        x_col, sample_seed))
+            else:
+                if train_labels is not None:
+                    probe["loss"], probe["acc"] = _probe_loss(canvas, hub, vals,
+                                                               train_labels, graph)
+                if test_dn is not None:
+                    tbox = _dbox(test_dn)
+                    trows = dataset_rows(test_dn) if tbox is not None else []
+                    if trows:
+                        tsize = max(1, int(test_dn.get("batch") or 4))
+                        tids, tlabels = dataset_batch(test_dn, trows, 0, tsize,
+                                                       x_col, y_col, classes)
+                        tbox.batch = tlabels.to(tbox.device or "cpu")
+                        tfeeds = dict(feeds)
+                        iid = _find_kind(canvas, "input")
+                        if iid:
+                            tfeeds[iid] = tids
+                        with torch.no_grad():
+                            tvals = graph(feeds=tfeeds)
+                        probe["tloss"], probe["tacc"] = _probe_loss(
+                            canvas, hub, tvals, tlabels, graph)
             out["probe"] = probe
         except Exception:
-            pass                       # a broken test split must not kill the run
+            pass                       # a broken probe must not kill the run
     return out
 
 
@@ -2587,6 +2608,25 @@ def _ds_encode(node, text):
     return [look[ch] for ch in str(text) if ch in look]
 
 
+def _ds_decode(node, ids):
+    """`_ds_encode` run backwards: a sample's ids back into text in the
+    dataset's own alphabet (its repo's tokenizer, else its char vocab). An id
+    outside the alphabet becomes '?', so a drifted sample still reads."""
+    repo = str(node.get("repo") or "").strip()
+    if repo:
+        try:
+            return str(hf_text_tokenizer(repo, node.get("name") or "dataset")
+                       .decode([int(i) for i in ids]).text)
+        except Exception:  # noqa: BLE001 — a broken repo falls to the char vocab
+            pass
+    chars = list(str(node.get("vocab") or ""))
+    out = []
+    for i in ids:
+        i = int(i)
+        out.append(chars[i] if 0 <= i < len(chars) else "?")
+    return "".join(out)
+
+
 def col_index(letter):
     """A sheet column letter to a 0-based index: A->0 … Z->25, AA->26.
     None for an empty or non-letter value."""
@@ -2598,13 +2638,17 @@ def col_index(letter):
     return n - 1 if n else None
 
 
-def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None):
+def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None,
+                  x_only=False):
     """One batch: ids = X+Y, labels = the same ids with the X span masked to
     -100 (the loss reads Y only), padded right. `x_col`/`y_col` pick the
     conditioning and target columns (0-based; None keeps A/B). With `classes`,
     Y is a class label: the ids carry X only, left-padded so the class falls
     at the sequence's end, and the labels are the class indices (1-D) the
-    model must pick at that position."""
+    model must pick at that position. With `x_only` there is no target column
+    at all (rl: the dataset hands out prompts, the reward box is the signal) —
+    the labels ride the prompt ids, so an idle loss box still reads in-range
+    ids."""
     want = rows[start:start + size]
     if not want:
         want = rows[:size]
@@ -2615,6 +2659,13 @@ def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None)
             return str(cells[col])
         return str(default if default is not None else "")
 
+    if x_only:
+        seqs = [_ds_encode(node, cell(r, x_col, r.get("prompt"))) for r in want]
+        width = max((len(s) for s in seqs), default=1)
+        ids = torch.zeros(len(seqs), max(width, 1), dtype=torch.long)
+        for i, s in enumerate(seqs):
+            ids[i, :len(s)] = torch.tensor(s, dtype=torch.long)
+        return ids, ids
     if classes:
         seqs, cls = [], []
         for r in want:
@@ -2782,12 +2833,60 @@ def _probe_loss(canvas, hub, vals, labels, graph=None):
     return None, None
 
 
+def _rl_probe(canvas, hub, graph, train_dn, rows, x_col, seed):
+    """The training readout for an rl design: one sample from the first row,
+    scored by the reward box — the console shows the signal before it starts."""
+    hub = hub or {}
+    out = {"loss": None, "acc": None, "tloss": None, "tacc": None,
+           "reward": None, "sample": None}
+    if train_dn is None or not rows:
+        return out
+    reward_node = _node_by_id(canvas, hub.get("reward"))
+    iid = _find_kind(canvas, "input")
+    target = hub.get("target")
+    if reward_node is None or not iid or not target:
+        return out
+    node = train_dn
+    cells = rows[0].get("cells") or []
+    text = (cells[x_col] if x_col is not None and x_col < len(cells)
+            else str(rows[0].get("prompt") or ""))
+    x_ids = _ds_encode(node, text)
+    if not x_ids:
+        return out
+    dboxes = [b for b in graph.modules()
+              if isinstance(b, Box) and b.node.get("kind") == "dataset"]
+    max_tokens = max(1, int(hub.get("max_tokens") or 32))
+    temperature = float(hub.get("temperature") or 1.0)
+    try:
+        gen = torch.Generator(device="cpu").manual_seed(int(seed))
+        with torch.no_grad():
+            ids = list(x_ids)
+            for _ in range(max_tokens):
+                for b in dboxes:
+                    b.batch = torch.tensor([ids])
+                vals = graph(feeds={iid: torch.tensor([ids])})
+                logits = vals.get(target)
+                if logits is None:
+                    break
+                last = logits.reshape(-1, logits.shape[-1])[-1].float().cpu()
+                ids.append(_pick_one(last, temperature, 0, 1.0, gen))
+            y_text = _ds_decode(node, ids[len(x_ids):])
+            out["reward"] = float(reward_eval(reward_node, text, y_text))
+            out["sample"] = y_text[:120]
+    except CanvasError as e:
+        out["reason"] = str(e)
+    return out
+
+
 class DesignTrainer:
     """Training on a design: a dataset box's rows in, a loss box's scalar out,
-    one optimizer step per batch. Trainable boxes are those not `frozen`; the
-    compile is `native=False` (trainable masters stay f16/f32). Checkpoints are
-    named-parameter state + optimizer + step — pause (detach) lands one and
-    exits; resume picks up exactly where it stopped."""
+    one optimizer step per batch. In rl the rows are prompts instead: each step
+    samples outputs from the target box, scores them with the reward box, and
+    steps the policy on the advantages against a decaying baseline. Trainable
+    boxes are those not `frozen`; the compile is `native=False` (trainable
+    masters stay f16/f32). Checkpoints are named-parameter state + optimizer +
+    step (and the baseline, in rl) — pause (detach) lands one and exits;
+    resume picks up exactly where it stopped."""
 
     def __init__(self, canvas, cfg=None, device="cpu", checkpoint=None):
         cfg = dict(cfg or {})
@@ -2799,16 +2898,43 @@ class DesignTrainer:
         self.graph.train()
         self.input_id = cfg.get("input") or _find_kind(canvas, "input")
         # the signal: a loss box wired on the canvas wins (existing designs),
-        # else the hub's target output box is scored and the loss is implicit
+        # else the hub's target output box is scored and the loss is implicit.
+        # In rl the hub's dataset is the carrier, full stop — the reward box is
+        # the signal and a wired loss box is a supervised leftover.
         setup = training_setup(canvas, cfg)
-        self.loss_id = cfg.get("loss") or setup["loss_id"]
-        self.target_id = setup["target_id"]
-        self.implicit = self.loss_id is None and self.target_id is not None
-        if not self.loss_id and not self.target_id:
-            raise CanvasError("", "training needs an output box to score — bind a "
-                                  "target in the train box, or wire a loss box")
-        ds_id = (setup["carrier_id"] or cfg.get("dataset")
-                 or _find_kind(canvas, "dataset"))
+        if self.paradigm == "rl":
+            if any(src.get("kind") == "dataset" and dst.get("kind") == "loss"
+                   for src, dst in _edge_pairs(canvas)):
+                raise CanvasError("loss",
+                                  "the reward is the signal in rl — a wired "
+                                  "loss box is a supervised leftover")
+            self.loss_id = None
+            self.target_id = cfg.get("target")
+            self.implicit = self.target_id is not None
+            if not self.target_id:
+                raise CanvasError("",
+                                  "rl training needs a target output box to "
+                                  "sample from — bind one in the train box")
+            self.reward_id = cfg.get("reward")
+            if not self.reward_id:
+                raise CanvasError("", "rl training needs a reward box — bind "
+                                      "one in the train box")
+            self.reward_node = _node_by_id(canvas, self.reward_id)
+            if self.reward_node is None:
+                raise CanvasError("", "the train node's reward box "
+                                       "is not on the canvas")
+            ds_id = (cfg.get("dataset") or _find_kind(canvas, "dataset"))
+        else:
+            self.loss_id = cfg.get("loss") or setup["loss_id"]
+            self.target_id = setup["target_id"]
+            self.implicit = self.loss_id is None and self.target_id is not None
+            if not self.loss_id and not self.target_id:
+                raise CanvasError("", "training needs an output box to score — bind a "
+                                      "target in the train box, or wire a loss box")
+            self.reward_id = cfg.get("reward") or None
+            self.reward_node = None
+            ds_id = (setup["carrier_id"] or cfg.get("dataset")
+                     or _find_kind(canvas, "dataset"))
         if not self.input_id or not ds_id:
             raise CanvasError("", "training needs an input box the model reads, "
                                   "and a dataset with rows")
@@ -2825,11 +2951,12 @@ class DesignTrainer:
         self.y_col = col_index(cfg.get("y_col")) if cfg.get("y_col") else 1
         self.classes = list(cfg.get("classes") or []) or None
         self.class_mode = bool(self.classes)
-        # the test split: scored every eval_every steps, never trained
+        # the test split: scored every eval_every steps, never trained —
+        # idle in rl, where every sample the policy draws is scored
         self.test_id = cfg.get("test_dataset") or None
         self.test_box = None
         self.test_rows = []
-        if self.test_id:
+        if self.test_id and self.paradigm != "rl":
             self.test_box = self._box(self.test_id)
             if self.test_box is None:
                 raise CanvasError("", "the train node's test dataset "
@@ -2856,6 +2983,7 @@ class DesignTrainer:
         self.batch_size = max(1, int(cfg.get("batch") or 4))
         self.step = 0
         self.history = []
+        self.baseline = None           # rl: the decaying mean of past rewards
         self.checkpoint_root = cfg.get("checkpoints") or "checkpoints"
         self.name = cfg.get("name") or "design"
         self._pos = 0
@@ -2921,11 +3049,113 @@ class DesignTrainer:
             vals = self.graph(feeds={self.input_id: ids})
             return self._loss(vals, labels)
 
+    def _sample(self, x_ids, max_tokens, temperature, gen):
+        """One autoregressive draw from the target output box, no gradients.
+        Returns the full id sequence — the prompt plus the drawn tail."""
+        ids = list(x_ids)
+        for _ in range(max_tokens):
+            for b in self.dataset_boxes:
+                b.batch = torch.tensor([ids]).to(self.device)
+            vals = self.graph(feeds={self.input_id: torch.tensor([ids]).to(self.device)})
+            logits = vals.get(self.target_id)
+            if logits is None:
+                raise CanvasError("output", "the output box is switched off")
+            last = logits.reshape(-1, logits.shape[-1])[-1].float().cpu()
+            ids.append(_pick_one(last, temperature, 0, 1.0, gen))
+        return ids
+
+    def _logprob(self, x_ids, ids):
+        """log p(sample) under the policy, with gradients: the autoregressive
+        walk that drew `ids` replayed, each prefix forward keeping its
+        gradient until the caller's backward frees the sample's graph. None
+        when the target output is off."""
+        total = None
+        for t in range(len(x_ids), len(ids)):
+            prefix = ids[:t]
+            for b in self.dataset_boxes:
+                b.batch = torch.tensor([prefix]).to(self.device)
+            vals = self.graph(feeds={self.input_id:
+                                      torch.tensor([prefix]).to(self.device)})
+            logits = vals.get(self.target_id)
+            if logits is None:
+                return None
+            # [-1:] keeps a dimension: the gather below wants a row, not a vector
+            last = logits.reshape(-1, logits.shape[-1])[-1:].float()
+            term = F.log_softmax(last, dim=-1)[-1, int(ids[t])]
+            total = term if total is None else total + term
+        return total
+
+    def _rl_step(self, say):
+        """One rl step: one row of the hub's dataset, n_samples draws from
+        the target box, each scored by the reward box; the policy steps on
+        -mean((reward - baseline) * log p(sample)) for the row. The samples
+        are drawn without gradients and their log-probabilities recomputed
+        with gradients on, one sample's graph at a time, so a step never
+        holds more than one draw's worth of forwards. The baseline is a
+        decaying mean of past rewards (0.9/0.1) and rides the checkpoint."""
+        node = self.dataset_box.node
+        row = self.rows[self._pos % max(len(self.rows), 1)]
+        self._pos += 1
+        cells = row.get("cells") or []
+        text = (cells[self.x_col]
+                if self.x_col is not None and self.x_col < len(cells)
+                else str(row.get("prompt") or ""))
+        x_ids = _ds_encode(node, text)
+        if not x_ids:
+            raise CanvasError(node.get("name") or "dataset",
+                               "its row has no prompt to sample from")
+        n = max(1, int(self.cfg.get("n_samples") or 1))
+        max_tokens = max(1, int(self.cfg.get("max_tokens") or 32))
+        temperature = float(self.cfg.get("temperature") or 1.0)
+        # pass 1: draw the samples and score them — no gradients
+        samples = []
+        for i in range(n):
+            gen = torch.Generator(device="cpu").manual_seed(self.step * 1000 + i)
+            with torch.no_grad():
+                ids = self._sample(x_ids, max_tokens, temperature, gen)
+            y_text = _ds_decode(node, ids[len(x_ids):])
+            reward = float(reward_eval(self.reward_node, text, y_text))
+            samples.append((ids, reward, y_text))
+        # the baseline: the decaying mean of past rewards
+        mean_r = sum(s[1] for s in samples) / len(samples)
+        self.baseline = (mean_r if self.baseline is None
+                          else self.baseline * 0.9 + mean_r * 0.1)
+        # pass 2: the policy gradient, one sample's graph at a time
+        self.optim.zero_grad(set_to_none=True)
+        loss_val = 0.0
+        for ids, reward, _y_text in samples:
+            adv = reward - self.baseline
+            if adv == 0.0:
+                continue
+            logp = self._logprob(x_ids, ids)
+            if logp is None:
+                continue
+            loss_i = -adv * logp / n
+            loss_val += float(loss_i.detach())
+            loss_i.backward()
+        torch.nn.utils.clip_grad_norm_(
+            [p for _, p in self.trainable], float(self.cfg.get("clip") or 1.0))
+        self.optim.step()
+        self.step += 1
+        self.history.append(loss_val)
+        self.history = self.history[-400:]
+        best = max(samples, key=lambda s: s[1])
+        # the reward rides the test slots: tloss is the mean reward, tacc
+        # the baseline — the state file keeps its shape
+        ev = {"type": "loss", "step": self.step, "loss": loss_val,
+              "reward": mean_r, "baseline": self.baseline,
+              "sample": best[2][:120],
+              "tloss": mean_r, "tacc": self.baseline}
+        say(ev)
+        if self.step % max(1, int(self.cfg.get("save_every") or 50)) == 0:
+            say({"type": "checkpoint", "path": self.save()})
+
     def run(self, steps=1, on_event=None, command=None):
         """One training session. `command()` may answer 'save' or 'detach';
         detach is graceful — it lands a checkpoint before it returns. Every
         `eval_every` steps the test split is scored and rides the event in
-        `tloss`/`tacc`."""
+        `tloss`/`tacc`; in rl the mean reward and the baseline ride those
+        slots instead."""
         say = on_event or (lambda e: None)
         for _ in range(int(steps)):
             cmd = command() if command else None
@@ -2936,6 +3166,9 @@ class DesignTrainer:
                 path = self.save()
                 say({"type": "checkpoint", "path": path, "detached": True})
                 return {"state": "detached", "step": self.step, "checkpoint": path}
+            if self.paradigm == "rl":
+                self._rl_step(say)
+                continue
             ids, labels = self._batch()
             for b in self.dataset_boxes:
                 b.batch = labels       # every dataset box runs in the forward
@@ -2975,7 +3208,8 @@ class DesignTrainer:
         os.makedirs(path, exist_ok=True)
         state = {"step": self.step, "config": dict(self.cfg),
                  "trainable": {n: p.detach().cpu() for n, p in self.trainable},
-                 "optim": self.optim.state_dict(), "tpos": self._tpos}
+                 "optim": self.optim.state_dict(), "tpos": self._tpos,
+                 "baseline": self.baseline}
         torch.save(state, os.path.join(path, "state.pt"))
         with open(os.path.join(path, "meta.json"), "w", encoding="utf-8") as fh:
             json.dump({"step": self.step,
@@ -2991,7 +3225,8 @@ class DesignTrainer:
 
     def load(self, path):
         """Resume: the trainable tensors, the optimizer and the step come back
-        where they were — including the row positions of both splits."""
+        where they were — including the row positions of both splits, and in
+        rl the decaying baseline (a row per step, not a batch)."""
         if os.path.isdir(path) and os.path.isfile(os.path.join(path, "latest.json")):
             with open(os.path.join(path, "latest.json"), encoding="utf-8") as fh:
                 path = json.load(fh).get("checkpoint") or path
@@ -3006,8 +3241,10 @@ class DesignTrainer:
         if state.get("optim"):
             self.optim.load_state_dict(state["optim"])
         self.step = int(state.get("step") or 0)
-        self._pos = self.step * self.batch_size % max(len(self.rows), 1)
+        self._pos = (self.step * (1 if self.paradigm == "rl" else self.batch_size)
+                     % max(len(self.rows), 1))
         self._tpos = int(state.get("tpos") or 0)
+        self.baseline = state.get("baseline", self.baseline)
         return path
 
 
@@ -3033,6 +3270,20 @@ def apply_checkpoint(graph, path, device="cpu"):
     if not hit:
         raise CanvasError("", "the checkpoint's tensors match no box of this design")
     return int(state.get("step") or 0)
+
+
+def _node_by_id(canvas, nid):
+    """The node with this id at any nesting level — or None."""
+    def walk(nodes):
+        for n in nodes or []:
+            if n.get("id") == nid:
+                return n
+            if isinstance(n.get("inner"), dict):
+                hit = walk((n.get("inner") or {}).get("nodes"))
+                if hit is not None:
+                    return hit
+        return None
+    return walk((canvas or {}).get("nodes"))
 
 
 def _find_kind(canvas, kind):

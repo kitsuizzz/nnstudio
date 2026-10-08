@@ -451,7 +451,10 @@ def _fire_train(task):
                       ("--eval-every", "eval_every"),
                       ("--optimizer", "optimizer"),
                       ("--weight-decay", "weight_decay"),
-                      ("--clip", "clip")):
+                      ("--clip", "clip"),
+                      ("--temperature", "temperature"),
+                      ("--max-tokens", "max_tokens"),
+                      ("--n-samples", "n_samples")):
         if p.get(key) not in (None, ""):
             cmd += [flag, str(p[key])]
     try:

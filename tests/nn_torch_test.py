@@ -1839,6 +1839,198 @@ def the_run_menu_probes_the_setup():
 check("the run menu: the hub feeds the run, the probe scores both splits",
       the_run_menu_probes_the_setup)
 
+# ------------------------------------------------- the rl paradigm -------------
+
+def _rl_canvas(hub_kw=None, with_test=True):
+    nodes = [
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=3, din=1, dout=8),
+        n("layer", "l1", din=8, dout=8),
+        n("layer", "l2", din=8, dout=3),
+        n("output", "logits", din=3),
+        n("dataset", "data", vocab="go!", text="go\tg!\ngoo\tg!o\nrog\t!go"),
+    ]
+    if with_test:
+        nodes.append(n("dataset", "test", vocab="go!", text="go\tg!\nrog\t!go"))
+    nodes.append(n("reward", "scorer", name="reward", reward="python",
+                   expr="output.count('!') / max(len(output), 1)"))
+    hub = {"dataset": "data", "test_dataset": "test" if with_test else None,
+           "x_col": "A", "y_col": "B", "paradigm": "rl", "target": "logits",
+           "reward": "scorer", "batch": 2, "n_samples": 4, "max_tokens": 3,
+           "temperature": 1.0, "lr": 0.05, "steps": 60,
+           "save_every": 20, "eval_every": 20}
+    if hub_kw:
+        for k, v in hub_kw.items():
+            if v is None:
+                hub.pop(k, None)
+            else:
+                hub[k] = v
+    nodes.append(n("train", "hub", name="train", **hub))
+    return canvas(nodes, [edge("tok", "emb"), edge("emb", "l1"),
+                          edge("l1", "l2"), edge("l2", "logits")])
+
+
+def _rl_cfg(c, d, name="rltoy"):
+    hub = [x for x in c["nodes"] if x["kind"] == "train"][0]
+    cfg = {"name": name, "checkpoints": d}
+    for key in ("dataset", "test_dataset", "x_col", "y_col", "classes",
+                "target", "paradigm", "reward", "lr", "optimizer",
+                "weight_decay", "batch", "steps", "clip", "save_every",
+                "eval_every", "temperature", "max_tokens", "n_samples"):
+        if hub.get(key) not in (None, "", []):
+            cfg[key] = hub[key]
+    return cfg
+
+
+def rl_x_only_batch():
+    ds = {"id": "d", "kind": "dataset", "name": "rows", "x": 0, "y": 0,
+          "vocab": "go!", "text": "go\ngoo"}
+    rows = T.dataset_rows(ds)
+    ids, labels = T.dataset_batch(ds, rows, 0, 2, 0, 0, x_only=True)
+    # right-padded to the widest row (id 0); the labels ride the ids
+    assert ids.dim() == 2 and ids.tolist() == [[0, 1, 0], [0, 1, 1]], ids.tolist()
+    assert ids.tolist() == labels.tolist(), "x-only: the labels are the ids"
+    # the y column is simply not read
+    ids2, labels2 = T.dataset_batch(ds, rows, 0, 2, 0, 5, x_only=True)
+    assert ids.tolist() == ids2.tolist() and labels.tolist() == labels2.tolist()
+
+
+check("the x-only batch: 2-D ids, right-padded, the labels ride the ids",
+      rl_x_only_batch)
+
+
+def rl_ds_decode():
+    ds = {"id": "d", "kind": "dataset", "name": "rows", "x": 0, "y": 0,
+          "vocab": "go!", "text": "go\ngoo"}
+    assert T._ds_decode(ds, [0, 1]) == "go", "the char vocab maps back"
+    assert T._ds_decode(ds, [0, 99, 1]) == "g?o", \
+        "an out-of-range id becomes ? rather than crashing the decode"
+
+
+check("_ds_decode: ids back to text, out-of-range ids become ?", rl_ds_decode)
+
+
+def rl_trainer_rewards_climb():
+    import shutil
+    c = _rl_canvas()
+    d = tempfile.mkdtemp()
+    try:
+        tr = T.DesignTrainer(c, _rl_cfg(c, d))
+        assert tr.loss_id is None and tr.target_id == "logits"
+        assert tr.reward_id == "scorer"
+        assert tr.baseline is None, "the baseline is born with the run"
+        assert tr.test_box is None, "the test split is idle in rl"
+        events = []
+        tr.run(steps=60, on_event=lambda e: events.append(e))
+        losses = [e for e in events if e["type"] == "loss"]
+        assert len(losses) == 60, len(losses)
+        for e in losses:
+            assert e.get("acc") is None, "rl events carry no accuracy"
+            assert e.get("reward") is not None and e.get("baseline") is not None, e
+            assert e.get("sample"), "every rl loss event carries a sample"
+            assert set(e["sample"]) <= set("go!"), \
+                "the sample stays inside the vocabulary: %r" % e["sample"]
+        first = sum(e["reward"] for e in losses[:5]) / 5
+        last = sum(e["reward"] for e in losses[-5:]) / 5
+        assert last > first, "the reward climbed (first-5 %.3f, last-5 %.3f)" % (first, last)
+        assert tr.baseline is not None and tr.baseline > 0
+        # the checkpoint carries the baseline for the resume
+        path = tr.save()
+        state = torch.load(os.path.join(path, "state.pt"), map_location="cpu")
+        assert state.get("baseline") is not None, "the baseline rides the checkpoint"
+        assert abs(state["baseline"] - tr.baseline) < 1e-12
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+check("the rl trainer: one row a step, rewards climb, the baseline rides along",
+      rl_trainer_rewards_climb)
+
+
+def rl_trainer_resumes():
+    import shutil
+    d = tempfile.mkdtemp()
+    try:
+        tr = T.DesignTrainer(_rl_canvas(), _rl_cfg(_rl_canvas(), d))
+        tr.run(steps=10)
+        path = tr.save()
+        base = tr.baseline
+        tr2 = T.DesignTrainer(_rl_canvas(), _rl_cfg(_rl_canvas(), d))
+        tr2.load(path)
+        assert tr2.step == 10, "resume restores the step"
+        assert tr2.baseline == base, "…and the decaying baseline"
+        assert tr2._pos == (10 % len(tr2.rows)), \
+            "one row per step: the position is step mod rows"
+        tr2.run(steps=5)
+        assert tr2.step == 15, "…and training continues from there"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+check("the rl trainer: resume restores the step, the baseline, the row",
+      rl_trainer_resumes)
+
+
+def rl_run_menu_probe():
+    res = T.run(_rl_canvas(), {}, mode="training")
+    probe = res.get("probe")
+    assert probe is not None, "a training run reports its probe"
+    assert probe.get("reward") is not None, probe
+    assert isinstance(probe.get("sample"), str) and probe["sample"], probe
+    assert probe.get("reason") is None, "a healthy reward box reports no reason: %s" % probe
+    for key in ("loss", "acc", "tloss", "tacc"):
+        assert probe.get(key) is None, "rl probes carry no supervised numbers: %s" % key
+
+
+check("the run menu: the rl probe scores one sample and reports the reward",
+      rl_run_menu_probe)
+
+
+def rl_setup_errors():
+    import shutil
+    d = tempfile.mkdtemp()
+    try:
+        def expect(c, *needles):
+            try:
+                T.DesignTrainer(c, _rl_cfg(c, d))
+                raise AssertionError("no error for %s" % (needles,))
+            except T.CanvasError as e:
+                for s in needles:
+                    assert s in str(e), "expected %r in %r" % (s, e)
+
+        # no reward bound: the signal is missing
+        expect(_rl_canvas(hub_kw={"reward": None}), "reward box")
+        # no target: nothing to sample from
+        expect(_rl_canvas(hub_kw={"target": None}), "sample from")
+        # the bound reward box is off the canvas
+        expect(_rl_canvas(hub_kw={"reward": "ghost"}), "not on the canvas")
+        # a dataset->loss wire is a supervised leftover in rl
+        c = _rl_canvas()
+        c["nodes"].append(n("loss", "loss", din=3))
+        c["edges"].append(edge("logits", "loss"))   # positional: logits first
+        c["edges"].append(edge("data", "loss"))
+        expect(c, "supervised leftover")
+        # the run menu's guard says the same
+        try:
+            T.run(c, {}, mode="training")
+            raise AssertionError("the run accepts a wired loss in rl")
+        except T.CanvasError as e:
+            assert "supervised leftover" in str(e), e
+        # supervised designs are untouched: a wired loss still wins there
+        cs = _rl_canvas(hub_kw={"paradigm": "supervised"})
+        cs["nodes"].append(n("loss", "loss", din=3))
+        cs["edges"].append(edge("logits", "loss"))
+        cs["edges"].append(edge("data", "loss"))
+        tr = T.DesignTrainer(cs, _rl_cfg(cs, d))
+        assert tr.loss_id == "loss", "a wired dataset->loss box still wins in supervised"
+        tr.run(steps=1)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+check("rl setup: the reward is the signal — no reward, no target, a wired loss",
+      rl_setup_errors)
+
 if FAILED:
     print("nn_torch_test: %d failure(s): %s" % (len(FAILED), ", ".join(FAILED)))
     sys.exit(1)
