@@ -216,7 +216,7 @@ globalThis.__t = {
   bxTaskFraction, bxArcPath, bxTaskSupersede,
   bxTasksFetch, bxTaskLogFetch, bxTasksApply, bxLogApply, bxLogState,
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
-  bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand,
+  bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
   bxTableRead, bxTableWrite, bxTableType, bxTableSetCell, bxTableRenameCol,
   bxTableInsertCol, bxTableDeleteCol, bxTableAddRow, bxTableDeleteRow,
@@ -3516,6 +3516,18 @@ check("the train box: the hub of the training — data, columns, signal, paramet
       [ds.id, "A", "B", "supervised", out.id], "the hub survives the JSON round trip");
   eql(back.classes, ["cat", "dog"], "…so do the classes");
   eql([back.lr, back.batch, back.steps], [0.01, 8, 40], "…and so do the parameters");
+  // the window opens with the mode switch: it decides what the Run button does
+  const tp = document.createElement("div");
+  __t.bxTrainFill(tp, tr);
+  eql(tp.querySelectorAll(".mhead").map(e => e.textContent), ["mode"],
+     "the train box's window opens with the mode switch");
+  const segs = tp.querySelectorAll(".mseg");
+  eql(segs.map(e => e.textContent), ["inference", "training"],
+     "…inference or training");
+  segs[1].click();
+  eql(__t.BXRUN.mode, "training", "…and it flips what the Run button does");
+  segs[0].click();
+  eql(__t.BXRUN.mode, "inference", "…and back the other way");
   __t.bxRemove(tr.id);
   __t.bxRemove(ds.id);
   __t.bxRemove(out.id);

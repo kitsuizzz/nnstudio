@@ -799,15 +799,15 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 #bxtRunMenu input.bxoff { flex: 1; min-width: 96px; accent-color: var(--accent);
                           height: 16px; }
 #bxtRunMenu .wmode { margin-left: auto; font: 11px var(--mono); color: var(--ink-dim); }
-#bxtRunMenu .modeseg { display: flex; gap: 4px; }
-#bxtRunMenu .mseg { flex: 1 1 0; cursor: pointer; text-align: center;
-                    border: 1px solid var(--panel-brd); border-radius: 0;
-                    background: rgba(0,0,0,.25); padding: 4px 10px;
-                    font: 600 11px var(--mono); color: var(--ink-dim); user-select: none; }
-#bxtRunMenu .mseg:hover { color: var(--ink); border-color: rgba(249,115,22,.6); }
-#bxtRunMenu .mseg.on { color: #1a120b; background: var(--accent); border-color: var(--accent); }
-#bxtRunMenu .mseg.on:hover { color: #1a120b; border-color: var(--accent); }
-#bxtRunMenu .mseg.busy { opacity: .5; cursor: default; }
+.modeseg { display: flex; gap: 4px; }
+.mseg { flex: 1 1 0; cursor: pointer; text-align: center;
+        border: 1px solid var(--panel-brd); border-radius: 0;
+        background: rgba(0,0,0,.25); padding: 4px 10px;
+        font: 600 11px var(--mono); color: var(--ink-dim); user-select: none; }
+.mseg:hover { color: var(--ink); border-color: rgba(249,115,22,.6); }
+.mseg.on { color: #1a120b; background: var(--accent); border-color: var(--accent); }
+.mseg.on:hover { color: #1a120b; border-color: var(--accent); }
+.mseg.busy { opacity: .5; cursor: default; }
 .bxtmi { display: block; padding: 5px 9px; border-radius: 0; cursor: pointer;
          font: 12px var(--mono); color: var(--ink); white-space: nowrap; }
 .bxtmi:hover { background: rgba(255,255,255,.07); }
@@ -3462,10 +3462,20 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
   const head = mk("div", { class: "bxlogrow" });
   head.appendChild(mk("b", { text: n.task_id ? "training · " + n.task_id.slice(-6) : "training · no task" }));
   pane.appendChild(head);
+  // the mode switch lives in the train box now, not in the Run menu
+  pane.appendChild(mk("div", { class: "mhead", text: "mode" }));
+  pane.appendChild(bxRunModeSeg());
+
   for (const line of sum.lines)
     pane.appendChild(mk("div", { class: "panehint", text: line }));
   for (const why of sum.missing)
     pane.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + why }));
+  if (sum.missing.length)
+    pane.appendChild(mk("div", { class: "bxbhint",
+      text: "fix the warnings, then start the full training here" }));
+  else
+    pane.appendChild(mk("div", { class: "bxbhint",
+      text: "the run button does a single step — the full training starts here" }));
   const strip = mk("div", { class: "panehint" });
   if ((n.paradigm || "supervised") === "rl")
     strip.textContent = "step " + (st.step != null ? st.step : "—")
@@ -5582,33 +5592,28 @@ function bxtRunRender() {
       menu.appendChild(mk("div", { class: "bxbhint",
         text: "\u26a0 " + (is.box || "?") + ": " + is.what }));
   }
-  if ((BXRUN.mode || "inference") === "training") bxRunTrainingSection(menu);
-  else bxRunFeeds(menu);
-  menu.appendChild(mk("div", { class: "mhead", text: "mode" }));
-  const seg = mk("div", { class: "modeseg" });
-  for (const m of ["inference", "training"]) {
-    const on = (BXRUN.mode || "inference") === m;
-    const b = mk("span", { class: "mseg" + (on ? " on" : "") +
-                            ((BXRUN.running || BXRUN.loading) ? " busy" : ""),
-                           text: m });
-    b.title = m === "inference"
-      ? "no gradients are kept \u2014 the lightest run"
-      : "the non-frozen weights keep gradients; the dataset boxes feed the run";
-    b.addEventListener("click", () => {
-      if (BXRUN.running || BXRUN.loading) return;
-      BXRUN.mode = m;
-      bxtRunRender();
-      bxRender();                          // the signal's marks follow the mode
-    });
-    seg.appendChild(b);
-  }
-  menu.appendChild(seg);
-  menu.appendChild(mk("div", { class: "bxbhint",
-    text: (BXRUN.mode || "inference") === "training"
-      ? "the train box is the hub: it names the data, the columns and the "
-      + "signal \u2014 and starts the training"
-      : "the weights need no gradients \u2014 the lightest run; dataset boxes "
-      + "stay idle" }));
+  if ((BXRUN.mode || "inference") === "training") {
+    // the mode switch and the training's setup live in the train box now
+    const hub = bxTrainHub();
+    if (!hub) {
+      menu.appendChild(mk("div", { class: "mhead", text: "training" }));
+      menu.appendChild(mk("div", { class: "bxbhint",
+        text: "training mode needs a train box on the canvas \u2014 it holds "
+             + "the data, the signal and the mode switch" }));
+      const row = mk("div", { class: "rrow" });
+      const b = mk("span", { class: "chip tiny", text: "add a train box" });
+      b.addEventListener("click", () => {
+        bxMenuClose();
+        bxDropPalette("train", null);
+        bxtRunToggle();
+      });
+      row.appendChild(b);
+      menu.appendChild(row);
+    } else
+      menu.appendChild(mk("div", { class: "bxbhint",
+        text: "the mode switch and the training's setup live in the train box "
+             + "\u2014 the run here is one step; the full training starts there" }));
+  } else bxRunFeeds(menu);
   if (BXRUN.warmMode && BXRUN.warmMode !== (BXRUN.mode || "inference"))
     menu.appendChild(mk("div", { class: "bxbhint",
       text: "the warm weights are " + BXRUN.warmMode + " \u2014 the next run "
@@ -5737,44 +5742,25 @@ function bxRunFeeds(menu) {                       // inference: what the model r
       text: "0 tokens is one forward; temperature 0 picks the most likely id" }));
   }
 }
-function bxRunTrainingSection(menu) {             // training: the run is the console
-  const hub = bxTrainHub();
-  menu.appendChild(mk("div", { class: "mhead", text: "training" }));
-  if (!hub) {
-    menu.appendChild(mk("div", { class: "bxbhint",
-      text: "there is no train box on the canvas \u2014 it holds the data, the "
-           + "columns, the signal and the parameters" }));
-    const row = mk("div", { class: "rrow" });
-    const b = mk("span", { class: "chip tiny", text: "add a train box" });
+function bxRunModeSeg() {                          // the inference/training switch
+  const seg = mk("div", { class: "modeseg" });
+  for (const m of ["inference", "training"]) {
+    const on = (BXRUN.mode || "inference") === m;
+    const b = mk("span", { class: "mseg" + (on ? " on" : "") +
+                            ((BXRUN.running || BXRUN.loading) ? " busy" : ""),
+                       text: m });
+    b.title = m === "inference"
+      ? "no gradients are kept \u2014 the lightest run"
+      : "the non-frozen weights keep gradients; the dataset boxes feed the run";
     b.addEventListener("click", () => {
-      bxMenuClose();
-      bxDropPalette("train", null);
-      bxtRunToggle();                             // the console now has a hub
+      if (BXRUN.running || BXRUN.loading) return;
+      BXRUN.mode = m;
+      bxtRunRender();
+      bxRender();                          // the signal's marks follow the mode
     });
-    row.appendChild(b);
-    menu.appendChild(row);
-    return;
+    seg.appendChild(b);
   }
-  const sum = bxTrainSummary(hub);
-  for (const line of sum.lines)
-    menu.appendChild(mk("div", { class: "bxbhint", text: line }));
-  for (const why of sum.missing)
-    menu.appendChild(mk("div", { class: "bxbhint", text: "\u26a0 " + why }));
-  const row = mk("div", { class: "rrow" });
-  const b = mk("span", { class: "chip tiny" + (sum.missing.length ? " off" : ""),
-                         text: "configure the train box" });
-  b.addEventListener("click", () => bxForm("train", null, hub, "train"));
-  row.appendChild(b);
-  if (hub.task_id && (BXTASKS.byId[hub.task_id] || {}).status === "running")
-    row.appendChild(mk("span", { class: "chip tiny off", text: "training \u2026" }));
-  menu.appendChild(row);
-  if (sum.missing.length)
-    menu.appendChild(mk("div", { class: "bxbhint",
-      text: "fix the warnings, then start the full training from the train box" }));
-  else
-    menu.appendChild(mk("div", { class: "bxbhint",
-      text: "run the design here for a single step \u2014 the full training "
-           + "starts from the train box" }));
+  return seg;
 }
 function bxtRunLoad() {                        // the whole design, loaded warm
   bxApplyOffload("gpu");                       // the ratio writes the places
