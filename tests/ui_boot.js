@@ -422,8 +422,8 @@ check("the right-click menus: three add items, or remove", () => {
   eql(__t.bxKindLabel("layer"), "Fully Connected", "a layer box is labelled Fully Connected");
   eql(__t.bxKindLabel("custom"), "Nested", "…and a custom box is called Nested");
   eql(__t.bxKindLabel("input"), "input", "…the others keep their names");
-  eql(__t.bxKindLabel("train"), "Run", "…the train kind is labelled Run");
-  eql(__t.bxDefaultName("train"), "run 1", "…and a fresh one is named run 1");
+  eql(__t.bxKindLabel("train"), "Train", "…the train kind is labelled Train");
+  eql(__t.bxDefaultName("train"), "train 1", "…and a fresh one is named train 1");
   const tmp = __t.bxAdd("layer", 0, 0, {});
   ok(/^fully connected \d+$/.test(tmp.name), "a new one is named like: " + tmp.name);
   __t.bxRemove(tmp.id);
@@ -569,12 +569,12 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output", "tokenize", "detokenize", "hf"],
     "text holds the tokenizer pair and the huggingface model");
-  // the Dataset category holds only the dataset box; the Run box is added
-  // from the Run menu
+  // the Dataset category holds only the dataset box; the Train box has its
+  // own button up top
   menu.children.find(c => c.textContent === "Dataset").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output", "dataset"],
-    "Dataset holds only the dataset box (the Run box is in the Run menu)");
+    "Dataset holds only the dataset box (the Train box has its own button)");
   // one category at a time: opening another closes the first
   menu.children.find(c => c.textContent === "tensor ops").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
@@ -677,8 +677,8 @@ check("the Backend menu: Local and Remote drop down into their instructions", ()
   ok(m.hidden, "…and it closes");
 });
 
-check("the Run button: the box on and off the canvas", () => {
-  const btn = getEl("bxtRunBtn");
+check("the Train button: the box on and off the canvas", () => {
+  const btn = getEl("bxtTrainBtn");
   const panes = () => getEl("bxcanvas").querySelectorAll(".bxlogpane")
     .map(el => el.getAttribute("data-agent"));
   const trainCount = () => __t.BX.nodes.filter(n => n.kind === "train").length;
@@ -688,19 +688,19 @@ check("the Run button: the box on and off the canvas", () => {
   __t.BX_BACKEND.key = "";
   __t.BXRUN = disconnected;
   __t.bxtRunRefresh();
-  ok(trainCount() === 0, "the canvas starts with no Run box");
+  ok(trainCount() === 0, "the canvas starts with no Train box");
   ok(__t.bxtRunEnabled() === false, "…and no backend is connected");
-  ok(String(btn.className).indexOf("off") >= 0, "…so the Run button reads off");
-  ok(btn.title === "show the Run box", "…saying what a press will do");
+  ok(String(btn.className).indexOf("off") >= 0, "…so the Train button reads off");
+  ok(btn.title === "show the Train box", "…saying what a press will do");
   ok(__t.bxtRunToggle() === true, "the button shows the box");
   const hub = __t.bxTrainHub();
-  ok(hub && hub.name === "run 1", "…a fresh Run box named run 1");
+  ok(hub && hub.name === "train 1", "…a fresh Train box named train 1");
   ok(panes().indexOf(hub.id) >= 0, "…drawn on the canvas");
-  ok(String(btn.className).indexOf("off") < 0 && btn.title === "hide the Run box",
+  ok(String(btn.className).indexOf("off") < 0 && btn.title === "hide the Train box",
      "…and the button now offers to hide it");
   ok(__t.bxtRunToggle() === false && hub.hidden === true, "a second press hides the box");
   ok(panes().indexOf(hub.id) < 0, "…the box leaves the canvas");
-  ok(String(btn.className).indexOf("off") >= 0 && btn.title === "show the Run box",
+  ok(String(btn.className).indexOf("off") >= 0 && btn.title === "show the Train box",
      "…and the button offers to show it again");
   ok(__t.bxTrainHub() && __t.bxTrainHub().id === hub.id, "…hidden, it is still the hub");
   ok(__t.bxAdd("train", 200, 0, {}) === null, "…so a second one stays refused");
@@ -710,7 +710,7 @@ check("the Run button: the box on and off the canvas", () => {
   ok(back && back.hidden === true, "…and the box comes back hidden");
   ok(__t.bxtRunToggle() === true && !back.hidden, "a press shows it again");
   ok(panes().indexOf(back.id) >= 0, "…and the box is back on the canvas");
-  // Backend -> Local keeps the connection, and points at the Run box
+  // Backend -> Local keeps the connection, and points at the Train box
   __t.BXRUN = { local: { connected: true, agent: { name: "gpu-box", remote: "127.0.0.1:1",
       since: 1, last_seen: 1, specs: { name: "gpu-box", os: "Linux-test", cpu: "Test CPU",
       cores: 16, ram_gb: 64, gpu: "NVIDIA RTX 5090", vram_gb: 32, device: "cuda",
@@ -724,8 +724,8 @@ check("the Run button: the box on and off the canvas", () => {
   if (!firstOpen()) heads()[0].click();
   const pane = bm.children.find(c => c.className === "bxbpane");
   const hint = pane.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
-  ok(hint.indexOf("connected") >= 0 && hint.indexOf("live usage are in the Run box") >= 0,
-     "Backend → Local keeps the connection and points at the Run box");
+  ok(hint.indexOf("connected") >= 0 && hint.indexOf("live usage are in the Train box") >= 0,
+     "Backend → Local keeps the connection and points at the Train box");
   __t.bxtBackendToggle();
   // a saved Modal key still counts as a backend (the run action's readiness)
   __t.BX_BACKEND.mode = "remote";
@@ -740,48 +740,54 @@ check("the Run button: the box on and off the canvas", () => {
   __t.bxtRunRefresh();
 });
 
-check("the Run box carries the machine, the weights and the run's readout", () => {
+check("the Train box carries the machine; the input carries the run", () => {
   const tr = __t.bxAdd("train", 0, 0, {});
-  ok(!!tr, "the Run box exists to carry them");
+  const ib = __t.bxAdd("input", 0, 320, { values: "1 2" });
+  ok(!!tr && !!ib, "the boxes exist");
   const fill = (tab) => {
     const d = document.createElement("div");
     if (tab) tr.panel = Object.assign({}, tr.panel, { tab });
     __t.bxTrainFill(d, tr);
     return d;
   };
+  const ifill = () => { const d = document.createElement("div"); __t.bxInputFill(d, ib); return d; };
   const bstate = () => fill("spec").querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
   const bchips = () => fill("spec").querySelectorAll(".chip").map(e => e.textContent);
   const specsIn = (root) => root.querySelectorAll(".bxbspec")
     .map(r => r.children.map(c => c.textContent).join(" ")).join(" | ");
   eql(fill("exec").querySelectorAll(".runmi").map(e => e.textContent), ["Execute", "Spec"],
-      "the box's own menu: Execute and Spec");
+      "the Train box's own menu: Execute and Spec");
+  ok(fill("exec").querySelectorAll(".mseg").length === 0,
+     "…no mode switch — the box is the training");
+  const ctrl = fill("exec").querySelectorAll(".chip").map(e => e.textContent).join(" | ");
+  ok(ctrl.indexOf("set up the training") >= 0 && ctrl.indexOf("start") >= 0,
+     "…and the controls that drive it: " + ctrl);
   ok(fill("exec").querySelectorAll(".bxbspec").length === 0,
      "…the machine stays out of Execute");
-  ok(fill("exec").querySelectorAll(".chip").length === 1 &&
-     fill("exec").querySelectorAll(".bxbin").length === 0,
-     "…Execute keeps only the mode switch and the run action");
-  const play = fill("exec").querySelectorAll(".chip")[0];
-  ok(play && String(play.className).indexOf("play") >= 0 &&
-     play.textContent.indexOf("run the design") >= 0,
-     "…the run action is a green play button: " + (play && play.textContent));
+  ok(fill("spec").querySelectorAll(".chip").map(c => c.textContent)
+       .indexOf("run the design") < 0, "…and the run action stays out of Spec");
+  // the run action lives on the input box now
+  const goOff = ifill().querySelectorAll(".chip")
+    .find(c => c.textContent.indexOf("run the design") >= 0);
+  ok(goOff && String(goOff.className).indexOf("off") >= 0,
+     "the input box carries the run action, off without a backend");
+  ok(String(goOff.className).indexOf("play") >= 0 && goOff.textContent.indexOf("\u25b6") >= 0,
+     "…a green play button: " + goOff.textContent);
   __t.BXRUN.error = true;
   __t.BXRUN.msg = "the dataflow is not whole";
-  ok(fill("exec").querySelectorAll(".bxbhint.runbad").map(e => e.textContent).join(" | ")
+  ok(ifill().querySelectorAll(".bxbhint.runbad").map(e => e.textContent).join(" | ")
        .indexOf("dataflow") >= 0, "…and a failed run shows why, in red");
   __t.BXRUN.error = false;
   __t.BXRUN.msg = "";
   __t.BXRUN.last = { ms: 12, device: "cuda", values: { a: {}, b: {} }, texts: {} };
   __t.bxRunValues = { a: { shape: [1] }, b: { shape: [1] } };
-  ok(fill("exec").querySelectorAll(".bxbhint.runok").map(e => e.textContent).join(" | ")
+  ok(ifill().querySelectorAll(".bxbhint.runok").map(e => e.textContent).join(" | ")
        .indexOf("ran the design") >= 0, "…and a good run says so, in green");
-  ok(fill("exec").querySelectorAll(".bxbhint.runok").map(e => e.textContent).join(" | ")
+  ok(ifill().querySelectorAll(".bxbhint.runok").map(e => e.textContent).join(" | ")
        .indexOf("cuda") >= 0, "…naming the device it ran on");
   __t.BXRUN.last = null;
   __t.bxRunValues = {};
-  ok(fill("exec").querySelectorAll(".bxbhint").length === 0,
-     "…and an edit clears the verdict");
-  ok(fill("spec").querySelectorAll(".chip").map(c => c.textContent)
-       .indexOf("run the design") < 0, "…and the run action stays out of Spec");
+  ok(ifill().querySelectorAll(".bxbhint").length === 0, "…and an edit clears the verdict");
   // the menu switches views, and the choice sticks to the box
   fill("exec").querySelectorAll(".runmi").find(b => b.textContent === "Spec").click();
   eql(tr.panel.tab, "spec", "…Spec is a press away");
@@ -791,10 +797,7 @@ check("the Run box carries the machine, the weights and the run's readout", () =
      "…and the design carries the open view");
   fill("spec").querySelectorAll(".runmi").find(b => b.textContent === "Execute").click();
   eql(tr.panel.tab, "exec", "…and back to Execute");
-  const goOff = fill("exec").querySelectorAll(".chip")
-    .find(c => c.textContent.indexOf("run the design") >= 0);
-  ok(goOff && String(goOff.className).indexOf("off") >= 0,
-     "the run action lives in the box, off without a backend");
+  // a connected backend lights the input's run button
   __t.BX_BACKEND.mode = "local";
   __t.BX_BACKEND.key = "";
   __t.BXRUN = { local: { connected: true, agent: { name: "gpu-box", remote: "127.0.0.1:1",
@@ -805,14 +808,14 @@ check("the Run box carries the machine, the weights and the run's readout", () =
                vram_used_gb: 6.1, vram_total_gb: 32, vram_pct: 19 } } },
       inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
       msg: "", running: false };
-  const goOn = fill("exec").querySelectorAll(".chip")
+  const goOn = ifill().querySelectorAll(".chip")
     .find(c => c.textContent.indexOf("run the design") >= 0);
   ok(goOn && String(goOn.className).indexOf("off") < 0, "…and it lights with the backend");
   ok(bstate().indexOf("gpu-box") >= 0 && bstate().indexOf("RTX 5090") >= 0 &&
      bstate().indexOf("cuda") >= 0, "Spec shows the backend machine");
   const specs = specsIn(fill("spec"));
   ok(specs.indexOf("Test CPU") >= 0 && specs.indexOf("16 cores") >= 0 &&
-     specs.indexOf("RTX 5090") >= 0, "…the pc's specs, moved here from Backend");
+     specs.indexOf("RTX 5090") >= 0, "…the pc's specs");
   ok(specs.indexOf("14.2 / 64.0 GB") >= 0 && specs.indexOf("22%") >= 0,
      "…with current ram usage");
   ok(specs.indexOf("6.1 / 32.0 GB") >= 0 && specs.indexOf("19%") >= 0,
@@ -873,6 +876,7 @@ check("the Run box carries the machine, the weights and the run's readout", () =
   __t.bxEveryBox(n => { delete n.place; });    // leave the design as it was found
   if (extra) __t.bxRemove(extra.id);
   if (madeLayer) __t.bxRemove(layer.id);
+  __t.bxRemove(ib.id);
   __t.bxRemove(tr.id);
 });
 
@@ -3707,7 +3711,7 @@ check("the dataset table: csv rows, columns, dtypes — and the cells edit", () 
   ok(String(thumbs[0].src).indexOf(id) >= 0, "…served by its id");
 });
 
-check("the Run box: the hub of the training — data, columns, signal, parameters", () => {
+check("the Train box: the hub of the training — data, columns, signal, parameters", () => {
   const tr = __t.bxAdd("train", 0, 0, {});
   const ds = __t.bxAdd("dataset", 0, 120, {});
   const out = __t.bxAdd("output", 0, 240, { din: 8 });
@@ -3734,7 +3738,7 @@ check("the Run box: the hub of the training — data, columns, signal, parameter
                                 classes: "cat dog", paradigm: "supervised", target: out.id,
                                 lr: 0.01, batch: 8, steps: 40 }), "configuring lands");
   eql([tr.name, tr.dataset, tr.x_col, tr.y_col, tr.paradigm, tr.target],
-      ["run 1", ds.id, "A", "B", "supervised", out.id],
+      ["train 1", ds.id, "A", "B", "supervised", out.id],
       "the node binds the data, the columns and the signal (the name is not ours to set)");
   eql(tr.classes, ["cat", "dog"], "…and the classes land as a list");
   eql([tr.lr, tr.batch, tr.steps], [0.01, 8, 40], "…and the parameters as numbers");
@@ -3744,32 +3748,26 @@ check("the Run box: the hub of the training — data, columns, signal, parameter
       [ds.id, "A", "B", "supervised", out.id], "the hub survives the JSON round trip");
   eql(back.classes, ["cat", "dog"], "…so do the classes");
   eql([back.lr, back.batch, back.steps], [0.01, 8, 40], "…and so do the parameters");
-  // the window opens on Execute: its own menu, the mode switch, the run chip
+  // the window opens on Execute: the training, with no mode switch
   const tp = document.createElement("div");
   __t.BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
                 loaded: null, loading: false, loadKey: null, msg: "", running: false };
   __t.bxTrainFill(tp, tr);
   eql(tp.querySelectorAll(".runmi").map(e => e.textContent), ["Execute", "Spec"],
-     "the Run box's own menu: Execute and Spec");
-  eql(tp.querySelectorAll(".mhead").map(e => e.textContent)[0], "mode",
-     "…Execute opens with the mode switch");
-  const segs = tp.querySelectorAll(".mseg");
-  eql(segs.map(e => e.textContent), ["inference", "training"],
-     "…inference or training");
-  segs[1].click();
-  eql(__t.BXRUN.mode, "training", "…and it flips what the Run button does");
-  segs[0].click();
-  eql(__t.BXRUN.mode, "inference", "…and back the other way");
+     "the Train box's own menu: Execute and Spec");
+  eql(tp.querySelectorAll(".mseg").length, 0, "…and no mode switch anywhere");
+  ok(tp.querySelectorAll(".chip").map(e => e.textContent).join(" | ")
+       .indexOf("set up the training") >= 0, "…just the training and its controls");
   __t.bxRemove(tr.id);
   __t.bxRemove(ds.id);
   __t.bxRemove(out.id);
 });
 
-check("the Run box: one only, at the top level, and no rename", () => {
+check("the Train box: one only, at the top level, and no rename", () => {
   const tr = __t.bxAdd("train", 0, 0, {});
-  ok(!!tr && tr.name === "run 1", "a Run box lands, named run 1");
+  ok(!!tr && tr.name === "train 1", "a Train box lands, named train 1");
   ok(!__t.bxErrorSet().has(tr.id),
-     "…and a lone Run box is not an error — it takes no wires");
+     "…and a lone Train box is not an error — it takes no wires");
   const ag = __t.bxAdd("agent", 0, 300, {});
   ok(!__t.bxErrorSet().has(ag.id), "…nor is a lone agent box");
   __t.bxRemove(ag.id);
@@ -3789,11 +3787,11 @@ check("the Run box: one only, at the top level, and no rename", () => {
   // a nested box never holds one
   const nest = __t.bxAdd("custom", 0, 300, {});
   __t.bxEnter(nest.id);
-  ok(__t.bxAdd("train", 0, 0, {}) === null, "inside a nested box a Run box is refused");
-  ok(__t.bxtRunToggle() === false, "…and the Run button shows no box here");
+  ok(__t.bxAdd("train", 0, 0, {}) === null, "inside a nested box a Train box is refused");
+  ok(__t.bxtRunToggle() === false, "…and the Train button shows no box here");
   __t.bxtRunRefresh();
-  ok(getEl("bxtRunBtn").title.indexOf("top level") >= 0,
-     "…and says the Run box lives at the top level");
+  ok(getEl("bxtTrainBtn").title.indexOf("top level") >= 0,
+     "…and says the Train box lives at the top level");
   __t.bxLeave();
   // it never moves into one, and a paste never makes a second
   ok(__t.bxMoveInto(tr.id, nest.id) === false, "it never moves into a nested box");

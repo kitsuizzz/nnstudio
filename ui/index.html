@@ -770,12 +770,12 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 .bxtbtn.off { opacity: .4; cursor: default; }
 .bxtbtn.off:hover { color: var(--ink-dim); border-color: var(--panel-brd); }
 /* the Run button is the app's main action, so it is filled, not outlined */
-#bxtRunBtn { color: #1a120b; background: var(--accent); border-color: var(--accent);
-             padding: 3px 15px; }
-#bxtRunBtn:hover { color: #1a120b; border-color: var(--accent); }
-#bxtRunBtn.off { opacity: 1; color: var(--ink-dim);
-                 background: rgba(249,115,22,.22); border-color: rgba(249,115,22,.45); }
-#bxtRunBtn.off:hover { color: var(--ink-dim); border-color: rgba(249,115,22,.45); }
+#bxtTrainBtn { color: #1a120b; background: var(--accent); border-color: var(--accent);
+               padding: 3px 15px; }
+#bxtTrainBtn:hover { color: #1a120b; border-color: var(--accent); }
+#bxtTrainBtn.off { opacity: 1; color: var(--ink-dim);
+                   background: rgba(249,115,22,.22); border-color: rgba(249,115,22,.45); }
+#bxtTrainBtn.off:hover { color: var(--ink-dim); border-color: rgba(249,115,22,.45); }
 .bxtdrop { position: absolute; top: 32px; left: 10px; z-index: 40; min-width: 158px; padding: 4px;
            max-height: 76vh; overflow-y: auto;
            background: rgba(20,20,20,.98); border: 1px solid var(--panel-brd);
@@ -910,7 +910,7 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
       <div class="bxtdrop" id="bxtPalMenu" hidden></div>
       <span class="bxtbtn" id="bxtBackend" title="where the heavy work runs">Backend ▾</span>
       <div class="bxtdrop" id="bxtBackendMenu" hidden></div>
-      <span class="bxtbtn off" id="bxtRunBtn" title="show the Run box">Run</span>
+      <span class="bxtbtn off" id="bxtTrainBtn" title="show the Train box">Train</span>
       <span class="bxtspace"></span>
       <span class="bxtbtn" id="bxtVram" title="the VRAM estimate">VRAM ▾</span>
       <div class="bxtdrop bxtdrop-r" id="bxtVramMenu" hidden>
@@ -1170,7 +1170,7 @@ function bxKindLabel(kind) {
        : kind === "sample" ? "Sample"
        : kind === "hf" ? "HF model"
        : kind === "agent" ? "Agent"
-       : kind === "train" ? "Run"
+       : kind === "train" ? "Train"
        : kind === "custom" ? "Nested"
        : kind;
 }
@@ -1418,7 +1418,7 @@ function bxDefaultName(kind) {
              : kind === "sample" ? "sample"
              : kind === "hf" ? "hf model"
              : kind === "agent" ? "agent"
-             : kind === "train" ? "run"
+             : kind === "train" ? "train"
              : kind === "custom" ? "nested" : kind;
   return word + " " + n;
 }
@@ -3257,7 +3257,7 @@ function bxDatasetFill(pane, n) {              // the table: lines and text
       let hasTrain = false;
       bxEveryBox(x => { if (x.kind === "train") hasTrain = true; });
       if (hasTrain) pane.appendChild(mk("div", { class: "bxhint2",
-        text: "training \u00b7 no Run box reads this data" }));
+        text: "training \u00b7 no Train box reads this data" }));
     }
   }
   const grip = mk("div", { class: "bxgrip" });
@@ -3386,7 +3386,7 @@ function bxTrainSummary(h) {                       // what the engine will do, i
   if (!h.dataset) missing.push("no dataset bound");
   else {
     const ds = find(h.dataset);
-    if (!ds) missing.push("the Run box's dataset is off the canvas");
+    if (!ds) missing.push("the Train box's dataset is off the canvas");
     else {
       const bits = [ds.name || h.dataset];
       let rows = null;
@@ -3443,7 +3443,7 @@ function bxTrainSummary(h) {                       // what the engine will do, i
       + (rl ? " — the policy, scored by the reward box"
             : " — the implicit loss on its output"));
   } else missing.push(rl
-    ? "rl training needs a target output box to sample from — bind one in the Run box"
+    ? "rl training needs a target output box to sample from — bind one in the Train box"
     : "no signal — bind a target, or wire a dataset to a loss box");
   if (rl) {
     if (!h.reward) missing.push("no reward box — rl is scored by the reward box");
@@ -3550,7 +3550,7 @@ function bxTrainLoadCkpt(n, st) {                 // train → inference, with t
       bxTrainNote(n, String((e && e.message) || e));
     });
 }
-function bxTrainFill(pane, n) {                   // the hub: Execute and Spec, its own menu
+function bxTrainFill(pane, n) {                   // the Train box: the training, and the machine
   const cur = (n.panel && n.panel.tab) === "spec" ? "spec" : "exec";
   const prev = pane.querySelector ? pane.querySelector(".bxrunbody") : null;
   const kept = (n._scroll && n._scroll[cur]) || 0;
@@ -3558,7 +3558,14 @@ function bxTrainFill(pane, n) {                   // the hub: Execute and Spec, 
   n._tabShown = cur;
   pane.innerHTML = "";
   bxBehaveInside(pane);
-  // the box's own menu: the run's side (Execute) and the machine's (Spec)
+  const st = (BXRUN.trainState || {})[n.id] || {};
+  const t = n.task_id ? bxTask(n.task_id) : null;
+  const live = !!n.task_id && !st.error && (!t || t.status === "running");
+  const sum = bxTrainSummary(n);
+  const head = mk("div", { class: "bxlogrow" });
+  head.appendChild(mk("b", { text: n.task_id ? "training \u00b7 " + n.task_id.slice(-6) : "training \u00b7 no task" }));
+  pane.appendChild(head);
+  // the box's own menu: the training (Execute) and the machine (Spec)
   const menu = mk("div", { class: "runmenu" });
   const tab = (id, label) => {
     const b = mk("span", { class: "runmi" + (cur === id ? " on" : ""), text: label });
@@ -3582,28 +3589,126 @@ function bxTrainFill(pane, n) {                   // the hub: Execute and Spec, 
     sbody.scrollTop = keepTop;
     return;
   }
-  // Execute: the mode switch and the run action, nothing else
-  pane.appendChild(mk("div", { class: "mhead", text: "mode" }));
-  pane.appendChild(bxRunModeSeg());
-  const runbar = mk("div", { class: "rrow" });
-  const go = mk("span", { class: "chip tiny play" + (bxtRunEnabled() ? "" : " off"),
-                          text: BXRUN.running ? "running\u2026"
-                               : BXRUN.loading ? "loading\u2026"
-                               : (BXRUN.mode || "inference") === "training"
-                                 ? "\u25b6 train the design"
-                                 : "\u25b6 run the design" });
-  go.title = bxtRunEnabled() ? "the whole design on the backend"
-                             : "connect a backend first \u2014 Backend \u25be";
-  go.addEventListener("click", () => {
-    if (bxtRunEnabled() && !BXRUN.running && !BXRUN.loading) bxtRunGo();
+  // Execute: what the training needs, and the controls that drive it
+  const body = mk("div", { class: "bxrunbody" });
+  body.addEventListener("scroll", () => {
+    (n._scroll = n._scroll || {})[cur] = body.scrollTop;
   });
-  runbar.appendChild(go);
-  pane.appendChild(runbar);
-  const outcome = bxRunOutcome();               // did it run, and what came back
-  if (outcome)
-    pane.appendChild(mk("div", { class: "bxbhint " + (outcome.ok ? "runok" : "runbad"),
-                                 text: outcome.text }));
+  pane.appendChild(body);
+  for (const line of sum.lines)
+    body.appendChild(mk("div", { class: "panehint", text: line }));
+  for (const why of sum.missing)
+    body.appendChild(mk("div", { class: "bxbhint", text: "\u26a0 " + why }));
+  if (sum.missing.length)
+    body.appendChild(mk("div", { class: "bxbhint",
+      text: "fix the warnings, then start the full training here" }));
+  else
+    body.appendChild(mk("div", { class: "bxbhint",
+      text: "the full training starts here \u2014 the input box runs the design" }));
+  const strip = mk("div", { class: "panehint" });
+  if ((n.paradigm || "supervised") === "rl")
+    strip.textContent = "step " + (st.step != null ? st.step : "\u2014")
+        + (st.tloss != null ? "  \u00b7  reward " + Number(st.tloss).toFixed(4) : "")
+        + (st.tacc != null ? "  \u00b7  baseline " + Number(st.tacc).toFixed(4) : "")
+        + (st.sample ? "  \u00b7  \u201c" + String(st.sample).slice(0, 40) + "\u201d" : "")
+        + (st.saved_at ? "  \u00b7  saved " + String(st.saved_at).split("/").slice(-1)[0] : "");
+  else
+    strip.textContent = "step " + (st.step != null ? st.step : "\u2014")
+        + (st.loss != null ? "  \u00b7  loss " + Number(st.loss).toFixed(4) : "")
+        + (st.acc != null ? "  \u00b7  acc " + Number(st.acc).toFixed(3) : "")
+        + (st.tloss != null ? "  \u00b7  test loss " + Number(st.tloss).toFixed(4) : "")
+        + (st.tacc != null ? "  \u00b7  test acc " + Number(st.tacc).toFixed(3) : "")
+        + (st.saved_at ? "  \u00b7  saved " + String(st.saved_at).split("/").slice(-1)[0] : "");
+  body.appendChild(strip);
+  const hist = (BXRUN.trainHist || {})[n.id] || [];
+  if (hist.length > 1) {                      // solid: the train split \u00b7 dashed: the test
+    const dual = (getTrain, getTest, color) => {
+      const all = [];
+      for (const h0 of hist) {
+        const a = getTrain(h0), b = getTest(h0);
+        if (a != null) all.push(a);
+        if (b != null) all.push(b);
+      }
+      if (all.length < 2) return;
+      const max = Math.max.apply(null, all), min = Math.min.apply(null, all);
+      const span = Math.max(max - min, 1e-6);
+      const w = 220, h = 54;
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+      svg.setAttribute("style", "width:100%;height:" + h + "px");
+      const line = (get, stroke, dash) => {
+        const ps = [];
+        for (let i = 0; i < hist.length; i++) {
+          const v = get(hist[i]);
+          if (v == null) continue;
+          ps.push((i / (hist.length - 1) * w).toFixed(1) + "," +
+                  (h - 3 - (v - min) / span * (h - 6)).toFixed(1));
+        }
+        if (ps.length < 2) return;
+        const pl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+        pl.setAttribute("points", ps.join(" "));
+        pl.setAttribute("fill", "none");
+        pl.setAttribute("stroke", stroke);
+        pl.setAttribute("stroke-width", "1.5");
+        if (dash) pl.setAttribute("stroke-dasharray", "4 3");
+        svg.appendChild(pl);
+      };
+      line(getTrain, color, false);
+      line(getTest, color, true);
+      body.appendChild(svg);
+    };
+    if ((n.paradigm || "supervised") === "rl") {
+      // rl: the mean reward and the baseline ride the test slots
+      dual(h0 => h0.tloss, h0 => h0.tacc, "#f97316");
+      body.appendChild(mk("div", { class: "bxbhint",
+        text: "solid \u2014 the mean reward \u00b7 dashed \u2014 the baseline" }));
+    } else {
+      dual(h0 => h0.loss, h0 => h0.tloss, "#f97316");
+      dual(h0 => h0.acc, h0 => h0.tacc, "#22c55e");
+      body.appendChild(mk("div", { class: "bxbhint",
+        text: "solid \u2014 the train split \u00b7 dashed \u2014 the test split" }));
+    }
+  }
+  const row = mk("div", { class: "rrow" });
+  const chip = (label, fn, title, off) => {
+    const b = mk("span", { class: "chip tiny" + (off ? " off" : ""),
+                            text: label, title: title || "" });
+    b.addEventListener("mousedown", (e) => { if (e && e.stopPropagation) e.stopPropagation(); });
+    b.addEventListener("click", () => {
+      if (off) { if (title) bxTrainNote(n, title); return; }
+      if (fn) fn();
+    });
+    return b;
+  };
+  row.appendChild(chip("set up the training \u2026",
+    () => { bxMenuClose(); bxForm("train", null, n, "train"); },
+    "the hub: data, columns, signal, parameters"));
+  if (live) {
+    row.appendChild(chip("start \u2014 already running", null,
+      "the task is live \u2014 save, hold or detach it", true));
+    row.appendChild(chip("save now", () => bxTrainCmd(n, "save"), "land a checkpoint where it stands"));
+    row.appendChild(chip("hold", () => bxTrainCmd(n, "pause"), "stop stepping, keep the gpu"));
+    row.appendChild(chip("detach", () => bxTrainCmd(n, "detach"), "checkpoint and let the gpu go"));
+  } else {
+    const first = sum.missing[0] || "ready";
+    row.appendChild(chip("start \u2014 " + first,
+      () => bxTrainStart(n),
+      sum.missing.length ? "fix before starting: " + sum.missing.join("; ") : "start training",
+      !!sum.missing.length));
+    if (n.task_id)
+      row.appendChild(chip("resume", () => bxTrainCmd(n, "resume"),
+        "pick up from the last checkpoint"));
+  }
+  if (st.saved_at)
+    row.appendChild(chip("load last checkpoint", () => bxTrainLoadCkpt(n, st),
+      "train \u2192 inference: run with the trained weights"));
+  pane.appendChild(row);
+  if ((BXRUN.trainNotes || {})[n.id])
+    pane.appendChild(mk("div", { class: "bxbhint", text: BXRUN.trainNotes[n.id] }));
+  if (st.error) pane.appendChild(mk("div", { class: "bxbhint", text: "\u26a0 " + st.error }));
+  body.scrollTop = keepTop;                    // a refresh never loses the place
 }
+
 function bxInputFill(pane, n) {                // the input box's own editor, in the box:
   // the datatype, and the data itself — typed right on the canvas
   pane.innerHTML = "";
@@ -3657,6 +3762,23 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
           (v) => save({ input_mode: "random", dout: v }));
   }
   sel.addEventListener("change", () => save({ input_mode: sel.value }));
+  // the run action lives here now: where the data is, the way to run it
+  const runbar = mk("div", { class: "rrow" });
+  const go = mk("span", { class: "chip tiny play" + (bxtRunEnabled() ? "" : " off"),
+                          text: BXRUN.running ? "running\u2026"
+                               : BXRUN.loading ? "loading\u2026"
+                               : "\u25b6 run the design" });
+  go.title = bxtRunEnabled() ? "the whole design on the backend"
+                             : "connect a backend first \u2014 Backend \u25be";
+  go.addEventListener("click", () => {
+    if (bxtRunEnabled() && !BXRUN.running && !BXRUN.loading) bxtRunGo();
+  });
+  runbar.appendChild(go);
+  pane.appendChild(runbar);
+  const outcome = bxRunOutcome();
+  if (outcome)
+    pane.appendChild(mk("div", { class: "bxbhint " + (outcome.ok ? "runok" : "runbad"),
+                                 text: outcome.text }));
 }
 function bxOutputFill(pane, n) {               // the output's window: whatever data
   // the last run handed it, and nothing else
@@ -5650,7 +5772,7 @@ function bxtBackendRender() {
     if (a) {
       pane.appendChild(mk("div", { class: "bxbhint",
         text: "connected \u00b7 " + a.name + " \u2014 this machine runs the design. "
-            + "its specs and live usage are in the Run box." }));
+            + "its specs and live usage are in the Train box." }));
     } else {
       pane.appendChild(mk("div", { class: "bxbhint",
         text: "1 \u00b7 on that computer, run the agent \u2014 it contacts this app and "
@@ -5734,14 +5856,14 @@ function bxtRunEnabled() {
          (BX_BACKEND.mode === "remote" && !!(BX_BACKEND.key || "").trim());
 }
 function bxtRunRefresh() {                    // the button follows the box's appearance
-  const btn = $("bxtRunBtn");
+  const btn = $("bxtTrainBtn");
   if (!btn) return;
   const hub = bxTrainAnywhere();
   const shown = !BX.up && !!hub && !hub.hidden;
   if (btn.classList) btn.classList.toggle("off", !shown);
   btn.title = BX.up ? "come back out to the top level first"
-            : shown ? "hide the Run box"
-                    : "show the Run box";
+            : shown ? "hide the Train box"
+                    : "show the Train box";
 }
 function bxtRunToggle() {                     // the Run button: the box on / off
   if (BX.up) return false;                    // the Run box lives at the top level
@@ -5854,26 +5976,6 @@ function bxRunFeeds(pane) {                       // inference: what the model r
     pane.appendChild(mk("div", { class: "bxbhint",
       text: "0 tokens is one forward; temperature 0 picks the most likely id" }));
   }
-}
-function bxRunModeSeg() {                          // the inference/training switch
-  const seg = mk("div", { class: "modeseg" });
-  for (const m of ["inference", "training"]) {
-    const on = (BXRUN.mode || "inference") === m;
-    const b = mk("span", { class: "mseg" + (on ? " on" : "") +
-                            ((BXRUN.running || BXRUN.loading) ? " busy" : ""),
-                       text: m });
-    b.title = m === "inference"
-      ? "no gradients are kept \u2014 the lightest run"
-      : "the non-frozen weights keep gradients; the dataset boxes feed the run";
-    b.addEventListener("click", () => {
-      if (BXRUN.running || BXRUN.loading) return;
-      BXRUN.mode = m;
-      bxtRunSync();
-      bxRender();                          // the signal's marks follow the mode
-    });
-    seg.appendChild(b);
-  }
-  return seg;
 }
 function bxtRunLoad() {                        // the whole design, loaded warm
   bxApplyOffload("gpu");                       // the ratio writes the places
@@ -6344,7 +6446,7 @@ function bxtInit() {
   wire("bxtFiles", bxtFilesToggle);
   wire("bxtPalette", bxtPaletteToggle);
   wire("bxtBackend", bxtBackendToggle);
-  wire("bxtRunBtn", bxtRunToggle);
+  wire("bxtTrainBtn", bxtRunToggle);
   wire("bxtVram", bxtVramToggle);
   document.addEventListener("mousedown", (ev) => {   // a click outside closes them all
     const t = ev.target;
