@@ -5541,6 +5541,9 @@ function bxSpecRows(pane, s) {                 // what the agent says it is
                               : "none found"],
                 ["torch", s.torch ? s.torch + (s.cuda ? " \u00b7 cuda" : " \u00b7 cpu")
                                   : (s.torch_error ? "not installed" : null)],
+                ["cuda", s.cuda ? "ready"
+                                : (s.cuda_error ? String(s.cuda_error).slice(0, 120)
+                                                : "not available")],
                 ["quant kernels", nq.available
                    ? (nq.kernels || []).join(", ") + " \u00b7 " + (nq.backend || "native")
                    : "f16 dequant at load \u00b7 docs/backend.md"],

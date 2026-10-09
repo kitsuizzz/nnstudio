@@ -33,16 +33,42 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 
-# a card that fills up fragments; let the allocator grow segments instead — but
-# never take the expandable-segments IPC branch: it asks NVML for peer/fabric
-# access, and where the driver's NVML cannot initialize inside PyTorch (common
-# on some Windows/container setups) that probe asserts instead of running
-# ("INTERNAL ASSERT FAILED at c10/cuda/PeerToPeerAccess.cpp"). A single design
-# run never shares segments across processes, so the branch is useless here.
-# And only ask for expandable segments at all when NVML initializes cleanly.
+VERSION = 1
+_DEVICE = None
+_CUDA_WHY = None          # why the GPU is not used, when a probe caught it
+
+
+def _device():
+    """cuda when torch can really put a tensor on the GPU — probed once with a
+    real allocation, because that first allocation is where a broken
+    driver/NVML shows up. A machine that fails the probe stays on the cpu, and
+    the reason is carried to the app."""
+    global _DEVICE, _CUDA_WHY
+    if _DEVICE is None:
+        _DEVICE = "cpu"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                big = torch.zeros(1 << 20, dtype=torch.float32, device="cuda")
+                torch.cuda.synchronize()       # 4 MB: the allocator's real touch
+                del big
+                _DEVICE = "cuda"
+            else:
+                _CUDA_WHY = "torch cannot see a cuda device"
+        except Exception as e:  # noqa: BLE001 — the reason travels to the app
+            _CUDA_WHY = _run_error_text(e)[:300]
+    return _DEVICE
+
+
+# ---------------------------------------------------------------- this machine
 def _nvml_ok():
-    """Whether the NVIDIA driver's NVML can initialize in this process."""
+    """Whether the NVIDIA driver's NVML can initialize in this process. PyTorch's
+    native CUDA allocator asks NVML for peer/fabric access on its
+    expandable-segments path and asserts where NVML cannot initialize
+    ("INTERNAL ASSERT FAILED at c10/cuda/PeerToPeerAccess.cpp"), so the allocator
+    choice below depends on this answer."""
     try:
         import ctypes
         for name in ("libnvidia-ml.so.1", "libnvidia-ml.so", "nvml.dll"):
@@ -56,27 +82,6 @@ def _nvml_ok():
     return False
 
 
-os.environ.setdefault("TORCH_CUDA_EXPANDABLE_SEGMENTS_IPC", "0")
-if _nvml_ok():
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-
-VERSION = 1
-_DEVICE = None
-
-
-def _device():
-    """cuda when torch can see one — decided once, not per run."""
-    global _DEVICE
-    if _DEVICE is None:
-        try:
-            import torch
-            _DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-        except Exception:  # noqa: BLE001
-            _DEVICE = "cpu"
-    return _DEVICE
-
-
-# ---------------------------------------------------------------- this machine
 def _cpu_model():
     try:
         with open("/proc/cpuinfo") as f:
@@ -115,6 +120,25 @@ def _nvidia():
     return None, None
 
 
+def _allocator_env():
+    """Pick the CUDA allocator config before torch's allocator initializes.
+
+    The native allocator's expandable-segments path probes NVML for peer/fabric
+    access; where NVML cannot initialize inside the process that probe asserts
+    instead of running. A single design run never shares segments between
+    processes, so the IPC branch stays off — and a machine whose NVML is broken
+    takes the async allocator, which never asks NVML at all."""
+    os.environ.setdefault("TORCH_CUDA_EXPANDABLE_SEGMENTS_IPC", "0")
+    gpu, _vram = _nvidia()
+    if _nvml_ok():
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    elif gpu:                                  # an NVIDIA card whose NVML is broken
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "backend:cudaMallocAsync")
+
+
+_allocator_env()
+
+
 _CAPS = None
 
 
@@ -145,8 +169,9 @@ def specs():
     try:
         import torch
         s["torch"] = torch.__version__
-        s["cuda"] = bool(torch.cuda.is_available())
-        s["device"] = "cuda" if s["cuda"] else "cpu"
+        s["device"] = _device()                  # the probed, real answer
+        s["cuda"] = s["device"] == "cuda"
+        s["cuda_error"] = _CUDA_WHY              # why not, when the probe caught it
         s["rocm"] = getattr(torch.version, "hip", None)
         mps = getattr(torch.backends, "mps", None)
         s["mps"] = bool(mps and mps.is_available())
@@ -182,8 +207,8 @@ def usage():
         pass
     try:
         import torch
-        if torch.cuda.is_available():
-            free, total = torch.cuda.mem_get_info(0)   # the device, all processes
+        if _device() == "cuda":                  # never touch cuda when the probe
+            free, total = torch.cuda.mem_get_info(0)   # said no
             used = total - free
             u["vram_total_gb"] = round(total / 2 ** 30, 1)
             u["vram_used_gb"] = round(used / 2 ** 30, 1)
@@ -193,16 +218,32 @@ def usage():
     return u
 
 
+def _is_cuda_assert(e):
+    """PyTorch's assert for a CUDA path that cannot talk to the driver's NVML
+    (or any internal CUDA assert): the run is worth retrying on the cpu."""
+    t = str(e)
+    low = t.lower()
+    return ("nvml" in low or "peertopeeraccess" in low
+            or "INTERNAL ASSERT FAILED" in t)
+
+
 def _run_error_text(e):
     """The run's failure, with a hint for the NVML/fabric assert PyTorch raises
     where the driver's NVML cannot initialize inside the process."""
     t = str(e)
-    low = t.lower()
-    if "nvml" in low or "peertopeeraccess" in low or "INTERNAL ASSERT FAILED" in t:
+    if _is_cuda_assert(e):
         t = ("the NVIDIA driver's NVML could not initialize inside PyTorch — "
              "update the NVIDIA driver, or restart the agent with "
              "TORCH_CUDA_EXPANDABLE_SEGMENTS_IPC=0. " + t)
     return t
+
+
+def _mark_cuda_broken(e):
+    """The probed cuda path failed: stay on the cpu from now on, and carry the
+    reason to the app."""
+    global _DEVICE, _CUDA_WHY
+    _CUDA_WHY = _run_error_text(e)[:300]
+    _DEVICE = "cpu"
 
 
 def _canvas_key(canvas, device, mode="inference"):
@@ -368,14 +409,18 @@ def serve_session(sock, name, log):
             pass
 
     try:
+        requeued = []                            # a run retried on the cpu
         while True:
-            line = f.readline()
-            if not line:
-                break
-            try:
-                msg = json.loads(line)
-            except ValueError:
-                continue
+            if requeued:
+                msg = requeued.pop(0)
+            else:
+                line = f.readline()
+                if not line:
+                    break
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    continue
             kind = msg.get("type")
             if kind == "welcome":
                 continue
@@ -474,6 +519,7 @@ def serve_session(sock, name, log):
                 rid = msg.get("id")
                 t0 = time.time()
                 failed = True
+                device = None
                 try:
                     from nn_torch import compile_canvas, run_graph   # the bundled engine
                     device = _device()
@@ -615,8 +661,18 @@ def serve_session(sock, name, log):
                     send({"type": "result", "id": rid, "ok": True, "result": result})
                     failed = False
                 except Exception as e:  # noqa: BLE001 — the app shows the reason
+                    if (device == "cuda" and not msg.get("_cpu_retry")
+                            and _is_cuda_assert(e)):
+                        log("run %s: the cuda path failed — retrying on the cpu (%s)"
+                            % (rid or "?", e))
+                        _release(e)              # the frames held the graph
+                        _mark_cuda_broken(e)     # later runs go straight to the cpu
+                        free_loaded()            # drop the cuda graph before the cpu one
+                        requeued.append(dict(msg, _cpu_retry=True))
+                        continue
                     _release(e)                  # the frames held the graph
                     log("run %s failed: %s" % (rid or "?", e))
+                    log(traceback.format_exc(limit=14))
                     send({"type": "result", "id": rid, "ok": False,
                           "error": _run_error_text(e)[:700],
                           "box": getattr(e, "box", None) or None,
