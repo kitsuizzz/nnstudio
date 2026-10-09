@@ -734,12 +734,33 @@ check("the Run button: the box on and off the canvas", () => {
 check("the Run box carries the machine, the weights and the run's readout", () => {
   const tr = __t.bxAdd("train", 0, 0, {});
   ok(!!tr, "the Run box exists to carry them");
-  const fill = () => { const d = document.createElement("div"); __t.bxTrainFill(d, tr); return d; };
-  const bstate = () => fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
-  const bchips = () => fill().querySelectorAll(".chip").map(e => e.textContent);
+  const fill = (tab) => {
+    const d = document.createElement("div");
+    if (tab) tr.panel = Object.assign({}, tr.panel, { tab });
+    __t.bxTrainFill(d, tr);
+    return d;
+  };
+  const bstate = () => fill("spec").querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
+  const bchips = () => fill("spec").querySelectorAll(".chip").map(e => e.textContent);
+  const estate = () => fill("exec").querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
   const specsIn = (root) => root.querySelectorAll(".bxbspec")
     .map(r => r.children.map(c => c.textContent).join(" ")).join(" | ");
-  const goOff = fill().querySelectorAll(".chip").find(c => c.textContent === "run the design");
+  eql(fill("exec").querySelectorAll(".runmi").map(e => e.textContent), ["Execute", "Spec"],
+      "the box's own menu: Execute and Spec");
+  ok(fill("exec").querySelectorAll(".bxbspec").length === 0,
+     "…the machine stays out of Execute");
+  ok(fill("spec").querySelectorAll(".chip").map(c => c.textContent)
+       .indexOf("run the design") < 0, "…and the run action stays out of Spec");
+  // the menu switches views, and the choice sticks to the box
+  fill("exec").querySelectorAll(".runmi").find(b => b.textContent === "Spec").click();
+  eql(tr.panel.tab, "spec", "…Spec is a press away");
+  ok(fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ")
+       .indexOf("no backend connected") >= 0, "…and shows the machine's state");
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(tr)).panel.tab, "spec",
+     "…and the design carries the open view");
+  fill("spec").querySelectorAll(".runmi").find(b => b.textContent === "Execute").click();
+  eql(tr.panel.tab, "exec", "…and back to Execute");
+  const goOff = fill("exec").querySelectorAll(".chip").find(c => c.textContent === "run the design");
   ok(goOff && String(goOff.className).indexOf("off") >= 0,
      "the run action lives in the box, off without a backend");
   __t.BX_BACKEND.mode = "local";
@@ -752,11 +773,11 @@ check("the Run box carries the machine, the weights and the run's readout", () =
                vram_used_gb: 6.1, vram_total_gb: 32, vram_pct: 19 } } },
       inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
       msg: "", running: false };
-  const goOn = fill().querySelectorAll(".chip").find(c => c.textContent === "run the design");
+  const goOn = fill("exec").querySelectorAll(".chip").find(c => c.textContent === "run the design");
   ok(goOn && String(goOn.className).indexOf("off") < 0, "…and it lights with the backend");
   ok(bstate().indexOf("gpu-box") >= 0 && bstate().indexOf("RTX 5090") >= 0 &&
-     bstate().indexOf("cuda") >= 0, "it shows the backend machine");
-  const specs = specsIn(fill());
+     bstate().indexOf("cuda") >= 0, "Spec shows the backend machine");
+  const specs = specsIn(fill("spec"));
   ok(specs.indexOf("Test CPU") >= 0 && specs.indexOf("16 cores") >= 0 &&
      specs.indexOf("RTX 5090") >= 0, "…the pc's specs, moved here from Backend");
   ok(specs.indexOf("14.2 / 64.0 GB") >= 0 && specs.indexOf("22%") >= 0,
@@ -825,9 +846,9 @@ check("the Run box carries the machine, the weights and the run's readout", () =
                                o1: { shape: [3], mean: 0.5 } },
                      outputs: [{ name: "y", stats: { shape: [3], mean: 0.5 } }],
                      generated: [] };
-  ok(bstate().indexOf("ran 3 boxes") >= 0 && bstate().indexOf("12 ms") >= 0 &&
-     bstate().indexOf("gpu-box") >= 0, "…and the result of a run");
-  ok(bstate().indexOf("using the loaded weights") >= 0, "…saying it reused the load");
+  ok(estate().indexOf("ran 3 boxes") >= 0 && estate().indexOf("12 ms") >= 0 &&
+     estate().indexOf("gpu-box") >= 0, "…and the result of a run, in Execute");
+  ok(estate().indexOf("using the loaded weights") >= 0, "…saying it reused the load");
   __t.BXRUN.last = null;
   __t.bxRemove(tr.id);
 });
@@ -3531,13 +3552,15 @@ check("the Run box: the hub of the training — data, columns, signal, parameter
       [ds.id, "A", "B", "supervised", out.id], "the hub survives the JSON round trip");
   eql(back.classes, ["cat", "dog"], "…so do the classes");
   eql([back.lr, back.batch, back.steps], [0.01, 8, 40], "…and so do the parameters");
-  // the window opens with the mode switch: it decides what the Run button does
+  // the window opens on Execute: its own menu, the mode switch, the run chip
   const tp = document.createElement("div");
   __t.BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
                 loaded: null, loading: false, loadKey: null, msg: "", running: false };
   __t.bxTrainFill(tp, tr);
-  eql(tp.querySelectorAll(".mhead").map(e => e.textContent), ["mode", "backend"],
-     "the Run box's window opens with the mode switch, then the backend");
+  eql(tp.querySelectorAll(".runmi").map(e => e.textContent), ["Execute", "Spec"],
+     "the Run box's own menu: Execute and Spec");
+  eql(tp.querySelectorAll(".mhead").map(e => e.textContent)[0], "mode",
+     "…Execute opens with the mode switch");
   const segs = tp.querySelectorAll(".mseg");
   eql(segs.map(e => e.textContent), ["inference", "training"],
      "…inference or training");

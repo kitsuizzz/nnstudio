@@ -801,6 +801,15 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 /* the Run box's window: the machine, the weights, the feeds, the readout */
 .bxrunbody { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex;
              flex-direction: column; }
+/* the Run box's own menu: Execute (the run) and Spec (the backend) */
+.runmenu { display: flex; gap: 2px; padding: 2px 4px 0;
+           border-bottom: 1px solid var(--panel-brd); }
+.runmi { cursor: pointer; padding: 3px 10px; font: 600 11px var(--mono);
+         color: var(--ink-faint); border: 1px solid transparent; border-bottom: none;
+         user-select: none; }
+.runmi:hover { color: var(--ink); }
+.runmi.on { color: var(--accent); background: rgba(249,115,22,.10);
+            border-color: var(--panel-brd); }
 .modeseg { display: flex; gap: 4px; }
 .mseg { flex: 1 1 0; cursor: pointer; text-align: center;
         border: 1px solid var(--panel-brd); border-radius: 0;
@@ -3490,9 +3499,12 @@ function bxTrainLoadCkpt(n, st) {                 // train → inference, with t
       bxTrainNote(n, String((e && e.message) || e));
     });
 }
-function bxTrainFill(pane, n) {                   // the hub: setup, curves, the run's controls
+function bxTrainFill(pane, n) {                   // the hub: Execute and Spec, its own menu
+  const cur = (n.panel && n.panel.tab) === "spec" ? "spec" : "exec";
   const prev = pane.querySelector ? pane.querySelector(".bxrunbody") : null;
-  const keepTop = (prev && prev.scrollTop) || n._scroll || 0;   // the same place in the list
+  const kept = (n._scroll && n._scroll[cur]) || 0;
+  const keepTop = (prev && n._tabShown === cur && prev.scrollTop) ? prev.scrollTop : kept;
+  n._tabShown = cur;
   pane.innerHTML = "";
   bxBehaveInside(pane);
   const st = (BXRUN.trainState || {})[n.id] || {};
@@ -3502,6 +3514,30 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
   const head = mk("div", { class: "bxlogrow" });
   head.appendChild(mk("b", { text: n.task_id ? "training · " + n.task_id.slice(-6) : "training · no task" }));
   pane.appendChild(head);
+  // the box's own menu: the run's side (Execute) and the machine's (Spec)
+  const menu = mk("div", { class: "runmenu" });
+  const tab = (id, label) => {
+    const b = mk("span", { class: "runmi" + (cur === id ? " on" : ""), text: label });
+    b.addEventListener("click", () => {
+      const p = n.panel || (n.panel = {});
+      p.tab = id;
+      bxRender();
+    });
+    menu.appendChild(b);
+  };
+  tab("exec", "Execute");
+  tab("spec", "Spec");
+  pane.appendChild(menu);
+  if (cur === "spec") {                       // Spec: the backend machine and the weights
+    const sbody = mk("div", { class: "bxrunbody" });
+    sbody.addEventListener("scroll", () => {
+      (n._scroll = n._scroll || {})[cur] = sbody.scrollTop;
+    });
+    pane.appendChild(sbody);
+    bxTrainSpec(sbody);
+    sbody.scrollTop = keepTop;
+    return;
+  }
   // the mode switch lives in the Run box, not the toolbar
   pane.appendChild(mk("div", { class: "mhead", text: "mode" }));
   pane.appendChild(bxRunModeSeg());
@@ -3520,9 +3556,11 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
   runbar.appendChild(go);
   pane.appendChild(runbar);
   const body = mk("div", { class: "bxrunbody" });
-  body.addEventListener("scroll", () => { n._scroll = body.scrollTop; });
+  body.addEventListener("scroll", () => {
+    (n._scroll = n._scroll || {})[cur] = body.scrollTop;
+  });
   pane.appendChild(body);
-  bxTrainDetails(body);                        // the machine, the weights, the feeds
+  bxTrainRunInfo(body);                        // the feeds, the warm note, the readout
 
   for (const line of sum.lines)
     body.appendChild(mk("div", { class: "panehint", text: line }));
@@ -3637,8 +3675,8 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
   if (st.error) pane.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + st.error }));
   body.scrollTop = keepTop;                    // a refresh never loses the place
 }
-function bxTrainDetails(pane) {                // the machine, the weights, the feeds,
-  // the run's readout and the run action itself — all in the Run box
+function bxTrainSpec(pane) {                  // Spec: the machine, its usage, and
+  // how the design's weights sit on it
   const a = BXRUN.local && BXRUN.local.agent;
   const remote = BX_BACKEND.mode === "remote";
   pane.appendChild(mk("div", { class: "mhead", text: "backend" }));
@@ -3756,6 +3794,9 @@ function bxTrainDetails(pane) {                // the machine, the weights, the 
       pane.appendChild(mk("div", { class: "bxbhint",
         text: "\u26a0 " + (is.box || "?") + ": " + is.what }));
   }
+}
+function bxTrainRunInfo(pane) {               // Execute: the feeds, the warm note, the
+  // run's message and what came back
   if ((BXRUN.mode || "inference") !== "training") bxRunFeeds(pane);
   if (BXRUN.warmMode && BXRUN.warmMode !== (BXRUN.mode || "inference"))
     pane.appendChild(mk("div", { class: "bxbhint",
@@ -4491,6 +4532,7 @@ function bxJSONNodeFrom(o) {
       const p = o.panel;
       n.panel = { lines: bxSize(p.lines, 200), autoscroll: p.autoscroll !== false,
                   debug: !!p.debug, expand: !!p.expand };
+      if (p.tab === "spec") n.panel.tab = "spec";   // the menu's open view
     }
     if (o.collapsed) n.collapsed = true;
     if (o.hidden) n.hidden = true;       // hidden from the canvas, still the hub
