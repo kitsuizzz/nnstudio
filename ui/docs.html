@@ -222,9 +222,12 @@
         <span class="pill">custom</span> box. A nested box is a whole network of
         its own — that's the "nested" in nnstudio. Double-clicking again goes
         deeper; the strip above the canvas shows where you are and takes you back.</li>
-    <li><b>Run it</b> — connect <span class="pill grey">Backend ▾</span> first, then
-        <span class="pill grey">Run ▾</span>. The <b>mode</b> lives in the Run box —
-        it decides how the weights are held: <b>inference</b> keeps no gradients (the lightest run —
+    <li><b>Run it</b> — connect <span class="pill grey">Backend ▾</span> first. The
+        <span class="pill grey">Run ▾</span> menu is the run button; the
+        <span class="pill">Run</span> box carries the details — the backend machine
+        and its live usage, the weights (the offload ratio, load / offload), what
+        the model reads, and the run's result. Its <b>mode</b> decides how the
+        weights are held: <b>inference</b> keeps no gradients (the lightest run —
         dataset boxes stay idle); <b>training</b> lets the non-frozen weights keep
         gradients, and the run focuses on the <span class="pill">Run</span> box —
         the hub: it names the data, the columns and the signal, its dataset feeds
@@ -615,7 +618,11 @@
       scores, or, in <b>rl</b>, the reward box — and every parameter of the run.
       There is only ever one, it cannot be renamed, and it lives at the top level.
       Its window opens with the <b>mode</b> switch — inference or training, which
-      the Run button follows — and then shows the setup, the step counter, and the
+      the Run button follows — and carries every detail the
+      <span class="pill grey">Run ▾</span> menu used to hold: the backend machine
+      and its live usage, the weights (the offload ratio, <b>load weights</b> /
+      <b>offload</b>), what the model reads (the feeds), and the last run's result.
+      Then the setup, the step counter, and the
       live curves: loss and
       accuracy (solid train, dashed test) — in rl, the mean reward and its
       baseline — and the controls that matter when a GPU's clock is ticking:
@@ -661,8 +668,9 @@
         <span class="dim">(The first click arms the overwrite — click again to
         confirm.)</span> The box fills with the model's blocks, wired exactly like
         the original implementation.</li>
-    <li><span class="pill grey">Backend ▾</span> → connect.
-        <span class="pill grey">Run ▾</span> → type a prompt → run.</li>
+    <li><span class="pill grey">Backend ▾</span> → connect. Add a
+        <span class="pill">Run</span> box from <span class="pill grey">Run ▾</span>
+        → type a prompt in its window → run. The menu itself is just the run button.</li>
     <li>Double-click the GGUF box to look inside; click boxes to see the numbers
         that flowed through them.</li>
   </ol>

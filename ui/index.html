@@ -785,20 +785,23 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 .bxbcode { margin: 0; font: 11px/1.5 var(--mono); color: var(--ink);
            background: rgba(0,0,0,.3); border: 1px solid var(--panel-brd);
            border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; }
-.bxtdrop .rrow { display: flex; gap: 6px; align-items: center; }
-.bxtdrop .bxbin { flex: 1 1 120px; min-width: 0; background: rgba(0,0,0,.3); color: var(--ink);
+.bxtdrop .rrow, .bxrunbody .rrow { display: flex; gap: 6px; align-items: center; }
+.bxtdrop .bxbin, .bxrunbody .bxbin { flex: 1 1 120px; min-width: 0; background: rgba(0,0,0,.3); color: var(--ink);
                   border: 1px solid var(--panel-brd); border-radius: 6px;
                   padding: 4px 7px; font: 12px var(--mono); }
 /* spec rows: what the agent reports, and what a run came back with */
 .bxbspec { display: flex; justify-content: space-between; gap: 12px;
            font: 11px/1.5 var(--mono); color: var(--ink-dim); }
 .bxbspec b { color: var(--ink); font-weight: 600; text-align: right; }
-#bxtRunMenu { min-width: 356px; }
-#bxtRunMenu label.rf { display: flex; align-items: center; gap: 6px;
+#bxtRunMenu { min-width: 300px; }
+#bxtRunMenu label.rf, .bxrunbody label.rf { display: flex; align-items: center; gap: 6px;
                        font-size: 12px; color: var(--ink-dim); }
-#bxtRunMenu input.bxoff { flex: 1; min-width: 96px; accent-color: var(--accent);
+#bxtRunMenu input.bxoff, .bxrunbody input.bxoff { flex: 1; min-width: 96px; accent-color: var(--accent);
                           height: 16px; }
-#bxtRunMenu .wmode { margin-left: auto; font: 11px var(--mono); color: var(--ink-dim); }
+#bxtRunMenu .wmode, .bxrunbody .wmode { margin-left: auto; font: 11px var(--mono); color: var(--ink-dim); }
+/* the Run box's window: the details the Run menu used to carry live here */
+.bxrunbody { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex;
+             flex-direction: column; }
 .modeseg { display: flex; gap: 4px; }
 .mseg { flex: 1 1 0; cursor: pointer; text-align: center;
         border: 1px solid var(--panel-brd); border-radius: 0;
@@ -3489,6 +3492,8 @@ function bxTrainLoadCkpt(n, st) {                 // train → inference, with t
     });
 }
 function bxTrainFill(pane, n) {                   // the hub: setup, curves, the run's controls
+  const prev = pane.querySelector ? pane.querySelector(".bxrunbody") : null;
+  const keepTop = (prev && prev.scrollTop) || n._scroll || 0;   // the same place in the list
   pane.innerHTML = "";
   bxBehaveInside(pane);
   const st = (BXRUN.trainState || {})[n.id] || {};
@@ -3498,19 +3503,23 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
   const head = mk("div", { class: "bxlogrow" });
   head.appendChild(mk("b", { text: n.task_id ? "training · " + n.task_id.slice(-6) : "training · no task" }));
   pane.appendChild(head);
-  // the mode switch lives in the train box now, not in the Run menu
+  // the mode switch lives in the Run box, not the toolbar
   pane.appendChild(mk("div", { class: "mhead", text: "mode" }));
   pane.appendChild(bxRunModeSeg());
+  const body = mk("div", { class: "bxrunbody" });
+  body.addEventListener("scroll", () => { n._scroll = body.scrollTop; });
+  pane.appendChild(body);
+  bxTrainDetails(body);                        // the machine, the weights, the feeds
 
   for (const line of sum.lines)
-    pane.appendChild(mk("div", { class: "panehint", text: line }));
+    body.appendChild(mk("div", { class: "panehint", text: line }));
   for (const why of sum.missing)
-    pane.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + why }));
+    body.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + why }));
   if (sum.missing.length)
-    pane.appendChild(mk("div", { class: "bxbhint",
+    body.appendChild(mk("div", { class: "bxbhint",
       text: "fix the warnings, then start the full training here" }));
   else
-    pane.appendChild(mk("div", { class: "bxbhint",
+    body.appendChild(mk("div", { class: "bxbhint",
       text: "the run button does a single step — the full training starts here" }));
   const strip = mk("div", { class: "panehint" });
   if ((n.paradigm || "supervised") === "rl")
@@ -3526,7 +3535,7 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
         + (st.tloss != null ? "  ·  test loss " + Number(st.tloss).toFixed(4) : "")
         + (st.tacc != null ? "  ·  test acc " + Number(st.tacc).toFixed(3) : "")
         + (st.saved_at ? "  ·  saved " + String(st.saved_at).split("/").slice(-1)[0] : "");
-  pane.appendChild(strip);
+  body.appendChild(strip);
   const hist = (BXRUN.trainHist || {})[n.id] || [];
   if (hist.length > 1) {                          // solid: the train split · dashed: the test
     const dual = (getTrain, getTest, color) => {
@@ -3562,17 +3571,17 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
       };
       line(getTrain, color, false);
       line(getTest, color, true);
-      pane.appendChild(svg);
+      body.appendChild(svg);
     };
     if ((n.paradigm || "supervised") === "rl") {
       // rl: the mean reward and the baseline ride the test slots
       dual(h0 => h0.tloss, h0 => h0.tacc, "#f97316");
-      pane.appendChild(mk("div", { class: "bxbhint",
+      body.appendChild(mk("div", { class: "bxbhint",
         text: "solid — the mean reward · dashed — the baseline" }));
     } else {
       dual(h0 => h0.loss, h0 => h0.tloss, "#f97316");
       dual(h0 => h0.acc, h0 => h0.tacc, "#22c55e");
-      pane.appendChild(mk("div", { class: "bxbhint",
+      body.appendChild(mk("div", { class: "bxbhint",
         text: "solid — the train split · dashed — the test split" }));
     }
   }
@@ -3613,6 +3622,181 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
   if ((BXRUN.trainNotes || {})[n.id])
     pane.appendChild(mk("div", { class: "bxbhint", text: BXRUN.trainNotes[n.id] }));
   if (st.error) pane.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + st.error }));
+  body.scrollTop = keepTop;                    // a refresh never loses the place
+}
+function bxTrainDetails(pane) {                // the details the Run menu used to
+  // carry: the machine, the weights, the feeds and the run's readout. They
+  // live with the Run box now; the menu is the run button alone.
+  const a = BXRUN.local && BXRUN.local.agent;
+  const remote = BX_BACKEND.mode === "remote";
+  pane.appendChild(mk("div", { class: "mhead", text: "backend" }));
+  const bstate = mk("div", { class: "bxbhint" });
+  bstate.textContent = a
+    ? a.name + " \u00b7 " + (a.specs.gpu || a.specs.cpu || "?") + " \u00b7 "
+      + (a.specs.device || "cpu")
+    : (remote ? "remote (Modal) \u2014 the transport is not wired yet"
+              : "no backend connected \u2014 Backend \u2192 Local");
+  pane.appendChild(bstate);
+  if (!a) return;                              // the rest is the machine's work
+  bxSpecRows(pane, a.specs || {});
+  const u = a.usage || {};
+  const sp = a.specs || {};
+  bxUsageRow(pane, "ram now",
+             u.ram_used_gb != null ? u.ram_used_gb : null,
+             u.ram_total_gb != null ? u.ram_total_gb : (sp.ram_gb || null),
+             u.ram_pct);
+  bxUsageRow(pane, "vram now",
+             u.vram_used_gb != null ? u.vram_used_gb : null,
+             u.vram_total_gb != null ? u.vram_total_gb : (sp.vram_gb || null),
+             u.vram_pct);
+  // load the whole design's weights: set the bar, then load \u2014 the ratio
+  // writes each layer's place, there is no separate gpu/cpu button any more
+  pane.appendChild(mk("div", { class: "mhead", text: "weights" }));
+  const orow = mk("label", { class: "rf" });
+  orow.appendChild(mk("span", { text: "cpu offload" }));
+  const orange = mk("input", { type: "range", min: "0", max: "100", step: "5",
+                               class: "bxoff", value: String(bxOffloadRatio()),
+                               title: "how much of the weights stays on the system ram "
+                                      + "\u2014 the first layers stay on the gpu" });
+  orow.appendChild(orange);
+  const opct = mk("span", { text: bxOffloadRatio() + "%" });
+  orow.appendChild(opct);
+  pane.appendChild(orow);
+  const oread = mk("div", { class: "bxbhint" });
+  const orender = () => {
+    const r = Math.max(0, Math.min(100, Number(orange.value) || 0));
+    opct.textContent = r + "%";
+    const plan = bxOffloadPlan(r);
+    const free = (u.vram_total_gb != null && u.vram_used_gb != null)
+                 ? u.vram_total_gb - u.vram_used_gb : null;
+    const rfree = (u.ram_total_gb != null && u.ram_used_gb != null)
+                  ? u.ram_total_gb - u.ram_used_gb : null;
+    let warn = "";
+    if (free != null && plan.gpu > free * 0.92 * 2 ** 30) warn += " \u00b7 over vram";
+    if (rfree != null && plan.system > rfree * 0.92 * 2 ** 30) warn += " \u00b7 over ram";
+    oread.textContent = "planned: gpu " + bxGB(plan.gpu) + " \u00b7 system "
+                        + bxGB(plan.system)
+                        + (free != null ? " \u00b7 vram free " + free.toFixed(1) + " GB" : "")
+                        + (rfree != null ? " \u00b7 ram free " + rfree.toFixed(1) + " GB" : "")
+                        + warn
+                        + (r > 0 ? " \u00b7 first layers on the gpu" : "");
+  };
+  orange.addEventListener("input", orender);
+  orange.addEventListener("change", () => {
+    BX.model = BX.model || {};
+    BX.model.cpu_offload = Math.max(0, Math.min(100, Number(orange.value) || 0));
+    bxApplyOffload("gpu");                     // one undo step, the boxes follow
+    bxtRunRender();
+  });
+  orender();
+  pane.appendChild(oread);
+  const lrow = mk("div", { class: "rrow" });
+  const loadBtn = (key, label) => {
+    const chip = mk("span", { class: "chip tiny",
+                              text: (BXRUN.loading && BXRUN.loadKey === key) ? "\u2026" : label });
+    chip.addEventListener("click", () => {
+      if (!BXRUN.loading && !BXRUN.running) bxtRunLoad();
+    });
+    lrow.appendChild(chip);
+  };
+  loadBtn("load", "load weights");
+  const off = mk("span", { class: "chip tiny", text: BXRUN.offloading ? "\u2026" : "offload" });
+  off.addEventListener("click", () => {
+    if (!BXRUN.loading && !BXRUN.running && !BXRUN.offloading) bxtRunOffload();
+  });
+  lrow.appendChild(off);
+  pane.appendChild(lrow);
+  const cuda = (a.specs || {}).device === "cuda";
+  const split = bxWeightSplit(cuda);           // where the layers sit, in bytes
+  const total = split.gpu + split.system;
+  let wtext = "no weights yet";
+  if (total > 0) {
+    const wstate = split.system === 0 ? "all on the gpu"
+                 : split.gpu === 0 ? "all on the cpu" : "mixed";
+    wtext = bxGB(total) + " \u00b7 " + wstate;
+    if (wstate === "mixed")
+      wtext += " (" + bxGB(split.gpu) + " gpu \u00b7 " + bxGB(split.system) + " cpu)";
+  }
+  pane.appendChild(mk("div", { class: "bxbhint", text: wtext }));
+  if (BXRUN.loaded) {                          // what the backend actually holds now
+    const l = BXRUN.loaded;
+    const g = l.on_gpu_bytes || 0, sy = l.on_system_bytes || 0;
+    const where = sy === 0 && g > 0 ? "all on the gpu"
+                : g === 0 && sy > 0 ? "all on the system" : "mixed";
+    pane.appendChild(mk("div", { class: "bxbhint", text:
+      "loaded: " + bxGB(l.bytes || 0) + " \u00b7 " + where
+      + " (" + bxGB(g) + " gpu \u00b7 " + bxGB(sy) + " system)"
+      + (l.cached ? " \u00b7 already warm" : "")
+      + (l.ms ? " \u00b7 " + l.ms + " ms" : "") }));
+  }
+  if (BX.model && BX.model.arc && BX.model.fidelity === "exact")
+    pane.appendChild(mk("div", { class: "bxbhint", text:
+      "researched from the repo \u00b7 exact, in the hf_arc database" }));
+  else if (BX.model && BX.model.fidelity === "exact" && BX.model.spec)
+    pane.appendChild(mk("div", { class: "bxbhint", text: "designed from the " +
+      BX.model.spec + " spec \u00b7 exact (conformance-verified)" }));
+  else if (BX.model && BX.model.fidelity === "approximate" && BX.model.arch)
+    pane.appendChild(mk("div", { class: "bxbhint", text:
+      "approximate skeleton \u2014 no verified " + BX.model.arch + " spec yet" }));
+  if (BX.model && BX.model.audit && !BX.model.audit.ok) {
+    pane.appendChild(mk("div", { class: "mhead", text: "connection audit" }));
+    for (const is of (BX.model.audit.issues || []).slice(0, 6))
+      pane.appendChild(mk("div", { class: "bxbhint",
+        text: "\u26a0 " + (is.box || "?") + ": " + is.what }));
+  }
+  if ((BXRUN.mode || "inference") !== "training") bxRunFeeds(pane);
+  if (BXRUN.warmMode && BXRUN.warmMode !== (BXRUN.mode || "inference"))
+    pane.appendChild(mk("div", { class: "bxbhint",
+      text: "the warm weights are " + BXRUN.warmMode + " \u2014 the next run "
+          + "rebuilds them for " + (BXRUN.mode || "inference") }));
+  if (BXRUN.msg) pane.appendChild(mk("div", { class: "bxbhint", text: BXRUN.msg }));
+  if (BXRUN.last) {                            // what the backend sent back
+    const r = BXRUN.last;
+    pane.appendChild(mk("div", { class: "mhead", text: "result" }));
+    pane.appendChild(mk("div", { class: "bxbhint",
+      text: "ran " + (Object.keys(r.values || {}).length +
+                      Object.keys(r.texts || {}).length) + " boxes \u00b7 "
+          + (r.ms || 0) + " ms on " + ((r.backend || "backend")
+          + (r.device ? " (" + r.device + ")" : ""))
+          + (r.loaded ? " \u00b7 using the loaded weights" : "") }));
+    if (r.probe) {                         // the training's own readout
+      const pb = [];
+      if (r.probe.loss != null) pb.push("loss " + Number(r.probe.loss).toFixed(4));
+      if (r.probe.acc != null) pb.push("acc " + Number(r.probe.acc).toFixed(3));
+      if (r.probe.tloss != null) pb.push("test " + Number(r.probe.tloss).toFixed(4));
+      if (r.probe.tacc != null) pb.push("test acc " + Number(r.probe.tacc).toFixed(3));
+      if (r.probe.reward != null) pb.push("reward " + Number(r.probe.reward).toFixed(4));
+      if (r.probe.sample) pb.push("\u201c" + r.probe.sample + "\u201d");
+      if (r.probe.reason) pb.push(r.probe.reason);
+      if (pb.length)
+        pane.appendChild(mk("div", { class: "bxbhint",
+          text: "probe \u00b7 " + pb.join(" \u00b7 ") }));
+    }
+    for (const [path, st] of Object.entries(r.values || {}).slice(0, 12)) {
+      const tail = path.split("/").pop();
+      const node = (typeof bxNode === "function") ? bxNode(tail) : null;
+      bxSpecRow(pane, (node && node.name) || tail,
+                JSON.stringify(st.shape) + " \u00b7 \u03bc " + st.mean);
+    }
+    if ((r.generated || []).length)
+      bxSpecRow(pane, "generated", r.generated.join(" "));
+    for (const [id, text] of Object.entries(r.texts || {})) {
+      const node = (typeof bxNode === "function") ? bxNode(id) : null;
+      bxSpecRow(pane, (node && node.name) || id, "\u201c" + bxClip(text, 40) + "\u201d");
+    }
+  }
+}
+function bxTrainRefresh() {                    // repaint every Run box's window, live
+  const root = bxHost();
+  if (!root || !root.querySelectorAll) return;
+  for (const el of root.querySelectorAll(".bxlogpane")) {
+    const id = el.getAttribute ? el.getAttribute("data-agent") : null;
+    const n = id ? bxNode(id) : null;
+    if (!n || n.kind !== "train") continue;
+    if (typeof document !== "undefined" && document.activeElement && el.contains &&
+        el.contains(document.activeElement)) continue;   // let a typist keep the field
+    bxTrainFill(el, n);
+  }
 }
 function bxTrainCmd(n, cmd) {
   if (typeof fetch !== "function" || !n.task_id) return;
@@ -3741,7 +3925,7 @@ function bxSetPlace(id, key) {
   bxCommit();
   return true;
 }
-function bxSetAllPlaces(key) {                 // the Run menu's two load buttons
+function bxSetAllPlaces(key) {                 // load all: the Run box's two pins
   const val = key === "system" ? "system" : "gpu";
   let count = 0;
   bxEveryBox(n => {
@@ -5393,7 +5577,7 @@ function bxtBackendRender() {
     if (a) {
       pane.appendChild(mk("div", { class: "bxbhint",
         text: "connected \u00b7 " + a.name + " \u2014 this machine runs the design. "
-            + "its specs and live usage are in Run \u25be." }));
+            + "its specs and live usage are in the Run box." }));
     } else {
       pane.appendChild(mk("div", { class: "bxbhint",
         text: "1 \u00b7 on that computer, run the agent \u2014 it contacts this app and "
@@ -5430,7 +5614,7 @@ function bxtBackendRender() {
     bxtBackendUse(pane, "remote", "use modal");
   }
 }
-// ---- the Run menu: the whole design, on the user's backend ------------------
+// ---- the Run button: the whole design, on the user's backend -----------------
 // Disabled until a backend is established — an agent connected under Local, or
 // a saved Modal key under Remote. Then Run hands the canvas to the agent over
 // the stateful control channel and shows what came back.
@@ -5506,149 +5690,24 @@ function bxtRunRender() {
   menu.innerHTML = "";
   const a = BXRUN.local && BXRUN.local.agent;
   const remote = BX_BACKEND.mode === "remote";
-  menu.appendChild(mk("div", { class: "mhead",
-                               text: remote ? "run on modal" : "run on the backend" }));
-  const state = mk("div", { class: "bxbhint" });
-  state.textContent = a
-    ? a.name + " \u00b7 " + (a.specs.gpu || a.specs.cpu || "?") + " \u00b7 "
-      + (a.specs.device || "cpu")
-    : (remote ? "remote (Modal) \u2014 the transport is not wired yet"
-              : "no backend connected");
-  menu.appendChild(state);
-  if (remote && !a) {
-    menu.appendChild(mk("div", { class: "bxbhint",
-      text: "save a Modal key in Backend \u2192 Remote; the transport is coming." }));
-    return;
-  }
+  // the menu is the run button alone now: the machine, the weights and the
+  // run's readout live in the Run box
   if (!a) {
     menu.appendChild(mk("div", { class: "bxbhint",
-      text: "connect one in Backend \u2192 Local \u2014 the agent runs on the machine "
-          + "with the GPU." }));
+      text: remote ? "remote (Modal) \u2014 the transport is not wired yet"
+                   : "no backend connected \u2014 connect one in Backend \u2192 Local" }));
+    bxTrainRefresh();
     return;
   }
-  // the machine, and what it is using right now
-  menu.appendChild(mk("div", { class: "mhead", text: "machine" }));
-  bxSpecRows(menu, a.specs || {});
-  const u = a.usage || {};
-  const s = a.specs || {};
-  bxUsageRow(menu, "ram now",
-             u.ram_used_gb != null ? u.ram_used_gb : null,
-             u.ram_total_gb != null ? u.ram_total_gb : (s.ram_gb || null),
-             u.ram_pct);
-  bxUsageRow(menu, "vram now",
-             u.vram_used_gb != null ? u.vram_used_gb : null,
-             u.vram_total_gb != null ? u.vram_total_gb : (s.vram_gb || null),
-             u.vram_pct);
-  // load the whole design's weights: set the bar, then load — the ratio
-  // writes each layer's place, there is no separate gpu/cpu button any more
-  menu.appendChild(mk("div", { class: "mhead", text: "weights" }));
-  const orow = mk("label", { class: "rf" });
-  orow.appendChild(mk("span", { text: "cpu offload" }));
-  const orange = mk("input", { type: "range", min: "0", max: "100", step: "5",
-                               class: "bxoff", value: String(bxOffloadRatio()),
-                               title: "how much of the weights stays on the system ram "
-                                      + "\u2014 the first layers stay on the gpu" });
-  orow.appendChild(orange);
-  const opct = mk("span", { text: bxOffloadRatio() + "%" });
-  orow.appendChild(opct);
-  menu.appendChild(orow);
-  const oread = mk("div", { class: "bxbhint" });
-  const orender = () => {
-    const r = Math.max(0, Math.min(100, Number(orange.value) || 0));
-    opct.textContent = r + "%";
-    const plan = bxOffloadPlan(r);
-    const free = (u.vram_total_gb != null && u.vram_used_gb != null)
-                 ? u.vram_total_gb - u.vram_used_gb : null;
-    const rfree = (u.ram_total_gb != null && u.ram_used_gb != null)
-                  ? u.ram_total_gb - u.ram_used_gb : null;
-    let warn = "";
-    if (free != null && plan.gpu > free * 0.92 * 2 ** 30) warn += " \u00b7 over vram";
-    if (rfree != null && plan.system > rfree * 0.92 * 2 ** 30) warn += " \u00b7 over ram";
-    oread.textContent = "planned: gpu " + bxGB(plan.gpu) + " \u00b7 system "
-                        + bxGB(plan.system)
-                        + (free != null ? " \u00b7 vram free " + free.toFixed(1) + " GB" : "")
-                        + (rfree != null ? " \u00b7 ram free " + rfree.toFixed(1) + " GB" : "")
-                        + warn
-                        + (r > 0 ? " \u00b7 first layers on the gpu" : "");
-  };
-  orange.addEventListener("input", orender);
-  orange.addEventListener("change", () => {
-    BX.model = BX.model || {};
-    BX.model.cpu_offload = Math.max(0, Math.min(100, Number(orange.value) || 0));
-    bxApplyOffload("gpu");                     // one undo step, the boxes follow
-    bxtRunRender();
-  });
-  orender();
-  menu.appendChild(oread);
-  const lrow = mk("div", { class: "rrow" });
-  const loadBtn = (key, label) => {
-    const chip = mk("span", { class: "chip tiny",
-                              text: (BXRUN.loading && BXRUN.loadKey === key) ? "\u2026" : label });
-    chip.addEventListener("click", () => {
-      if (!BXRUN.loading && !BXRUN.running) bxtRunLoad();
-    });
-    lrow.appendChild(chip);
-  };
-  loadBtn("load", "load weights");
-  const off = mk("span", { class: "chip tiny", text: BXRUN.offloading ? "\u2026" : "offload" });
-  off.addEventListener("click", () => {
-    if (!BXRUN.loading && !BXRUN.running && !BXRUN.offloading) bxtRunOffload();
-  });
-  lrow.appendChild(off);
-  menu.appendChild(lrow);
-  const cuda = (a.specs || {}).device === "cuda";
-  const split = bxWeightSplit(cuda);           // where the layers sit, in bytes
-  const total = split.gpu + split.system;
-  let wtext = "no weights yet";
-  if (total > 0) {
-    const state = split.system === 0 ? "all on the gpu"
-                : split.gpu === 0 ? "all on the cpu" : "mixed";
-    wtext = bxGB(total) + " \u00b7 " + state;
-    if (state === "mixed")
-      wtext += " (" + bxGB(split.gpu) + " gpu \u00b7 " + bxGB(split.system) + " cpu)";
-  }
-  menu.appendChild(mk("div", { class: "bxbhint", text: wtext }));
-  if (BXRUN.loaded) {                          // what the backend actually holds now
-    const l = BXRUN.loaded;
-    const g = l.on_gpu_bytes || 0, sy = l.on_system_bytes || 0;
-    const where = sy === 0 && g > 0 ? "all on the gpu"
-                : g === 0 && sy > 0 ? "all on the system" : "mixed";
-    menu.appendChild(mk("div", { class: "bxbhint", text:
-      "loaded: " + bxGB(l.bytes || 0) + " \u00b7 " + where
-      + " (" + bxGB(g) + " gpu \u00b7 " + bxGB(sy) + " system)"
-      + (l.cached ? " \u00b7 already warm" : "")
-      + (l.ms ? " \u00b7 " + l.ms + " ms" : "") }));
-  }
-  if (BX.model && BX.model.arc && BX.model.fidelity === "exact")
-    menu.appendChild(mk("div", { class: "bxbhint", text:
-      "researched from the repo \u00b7 exact, in the hf_arc database" }));
-  else if (BX.model && BX.model.fidelity === "exact" && BX.model.spec)
-    menu.appendChild(mk("div", { class: "bxbhint", text: "designed from the " +
-      BX.model.spec + " spec \u00b7 exact (conformance-verified)" }));
-  else if (BX.model && BX.model.fidelity === "approximate" && BX.model.arch)
-    menu.appendChild(mk("div", { class: "bxbhint", text:
-      "approximate skeleton \u2014 no verified " + BX.model.arch + " spec yet" }));
-  if (BX.model && BX.model.audit && !BX.model.audit.ok) {
-    menu.appendChild(mk("div", { class: "mhead", text: "connection audit" }));
-    for (const is of (BX.model.audit.issues || []).slice(0, 6))
-      menu.appendChild(mk("div", { class: "bxbhint",
-        text: "\u26a0 " + (is.box || "?") + ": " + is.what }));
-  }
-  // the Run box: the mode switch and the training's home. It is deployed
-  // from this menu (not the palette), so it is offered in every mode,
-  // including the default inference, where a Run box is what lets the
-  // design flip over to training. There is only ever one, and it lives
-  // at the top level; a nested box never holds one.
-  menu.appendChild(mk("div", { class: "mhead", text: "run box" }));
   const hub = bxTrainAnywhere();
   if (BX.up) {
     menu.appendChild(mk("div", { class: "bxbhint",
-      text: hub ? "the Run box lives at the top level \u2014 the full training runs from there"
-                : "the Run box lives at the top level \u2014 go back out to add it" }));
+      text: hub ? "the whole design runs from the top level \u2014 the Run box up there holds the machine and the weights"
+                : "the whole design runs from the top level \u2014 go back out to add its Run box" }));
   } else if (!hub) {
     menu.appendChild(mk("div", { class: "bxbhint",
-      text: "no Run box on the canvas \u2014 it holds the mode switch, the "
-           + "data and the signal, and it's where the full training runs" }));
+      text: "no Run box on the canvas \u2014 add one for the mode switch, the "
+           + "data and the run's settings" }));
     const row = mk("div", { class: "rrow" });
     const b = mk("span", { class: "chip tiny", text: "add a Run box" });
     b.addEventListener("click", () => {
@@ -5658,65 +5717,30 @@ function bxtRunRender() {
     });
     row.appendChild(b);
     menu.appendChild(row);
-  } else
-    menu.appendChild(mk("div", { class: "bxbhint",
-      text: "the mode switch and the training's setup live in the Run box "
-           + "\u2014 the run here is one step; the full training starts there" }));
-  if ((BXRUN.mode || "inference") !== "training") bxRunFeeds(menu);
-  if (BXRUN.warmMode && BXRUN.warmMode !== (BXRUN.mode || "inference"))
-    menu.appendChild(mk("div", { class: "bxbhint",
-      text: "the warm weights are " + BXRUN.warmMode + " \u2014 the next run "
-          + "rebuilds them for " + (BXRUN.mode || "inference") }));
+  }
   const row = mk("div", { class: "rrow" });
-  const go = mk("span", { class: "chip tiny",
+  const can = !BX.up;
+  const go = mk("span", { class: "chip tiny" + (can ? "" : " off"),
                           text: BXRUN.running ? "running\u2026"
+                               : BXRUN.loading ? "loading\u2026"
                                : (BXRUN.mode || "inference") === "training"
                                  ? "train the design"
                                  : "run the design" });
-  go.addEventListener("click", () => { if (!BXRUN.running && !BXRUN.loading) bxtRunGo(); });
+  if (can)
+    go.addEventListener("click", () => { if (!BXRUN.running && !BXRUN.loading) bxtRunGo(); });
+  else
+    go.title = "go back out to the top level first";
   row.appendChild(go);
   menu.appendChild(row);
-  if (BXRUN.msg) menu.appendChild(mk("div", { class: "bxbhint", text: BXRUN.msg }));
-  if (BXRUN.last) {                            // what the backend sent back
-    const r = BXRUN.last;
-    menu.appendChild(mk("div", { class: "mhead", text: "result" }));
-    menu.appendChild(mk("div", { class: "bxbhint",
-      text: "ran " + (Object.keys(r.values || {}).length +
-                      Object.keys(r.texts || {}).length) + " boxes \u00b7 "
-          + (r.ms || 0) + " ms on " + ((r.backend || "backend")
-          + (r.device ? " (" + r.device + ")" : ""))
-          + (r.loaded ? " \u00b7 using the loaded weights" : "") }));
-    if (r.probe) {                         // the training's own readout
-      const pb = [];
-      if (r.probe.loss != null) pb.push("loss " + Number(r.probe.loss).toFixed(4));
-      if (r.probe.acc != null) pb.push("acc " + Number(r.probe.acc).toFixed(3));
-      if (r.probe.tloss != null) pb.push("test " + Number(r.probe.tloss).toFixed(4));
-      if (r.probe.tacc != null) pb.push("test acc " + Number(r.probe.tacc).toFixed(3));
-      if (r.probe.reward != null) pb.push("reward " + Number(r.probe.reward).toFixed(4));
-      if (r.probe.sample) pb.push("\u201c" + r.probe.sample + "\u201d");
-      if (r.probe.reason) pb.push(r.probe.reason);
-      if (pb.length)
-        menu.appendChild(mk("div", { class: "bxbhint",
-          text: "probe \u00b7 " + pb.join(" \u00b7 ") }));
-    }
-    for (const [path, st] of Object.entries(r.values || {}).slice(0, 12)) {
-      const tail = path.split("/").pop();
-      const node = (typeof bxNode === "function") ? bxNode(tail) : null;
-      bxSpecRow(menu, (node && node.name) || tail,
-                JSON.stringify(st.shape) + " \u00b7 \u03bc " + st.mean);
-    }
-    if ((r.generated || []).length)
-      bxSpecRow(menu, "generated", r.generated.join(" "));
-    for (const [id, text] of Object.entries(r.texts || {})) {
-      const node = (typeof bxNode === "function") ? bxNode(id) : null;
-      bxSpecRow(menu, (node && node.name) || id, "\u201c" + bxClip(text, 40) + "\u201d");
-    }
-  }
+  if (!hub && BXRUN.msg)                       // no Run box to read it in: the
+    menu.appendChild(mk("div", { class: "bxbhint", text: BXRUN.msg }));   // button says it
+  bxTrainRefresh();
 }
-function bxRunFeeds(menu) {                       // inference: what the model reads
+
+function bxRunFeeds(pane) {                       // inference: what the model reads
   const ins = BX.nodes.filter(n => n.kind === "input");
   if (ins.length) {
-    menu.appendChild(mk("div", { class: "mhead", text: "inputs" }));
+    pane.appendChild(mk("div", { class: "mhead", text: "inputs" }));
     for (const n of ins) {
       if (n.input_mode === "text") {
         const lab = mk("label", { class: "rf" });
@@ -5728,7 +5752,7 @@ function bxRunFeeds(menu) {                       // inference: what the model r
           (BXRUN.texts = BXRUN.texts || {})[n.id] = inp.value;
         });
         lab.appendChild(inp);
-        menu.appendChild(lab);
+        pane.appendChild(lab);
         continue;
       }
       if (n.input_mode === "python" || n.input_mode === "random") {
@@ -5737,7 +5761,7 @@ function bxRunFeeds(menu) {                       // inference: what the model r
         lab.appendChild(mk("span", { class: "wmode",
           text: n.input_mode === "python" ? "python"
                 : "random " + (n.input_rows || 1) + "\u00d7" + (n.dout == null ? "?" : n.dout) }));
-        menu.appendChild(lab);
+        pane.appendChild(lab);
         continue;
       }
       const lab = mk("label", { class: "rf" });
@@ -5746,13 +5770,13 @@ function bxRunFeeds(menu) {                       // inference: what the model r
                                 value: BXRUN.inputs[n.id] != null ? BXRUN.inputs[n.id] : "1" });
       inp.addEventListener("input", () => { BXRUN.inputs[n.id] = inp.value; });
       lab.appendChild(inp);
-      menu.appendChild(lab);
+      pane.appendChild(lab);
     }
   }
   const toks = BX.nodes.filter(n => (n.kind === "tokenize" || n.kind === "hf") &&
                                     !BX.edges.some(e => e.to === n.id));   // wired: fed upstream
   if (toks.length) {
-    menu.appendChild(mk("div", { class: "mhead", text: "text" }));
+    pane.appendChild(mk("div", { class: "mhead", text: "text" }));
     for (const n of toks) {
       const lab = mk("label", { class: "rf" });
       lab.appendChild(mk("span", { text: bxClip(n.name ||
@@ -5766,7 +5790,7 @@ function bxRunFeeds(menu) {                       // inference: what the model r
         (BXRUN.texts = BXRUN.texts || {})[n.id] = inp.value;
       });
       lab.appendChild(inp);
-      menu.appendChild(lab);
+      pane.appendChild(lab);
     }
     const g1 = mk("label", { class: "rf" });     // how far the model writes on
     g1.appendChild(mk("span", { text: "tokens" }));
@@ -5785,9 +5809,9 @@ function bxRunFeeds(menu) {                       // inference: what the model r
       BXRUN.temp = isFinite(t) ? t : 0;
     });
     g2.appendChild(ti);
-    menu.appendChild(g1);
-    menu.appendChild(g2);
-    menu.appendChild(mk("div", { class: "bxbhint",
+    pane.appendChild(g1);
+    pane.appendChild(g2);
+    pane.appendChild(mk("div", { class: "bxbhint",
       text: "0 tokens is one forward; temperature 0 picks the most likely id" }));
   }
 }
@@ -6178,7 +6202,7 @@ function fetchBackend() {                      // the stateful channel, from the
       BXRUN.local = d.local;
       bxtRunRefresh();
       if ($("bxtBackendMenu") && !$("bxtBackendMenu").hidden) bxtBackendRender();
-      if ($("bxtRunMenu") && !$("bxtRunMenu").hidden) bxtRunRender();
+      bxtRunRender();                      // the menu and the Run box, with fresh numbers
       if ($("bxtVramMenu") && !$("bxtVramMenu").hidden) bxRenderEstimate();
     })
     .catch(() => {});
@@ -6528,6 +6552,8 @@ function bxTaskLogFetch(id, cb) {
 // foreignObject, so the stream scrolls and the buttons work while the box
 // itself keeps its place among the other boxes.
 function bxBehaveInside(pane) {               // the canvas must not steal the pane
+  if (pane._behaved) return;                  // one set of stops per pane, however
+  pane._behaved = true;                       // many times its content is refilled
   const stop = (e) => { if (e && e.stopPropagation) e.stopPropagation(); };
   pane.addEventListener("mousedown", (e) => { stop(e); });
   pane.addEventListener("wheel", (e) => { stop(e); });

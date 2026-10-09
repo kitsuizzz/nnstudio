@@ -217,6 +217,7 @@ globalThis.__t = {
   bxTasksFetch, bxTaskLogFetch, bxTasksApply, bxLogApply, bxLogState,
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
+  bxRunFeeds,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
   bxTableRead, bxTableWrite, bxTableType, bxTableSetCell, bxTableRenameCol,
   bxTableInsertCol, bxTableDeleteCol, bxTableAddRow, bxTableDeleteRow,
@@ -672,8 +673,6 @@ check("the Run menu: dark until a backend is established, then it runs", () => {
   const m = getEl("bxtRunMenu");
   const state = () => m.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
   const chips = () => m.querySelectorAll(".chip").map(e => e.textContent);
-  const specsIn = (root) => root.querySelectorAll(".bxbspec")
-    .map(r => r.children.map(c => c.textContent).join(" ")).join(" | ");
   __t.BX_BACKEND.mode = "local";
   __t.BX_BACKEND.key = "";
   __t.bxtRunRefresh();
@@ -692,28 +691,89 @@ check("the Run menu: dark until a backend is established, then it runs", () => {
   __t.bxtRunRefresh();
   ok(String(btn.className).indexOf("off") < 0, "an agent lights Run up");
   ok(__t.bxtRunToggle() === true && !m.hidden, "…and it opens");
-  ok(state().indexOf("gpu-box") >= 0 && state().indexOf("RTX 5090") >= 0 &&
-     state().indexOf("cuda") >= 0, "…showing the backend machine");
-  const specs = specsIn(m);
+  ok(chips().indexOf("run the design") >= 0, "…and the run action, alone");
+  ok(m.querySelectorAll(".bxbspec").length === 0 && state().indexOf("gpu-box") < 0,
+     "…the machine's specs are in the Run box, not here");
+  ok(chips().indexOf("add a Run box") >= 0, "…offering the Run box the canvas lacks");
+  // bad input text is refused before anything is sent
+  const inNode = __t.BX.nodes.find(n => n.kind === "input");
+  if (inNode) {
+    __t.BXRUN.inputs[inNode.id] = "not numbers";
+    __t.bxtRunGo();
+    ok(__t.BXRUN.msg.indexOf("needs numbers") >= 0, "an input that is not numbers is refused");
+    __t.BXRUN.inputs = {};
+    __t.BXRUN.msg = "";
+    __t.BXRUN.last = null;
+    __t.bxtRunRender();
+  }
+  // Backend -> Local keeps the connection, and points at Run for the specs
+  __t.bxtRunToggle();
+  __t.bxtBackendToggle();                       // closes Run, opens Backend
+  const bm = getEl("bxtBackendMenu");
+  const heads = () => bm.children.filter(c => c.className === "bxtcat");
+  const firstOpen = () => ((heads()[0].querySelectorAll(".chev")[0] || {}).textContent === "\u25be");
+  if (!firstOpen()) heads()[0].click();
+  const pane = bm.children.find(c => c.className === "bxbpane");
+  const hint = pane.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
+  ok(hint.indexOf("connected") >= 0 && hint.indexOf("live usage are in the Run box") >= 0,
+     "Backend → Local keeps the connection and points at the Run box");
+  ok(pane.querySelectorAll(".bxbspec").length === 0, "…with the specs moved out");
+  __t.bxtBackendToggle();
+  // the agent leaves: the light goes out
+  __t.BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
+                loaded: null, loading: false, loadKey: null, msg: "", running: false };
+  __t.bxtRunRefresh();
+  ok(String(btn.className).indexOf("off") >= 0, "the agent leaves — Run goes dark");
+  // a saved Modal key is enough to enable it; the menu says what is missing
+  __t.BX_BACKEND.mode = "remote";
+  __t.BX_BACKEND.key = "ak-test";
+  __t.bxtRunRefresh();
+  ok(__t.bxtRunEnabled() === true, "a saved Modal key also establishes a backend");
+  ok(__t.bxtRunToggle() === true && !m.hidden, "…and Run opens");
+  ok(state().indexOf("not wired yet") >= 0, "…saying the Modal transport is not wired yet");
+  __t.bxtRunToggle();
+  __t.BX_BACKEND.mode = "local";
+  __t.BX_BACKEND.key = "";
+  __t.bxtRunRefresh();
+});
+
+check("the Run box carries the machine, the weights and the run's readout", () => {
+  const tr = __t.bxAdd("train", 0, 0, {});
+  ok(!!tr, "the Run box exists to carry them");
+  const fill = () => { const d = document.createElement("div"); __t.bxTrainFill(d, tr); return d; };
+  const bstate = () => fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
+  const bchips = () => fill().querySelectorAll(".chip").map(e => e.textContent);
+  const specsIn = (root) => root.querySelectorAll(".bxbspec")
+    .map(r => r.children.map(c => c.textContent).join(" ")).join(" | ");
+  __t.BX_BACKEND.mode = "local";
+  __t.BX_BACKEND.key = "";
+  __t.BXRUN = { local: { connected: true, agent: { name: "gpu-box", remote: "127.0.0.1:1",
+      since: 1, last_seen: 1, specs: { name: "gpu-box", os: "Linux-test", cpu: "Test CPU",
+      cores: 16, ram_gb: 64, gpu: "NVIDIA RTX 5090", vram_gb: 32, device: "cuda",
+      cuda: true, torch: "2.13.0" },
+      usage: { ram_used_gb: 14.2, ram_total_gb: 64, ram_pct: 22,
+               vram_used_gb: 6.1, vram_total_gb: 32, vram_pct: 19 } } },
+      inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
+      msg: "", running: false };
+  ok(bstate().indexOf("gpu-box") >= 0 && bstate().indexOf("RTX 5090") >= 0 &&
+     bstate().indexOf("cuda") >= 0, "it shows the backend machine");
+  const specs = specsIn(fill());
   ok(specs.indexOf("Test CPU") >= 0 && specs.indexOf("16 cores") >= 0 &&
      specs.indexOf("RTX 5090") >= 0, "…the pc's specs, moved here from Backend");
   ok(specs.indexOf("14.2 / 64.0 GB") >= 0 && specs.indexOf("22%") >= 0,
      "…with current ram usage");
   ok(specs.indexOf("6.1 / 32.0 GB") >= 0 && specs.indexOf("19%") >= 0,
      "…and current vram usage");
-  ok(chips().some(c => c.indexOf("run the design") >= 0), "…and the run action");
-  ok(chips().indexOf("load weights") >= 0 && chips().indexOf("load all on") < 0,
+  ok(bchips().indexOf("load weights") >= 0 && bchips().indexOf("load all on") < 0,
      "…one load button — the ratio bar decides where it goes");
-  ok(chips().indexOf("offload") >= 0, "…and the offload button that frees the backend");
+  ok(bchips().indexOf("offload") >= 0, "…and the offload button that frees the backend");
   // what the backend actually holds, and its going away again
   __t.BXRUN.loaded = { bytes: 2 * 1024 ** 3, on_gpu_bytes: 1024 ** 3,
                        on_system_bytes: 1024 ** 3, params: 500, ms: 12 };
-  __t.bxtRunRender();
-  ok(state().indexOf("loaded: 2.00 GB") >= 0 && state().indexOf("mixed") >= 0,
+  ok(bstate().indexOf("loaded: 2.00 GB") >= 0 && bstate().indexOf("mixed") >= 0,
      "…the report says what the backend holds");
   __t.BXRUN.loaded = null;
-  __t.bxtRunRender();
-  ok(state().indexOf("loaded:") < 0, "…and offload makes it go");
+  ok(bstate().indexOf("loaded:") < 0, "…and offload makes it go");
   // a layer's placement: the right-click menu, the card mark, and the JSON
   let layer = __t.BX.nodes.find(n => n.kind === "layer");
   const madeLayer = !layer;
@@ -735,7 +795,7 @@ check("the Run menu: dark until a backend is established, then it runs", () => {
   __t.bxSetPlace(layer.id, "gpu");
   ok(__t.bxCard(layer).querySelectorAll(".dplace")
        .map(e => e.textContent).join("") === "gpu", "…and gpu the other way");
-  // load full weights, both ways
+  // the weights line: bytes used, and where the layers sit — gpu, cpu or mixed
   let weightCount = 0;
   __t.bxEveryBox(n => { if (__t.bxWeightedBox(n)) weightCount++; });
   ok(weightCount > 0, "the design has weight boxes");
@@ -748,19 +808,15 @@ check("the Run menu: dark until a backend is established, then it runs", () => {
   let allGpu = true;
   __t.bxEveryBox(n => { if (__t.bxWeightedBox(n) && n.place !== "gpu") allGpu = false; });
   ok(allGpu, "…all of them on the gpu");
-  // the weights line: bytes used, and where the layers sit — gpu, cpu or mixed
   const split = __t.bxWeightSplit(true);
   ok(split.gpu > 0 && split.system === 0, "the split counts bytes, not boxes");
-  __t.bxtRunRender();
-  ok(state().indexOf("all on the gpu") >= 0 && state().indexOf(" B") >= 0,
-    "the weights line: bytes and all on the gpu");
+  ok(bstate().indexOf("all on the gpu") >= 0 && bstate().indexOf(" B") >= 0,
+     "the weights line: bytes and all on the gpu");
   __t.bxSetAllPlaces("system");
-  __t.bxtRunRender();
-  ok(state().indexOf("all on the cpu") >= 0, "…all on the cpu after the other button");
+  ok(bstate().indexOf("all on the cpu") >= 0, "…all on the cpu after the other button");
   __t.bxSetPlace(layer.id, "gpu");
-  __t.bxtRunRender();
-  ok(state().indexOf("mixed") >= 0 && state().indexOf("cpu)") >= 0,
-    "…and mixed when one layer sits on the cpu");
+  ok(bstate().indexOf("mixed") >= 0 && bstate().indexOf("cpu)") >= 0,
+     "…and mixed when one layer sits on the cpu");
   __t.bxEveryBox(n => { delete n.place; });    // leave the design as it was found
   if (extra) __t.bxRemove(extra.id);
   if (madeLayer) __t.bxRemove(layer.id);
@@ -770,51 +826,13 @@ check("the Run menu: dark until a backend is established, then it runs", () => {
                                o1: { shape: [3], mean: 0.5 } },
                      outputs: [{ name: "y", stats: { shape: [3], mean: 0.5 } }],
                      generated: [] };
-  __t.bxtRunRender();
-  ok(state().indexOf("ran 3 boxes") >= 0 && state().indexOf("12 ms") >= 0 &&
-     state().indexOf("gpu-box") >= 0, "…and the result of a run");
-  ok(state().indexOf("using the loaded weights") >= 0, "…saying it reused the load");
-  // bad input text is refused before anything is sent
-  const inNode = __t.BX.nodes.find(n => n.kind === "input");
-  if (inNode) {
-    __t.BXRUN.inputs[inNode.id] = "not numbers";
-    __t.bxtRunGo();
-    ok(__t.BXRUN.msg.indexOf("needs numbers") >= 0, "an input that is not numbers is refused");
-    __t.BXRUN.inputs = {};
-    __t.BXRUN.msg = "";
-    __t.BXRUN.last = null;
-    __t.bxtRunRender();
-  }
-  // Backend -> Local keeps the connection, and points at Run for the specs
-  __t.bxtRunToggle();
-  __t.bxtBackendToggle();                       // closes Run, opens Backend
-  const bm = getEl("bxtBackendMenu");
-  const heads = () => bm.children.filter(c => c.className === "bxtcat");
-  const firstOpen = () => ((heads()[0].querySelectorAll(".chev")[0] || {}).textContent === "\u25be");
-  if (!firstOpen()) heads()[0].click();
-  const pane = bm.children.find(c => c.className === "bxbpane");
-  const hint = pane.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
-  ok(hint.indexOf("connected") >= 0 && hint.indexOf("live usage are in Run") >= 0,
-     "Backend → Local keeps the connection and points at Run");
-  ok(pane.querySelectorAll(".bxbspec").length === 0, "…with the specs moved out");
-  __t.bxtBackendToggle();
-  // the agent leaves: the light goes out
-  __t.BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
-                loaded: null, loading: false, loadKey: null, msg: "", running: false };
-  __t.bxtRunRefresh();
-  ok(String(btn.className).indexOf("off") >= 0, "the agent leaves — Run goes dark");
-  // a saved Modal key is enough to enable it; the menu says what is missing
-  __t.BX_BACKEND.mode = "remote";
-  __t.BX_BACKEND.key = "ak-test";
-  __t.bxtRunRefresh();
-  ok(__t.bxtRunEnabled() === true, "a saved Modal key also establishes a backend");
-  ok(__t.bxtRunToggle() === true && !m.hidden, "…and Run opens");
-  ok(state().indexOf("not wired yet") >= 0, "…saying the Modal transport is not wired yet");
-  __t.bxtRunToggle();
-  __t.BX_BACKEND.mode = "local";
-  __t.BX_BACKEND.key = "";
-  __t.bxtRunRefresh();
+  ok(bstate().indexOf("ran 3 boxes") >= 0 && bstate().indexOf("12 ms") >= 0 &&
+     bstate().indexOf("gpu-box") >= 0, "…and the result of a run");
+  ok(bstate().indexOf("using the loaded weights") >= 0, "…saying it reused the load");
+  __t.BXRUN.last = null;
+  __t.bxRemove(tr.id);
 });
+
 
 check("the Run menu deploys the Run box when the canvas has none", () => {
   const m = getEl("bxtRunMenu");
@@ -846,7 +864,8 @@ check("the Run menu deploys the Run box when the canvas has none", () => {
   // re-open: the offer is gone, and the menu points at the box for the mode switch
   ok(__t.bxtRunToggle() === true && !m.hidden, "…and it opens again");
   ok(chips().indexOf("add a Run box") < 0, "…the offer is gone once a Run box exists");
-  ok(state().indexOf("live in the Run box") >= 0, "…pointing at the box for the mode switch");
+  ok(chips().length === 1 && chips()[0] === "run the design" && state() === "",
+     "…and the menu is the run button alone");
   // leave the canvas and the backend as the next block found them
   __t.bxtRunToggle();
   __t.bxRemove(hub.id);
@@ -919,12 +938,10 @@ check("the matrix input: python code or seeded noise, not a run field", () => {
       agent: { name: "pc", specs: { device: "cpu", cpu: "x" } } },
       inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
       msg: "", running: false };
-  __t.bxtRunRender();
-  const rm = getEl("bxtRunMenu");
-  const modes = () => rm.querySelectorAll(".wmode").map(e => e.textContent).join(" | ");
-  ok(modes().indexOf("python") >= 0, "the Run menu shows python for it");
+  const feeds = () => { const d = document.createElement("div"); __t.bxRunFeeds(d); return d; };
+  const modes = () => feeds().querySelectorAll(".wmode").map(e => e.textContent).join(" | ");
+  ok(modes().indexOf("python") >= 0, "the Run box shows python for it");
   __t.bxConfigure(i.id, { input_mode: "random", input_rows: 2, dout: 4 });
-  __t.bxtRunRender();
   ok(modes().indexOf("random 2\u00d74") >= 0, "…and random with its shape");
   ok(__t.bxCard(i).querySelectorAll(".dshape").map(e => e.textContent).join("")
        .indexOf("rand") >= 0, "…and the card says rand");
@@ -999,21 +1016,19 @@ check("the tokenizer and the de-tokenizer: text in, ids through, text out", () =
   __t.BXRUN = { local: { connected: true, agent: { name: "pc", specs: { device: "cuda" } } },
                 inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
                 msg: "", running: false };
-  __t.bxtRunRender();
-  const rm = getEl("bxtRunMenu");
-  ok(rm.querySelectorAll(".bxbin").some(f => f.placeholder === "text to tokenize"),
-    "the Run menu asks for text");
-  ok(rm.querySelectorAll(".mhead").map(e => e.textContent).indexOf("text") >= 0,
+  const feeds = () => { const d = document.createElement("div"); __t.bxRunFeeds(d); return d; };
+  ok(feeds().querySelectorAll(".bxbin").some(f => f.placeholder === "text to tokenize"),
+    "the Run box asks for text");
+  ok(feeds().querySelectorAll(".mhead").map(e => e.textContent).indexOf("text") >= 0,
     "…under a text heading");
   // an input box in text mode feeds it over the wire — and then it asks for nothing
   const ti = __t.bxAdd("input", 0, 0, { input_mode: "text", text: "hello" });
   eql(__t.bxShape(ti), "text", "a text input says text on the card");
   eql(__t.bxJSONNode(ti).text, "hello", "…and the design carries the text");
   eql(__t.bxConnect(ti.id, t.id), null, "the text input wires into the tokenizer");
-  __t.bxtRunRender();
-  ok(!rm.querySelectorAll(".bxbin").some(f => f.placeholder === "text to tokenize"),
+  ok(!feeds().querySelectorAll(".bxbin").some(f => f.placeholder === "text to tokenize"),
     "a wired tokenizer asks for no text of its own");
-  ok(rm.querySelectorAll(".bxbin").some(f => f.placeholder === "text"),
+  ok(feeds().querySelectorAll(".bxbin").some(f => f.placeholder === "text"),
     "the input's text field is there instead");
   __t.bxRemoveEdge(ti.id, t.id);
   __t.bxRemove(ti.id);
@@ -1050,14 +1065,14 @@ check("the huggingface model box: a repo in, the next token's text out", () => {
   ok(getEl("bxmenu").children[0].children.map(c => c.textContent).join(" | ")
        .indexOf("temperature") >= 0, "…and its form asks for the prompt and temperature");
   __t.bxMenuClose();
-  // the Run menu asks for its prompt, and the run sends it as a feed
+  // the Run box asks for its prompt, and the run sends it as a feed
   __t.BXRUN = { local: { connected: true, agent: { name: "pc", specs: {} } },
                 inputs: {}, texts: {}, last: null, loaded: null, loading: false,
                 loadKey: null, msg: "", running: false };
-  __t.bxtRunRender();
-  const rm = getEl("bxtRunMenu");
-  ok(rm.querySelectorAll(".bxbin").some(f => f.placeholder === "the text to continue"),
-    "the Run menu asks for the text to continue");
+  const pane = document.createElement("div");
+  __t.bxRunFeeds(pane);
+  ok(pane.querySelectorAll(".bxbin").some(f => f.placeholder === "the text to continue"),
+    "the Run box asks for the text to continue");
   const realFetch = global.fetch;
   let sent = null;
   global.fetch = async (url, opts) => {
@@ -2598,11 +2613,11 @@ check("a served text pipeline lands whole, prompt to de-tokenizer", () => {
   __t.BXRUN = { local: { connected: true, agent: { name: "pc", specs: {} } },
                 inputs: {}, texts: {}, last: null, loaded: null, loading: false,
                 loadKey: null, msg: "", running: false, gen: 0, temp: 0 };
-  __t.bxtRunRender();
-  const rm = getEl("bxtRunMenu");
-  ok(rm.querySelectorAll(".bxbin").some(f => f.placeholder === "text to tokenize"),
-    "the Run menu asks for the prompt");
-  ok(rm.querySelectorAll(".bxbin").some(f => f.type === "number"),
+  const pane = document.createElement("div");
+  __t.bxRunFeeds(pane);
+  ok(pane.querySelectorAll(".bxbin").some(f => f.placeholder === "text to tokenize"),
+    "the Run box asks for the prompt");
+  ok(pane.querySelectorAll(".bxbin").some(f => f.type === "number"),
     "…and offers tokens and temperature");
   __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
   __t.bxSeedBlank();
@@ -3561,9 +3576,11 @@ check("the Run box: the hub of the training — data, columns, signal, parameter
   eql([back.lr, back.batch, back.steps], [0.01, 8, 40], "…and so do the parameters");
   // the window opens with the mode switch: it decides what the Run button does
   const tp = document.createElement("div");
+  __t.BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
+                loaded: null, loading: false, loadKey: null, msg: "", running: false };
   __t.bxTrainFill(tp, tr);
-  eql(tp.querySelectorAll(".mhead").map(e => e.textContent), ["mode"],
-     "the Run box's window opens with the mode switch");
+  eql(tp.querySelectorAll(".mhead").map(e => e.textContent), ["mode", "backend"],
+     "the Run box's window opens with the mode switch, then the backend");
   const segs = tp.querySelectorAll(".mseg");
   eql(segs.map(e => e.textContent), ["inference", "training"],
      "…inference or training");
