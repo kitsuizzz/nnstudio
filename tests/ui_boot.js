@@ -1389,10 +1389,13 @@ check("the input box edits its data right on the canvas", () => {
   __t.bxInputExpand(i);
   eql([i.box.w, i.box.h], [420, 280], "the editor expands to the bigger size");
   eql(__t.bxJSONNodeFrom(__t.bxJSONNode(i)).box.w, 420, "…and the size travels with the design");
-  // after a run, the box shows what it carried
+  // a run's value never paints over the editor
   __t.bxRunValues = { [i.id]: { shape: [3], peek: [4, 5, 6], mean: 5 } };
-  ok(fill().querySelectorAll(".panehint").map(e => e.textContent).join("|")
-       .indexOf("4, 5, 6") >= 0, "…and the box shows the data a run left on it");
+  __t.bxRender();
+  ok(__t.bxCard(i).querySelectorAll(".dstate").length === 0,
+     "…and the run's value does not draw over the editor");
+  ok(fill().querySelectorAll(".panehint").length === 0,
+     "…nor as text inside it");
   __t.bxRunValues = {};
   __t.bxRemove(i.id);
 });
@@ -1441,23 +1444,23 @@ check("re-placing a box keeps the last run's data (an edit still clears it)", ()
   __t.bxRemove(o.id);
 });
 
-check("input and output show the state of their data after a run", () => {
+check("the data boxes show the state of their data after a run", () => {
   const i = __t.bxAdd("input", 0, 0, { dout: 4 });
   const o = __t.bxAdd("output", 0, 200, { din: 4 });
   __t.bxConnect(i.id, o.id);
   const st = (n) => __t.bxCard(n).querySelectorAll(".dstate").map(e => e.textContent).join("");
   __t.bxDataState = { [i.id]: { shape: [4], mean: 2.5, min: 1, max: 4, peek: [1, 2, 3, 4] },
                       [o.id]: { shape: [2, 2], mean: 0.5, peek: [0.1, 0.2, 0.3, 0.4] } };
-  ok(st(i) === "1, 2, 3, 4", "the input shows its content");
-  ok(st(o) === "0.1, 0.2, 0.3, 0.4", "…and the output its own");
-  __t.bxDataState = { [i.id]: { text: "cab" } };
-  ok(st(i) === "\u201ccab\u201d", "…and a text state is quoted");
-  __t.bxDataState = { [i.id]: { shape: [1], scalar: 15496, peek: [15496] } };
-  ok(st(i) === "15496", "a picked id is its number");
-  __t.bxDataState = { [i.id]: { shape: [200], mean: 0.5, peek: [1, 2, 3, 4, 5, 6, 7, 8] } };
-  ok(st(i).indexOf("\u2026") >= 0, "a longer tensor trails off: " + st(i));
-  __t.bxDataState = { [i.id]: { shape: [4], mean: 2.5 } };      // no peek: the summary
-  ok(st(i).indexOf("[4] \u00b7 \u03bc 2.5") >= 0, "…and without content it falls back to the summary");
+  ok(st(i) === "", "the input's editor stays clean — no data painted over it");
+  ok(st(o) === "0.1, 0.2, 0.3, 0.4", "…and the output shows its own");
+  __t.bxDataState = { [o.id]: { text: "cab" } };
+  ok(st(o) === "\u201ccab\u201d", "…and a text state is quoted");
+  __t.bxDataState = { [o.id]: { shape: [1], scalar: 15496, peek: [15496] } };
+  ok(st(o) === "15496", "a picked id is its number");
+  __t.bxDataState = { [o.id]: { shape: [200], mean: 0.5, peek: [1, 2, 3, 4, 5, 6, 7, 8] } };
+  ok(st(o).indexOf("\u2026") >= 0, "a longer tensor trails off: " + st(o));
+  __t.bxDataState = { [o.id]: { shape: [4], mean: 2.5 } };      // no peek: the summary
+  ok(st(o).indexOf("[4] \u00b7 \u03bc 2.5") >= 0, "…and without content it falls back to the summary");
   __t.bxCommit();
   ok(Object.keys(__t.bxDataState).length === 0, "an edit clears the state");
   __t.bxRemove(i.id);

@@ -3602,9 +3602,6 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
   bxBehaveInside(pane);
   const head = mk("div", { class: "bxlogrow" });
   head.appendChild(mk("b", { text: "input" }));
-  const st = bxNodeState(n);
-  if (st) head.appendChild(mk("span", { class: "panehint",
-                                        text: "ran \u00b7 " + (bxStateText(st) || "?") }));
   pane.appendChild(head);
   const mrow = mk("label", { class: "rf" });
   mrow.appendChild(mk("span", { text: "data" }));
@@ -4872,6 +4869,10 @@ function bxStateText(st) {                     // the data a box carries, as con
     return bxNumText(st.mean);
   return "[" + sh.join("\u00d7") + "] \u00b7 \u03bc " + (st.mean == null ? "?" : bxNumText(st.mean));
 }
+function bxHasPane(n) {                        // a box whose card holds an editor
+  return !!n && (n.kind === "agent" || n.kind === "train" ||
+                 n.kind === "dataset" || n.kind === "input");
+}
 function bxCard(n) {
   const preview = String(n.id || "").indexOf("pal-") === 0;   // palette chrome
   const off = preview ? !!n.off : bxBoxOff(n);
@@ -5051,8 +5052,7 @@ function bxCard(n) {
     g.appendChild(svgText(cx, cy + 4,
                           Math.round(100 * bxTaskFraction(task)) + "%", "dringnum"));
   }
-  if ((n.kind === "agent" || n.kind === "train" || n.kind === "dataset" ||
-       n.kind === "input") && !preview) {
+  if ((bxHasPane(n)) && !preview) {
     const fo = svg("foreignObject",       // the display lives inside the card
                    { x: n.x + 5, y: n.y + 40,
                      width: Math.max(80, w - 10),
@@ -5073,8 +5073,9 @@ function bxCard(n) {
     g.appendChild(svgText(n.x + 9, n.y + 48,
                           bxClip(bxTaskProgress(task) || bxTaskChip(task), 24),
                           "dstate rev"));
-  else if (stateText)
+  else if (stateText && !bxHasPane(n))         // a pane box shows its state in its
     g.appendChild(svgText(n.x + 9, n.y + 48, bxClip(stateText, 24), "dstate"));
+                                               // own editor — never over it
   const dot = (at, dir, i, size) => {
     const dead = off || (dir === "out" && bxPortOff(n, "out", i));
     const mark = dead ? " doff" : (dir === "in" && starved.has(i) ? " dstarved" : "");
