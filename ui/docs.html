@@ -229,7 +229,11 @@
         has its own <b>Execute | Spec</b> menu: <b>Execute</b> holds just the
         <b>mode</b> switch and its <b>run the design</b> chip; <b>Spec</b> holds
         the backend machine, its live usage and
-        how the weights sit on it. The mode decides how the
+        how the weights sit on it. Pressing <b>run the design</b> first verifies
+        the dataflow in the page — a wired path from an input to an output — then
+        the backend computes it; the data lights the wires as it goes, and each
+        data box shows what it received (the <span class="pill">output</span>
+        shows its own). The mode decides how the
         weights are held: <b>inference</b> keeps no gradients (the lightest run —
         dataset boxes stay idle); <b>training</b> lets the non-frozen weights keep
         gradients, and the run focuses on the <span class="pill">Run</span> box —
@@ -325,10 +329,14 @@
     </div>
     <div class="bdet">
       <p>Where data enters the network: text, numbers you type, or generated values.
-      An input box is what a run feeds — one per thing you want to test.</p>
+      An input box is what a run feeds — one per thing you want to test, and its
+      values ride with the design: the run hands them to the backend, and the
+      output shows exactly what arrives.</p>
       <p class="bfields"><b>Fields:</b> width <code>dout</code>; mode
-      <code>input_mode</code> — <code>text</code> (type a prompt), <code>python</code>
-      (a small expression for the values), or <code>random</code>; the text or code
+      <code>input_mode</code> — <code>values</code> (the numbers it carries),
+      <code>text</code> (type a prompt), <code>python</code>
+      (a small expression for the values), or <code>random</code>; the values,
+      text or code
       itself; <code>input_rows</code> for batches.</p>
     </div>
   </div>

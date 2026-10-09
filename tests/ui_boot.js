@@ -202,7 +202,7 @@ globalThis.__t = {
   bxTensorDtype, bxApplyManifest,
   bxtFilesToggle, bxtFilesClose, bxtPaletteToggle, bxtVramToggle,
   bxtBackendToggle, bxtBackendPick, get BX_BACKEND() { return BX_BACKEND; },
-  bxtRunToggle, bxtRunRefresh, bxtRunSync, bxtRunEnabled, bxtRunGo, bxtRunLoad,
+  bxtRunToggle, bxtRunRefresh, bxtRunSync, bxtRunEnabled, bxtRunGo, bxtRunLoad, bxFlowVerify,
   bxtRunOffload,
   bxSpecRow, bxSpecRows, fetchBackend, bxWeightedBox, bxEveryBox, bxSetPlace,
   bxSetAllPlaces, bxApplyOffload, bxOffloadPlan, bxOffloadRatio, bxBoxWeightTotal,
@@ -752,6 +752,10 @@ check("the Run box carries the machine, the weights and the run's readout", () =
      fill("exec").querySelectorAll(".bxbin").length === 0 &&
      fill("exec").querySelectorAll(".bxbhint").length === 0,
      "…Execute keeps only the mode switch and the run action");
+  __t.BXRUN.msg = "the dataflow is not whole";
+  ok(fill("exec").querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ")
+       .indexOf("dataflow") >= 0, "…and a run's message shows under the run action");
+  __t.BXRUN.msg = "";
   ok(fill("spec").querySelectorAll(".chip").map(c => c.textContent)
        .indexOf("run the design") < 0, "…and the run action stays out of Spec");
   // the menu switches views, and the choice sticks to the box
@@ -898,7 +902,12 @@ check("the matrix input: python code or seeded noise, not a run field", () => {
   __t.bxForm("input", null, i, "matrix");
   ok(getEl("bxmenu").children[0].children.map(c => c.textContent).join(" | ")
        .indexOf("input") >= 0, "the form has the input mode");
+  ok(getEl("bxmenu").children[0].children.map(c => c.textContent).join(" | ")
+       .indexOf("values") >= 0, "…and asks for the values it carries");
   __t.bxMenuClose();
+  __t.bxConfigure(i.id, { input_mode: "values", values: "1 2 3" });
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(i)).values, "1 2 3",
+    "the input's own numbers travel with the design");
   __t.bxConfigure(i.id, { input_mode: "python", input_code: "x = [[1, 2], [3, 4]]" });
   eql([i.input_mode, i.input_code], ["python", "x = [[1, 2], [3, 4]]"],
     "the design carries the code");
@@ -1063,9 +1072,9 @@ check("the huggingface model box: a repo in, the next token's text out", () => {
 
 check("a generate run posts the ids to grow and the logits to read", () => {
   const t = __t.bxAdd("tokenize", 0, 0, { repo: "Qwen/Qwen3-8B" });
-  const m = __t.bxAdd("layer", 0, 200, { din: 2, dout: 3 });
+  const m = __t.bxAdd("layer", 0, 200, { din: 1, dout: 3 });
   const o = __t.bxAdd("output", 0, 400, { din: 3 });
-  __t.bxConnect(t.id, m.id);
+  eql(__t.bxConnect(t.id, m.id), null, "the tokenizer's id feeds the layer");
   __t.bxConnect(m.id, o.id);
   __t.BXRUN = { local: { connected: true, agent: { name: "pc", specs: {} } },
                 inputs: {}, texts: {}, last: null, loaded: null, loading: false,
@@ -1097,6 +1106,45 @@ check("a generate run posts the ids to grow and the logits to read", () => {
   __t.bxRemove(t.id);
   __t.bxRemove(m.id);
   __t.bxRemove(o.id);
+});
+
+check("an input's own values flow to the output (the browser verifies first)", () => {
+  __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
+  const i = __t.bxAdd("input", 0, 0, { dout: 3, values: "4 5 6" });
+  const o = __t.bxAdd("output", 0, 200, { din: 3 });
+  eql(__t.bxConnect(i.id, o.id), null, "the input wires straight to the output");
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(i)).values, "4 5 6", "…and the design carries its values");
+  ok(__t.bxFlowVerify().ok, "the browser verifies the dataflow before a run");
+  __t.BXRUN = { local: { connected: true, agent: { name: "pc", specs: {} } },
+                inputs: {}, texts: {}, last: null, loaded: null, loading: false,
+                loadKey: null, msg: "", running: false };
+  const realFetch = global.fetch;
+  let sent = null;
+  global.fetch = async (url, opts) => {
+    if (String(url) === "/api/run") sent = JSON.parse(opts.body);
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  __t.bxtRunGo();
+  global.fetch = realFetch;
+  eql(sent && sent.feeds && sent.feeds[i.id], [4, 5, 6], "the input's numbers reach the backend");
+  __t.BXRUN.running = false;
+  __t.BXRUN.msg = "";
+  // a broken dataflow is refused in the browser: the backend is never asked
+  sent = null;
+  global.fetch = async (url, opts) => {
+    if (String(url) === "/api/run") sent = JSON.parse(opts.body);
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  __t.bxRemoveEdge(i.id, o.id);
+  __t.bxtRunGo();
+  global.fetch = realFetch;
+  ok(sent === null, "a design whose data never reaches the output is not sent");
+  ok(__t.BXRUN.msg.indexOf("never reaches") >= 0, "…and the browser says why: " + __t.BXRUN.msg);
+  ok(__t.bxFlowVerify().bad.has(o.id), "…marking the output that would starve");
+  __t.bxRemove(i.id);
+  __t.bxRemove(o.id);
+  __t.BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
+                loaded: null, loading: false, loadKey: null, msg: "", running: false };
 });
 
 check("the AI box: the task explains itself \u2014 type, ask, chip, progress", () => {

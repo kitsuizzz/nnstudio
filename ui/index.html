@@ -1654,6 +1654,7 @@ function bxAdd(kind, x, y, v) {
     const rows = bxSize(v.input_rows, null);
     if (rows && rows >= 1) n.input_rows = rows;
     if (v.text != null && String(v.text)) n.text = bxClip(String(v.text), 4096);
+    if (v.values != null && String(v.values).trim()) n.values = bxClip(String(v.values), 4096);
   }
   const dtype = bxDtypeName(v.dtype, null);
   if (dtype) n.dtype = dtype;
@@ -2546,6 +2547,10 @@ function bxConfigure(id, vals) {
     if (vals.text !== undefined) {
       const t = String(vals.text == null ? "" : vals.text);
       n.text = t ? bxClip(t, 4096) : null;   // the string a text input carries
+    }
+    if (vals.values !== undefined) {         // the numbers the input carries
+      const vv = String(vals.values == null ? "" : vals.values).trim();
+      n.values = vv ? bxClip(vv, 4096) : null;
     }
   }
   if ((n.kind === "tokenize" || n.kind === "detokenize") && vals.repo !== undefined) {
@@ -3548,6 +3553,8 @@ function bxTrainFill(pane, n) {                   // the hub: Execute and Spec, 
   });
   runbar.appendChild(go);
   pane.appendChild(runbar);
+  if (BXRUN.msg)                               // a step of the run, or what went wrong
+    pane.appendChild(mk("div", { class: "bxbhint", text: BXRUN.msg }));
 }
 function bxTrainSpec(pane) {                  // Spec: the machine, its usage, and
   // how the design's weights sit on it
@@ -3910,6 +3917,7 @@ function bxJSONNode(n) {
     if (n.input_mode) o.input_mode = n.input_mode;
     if (n.input_code) o.input_code = n.input_code;
     if (n.input_rows != null) o.input_rows = n.input_rows;
+    if (n.values) o.values = n.values;
     if (n.text) o.text = n.text;
   }
   else if (n.kind === "output") o.din = n.din == null ? null : n.din;
@@ -4233,6 +4241,7 @@ function bxJSONNodeFrom(o) {
       n.input_code = bxClip(o.input_code, 20000);
     const rows = bxSize(o.input_rows);
     if (rows && rows >= 1) n.input_rows = rows;
+    if (typeof o.values === "string" && o.values.trim()) n.values = bxClip(o.values, 4096);
     if (typeof o.text === "string") n.text = bxClip(o.text, 4096);
   }
   else if (o.kind === "output") n.din = bxSize(o.din);
@@ -5910,6 +5919,37 @@ function bxtRunOffload() {                     // let the backend drop everythin
       fetchBackend();
     });
 }
+function bxFlowVerify() {                        // the browser's dataflow check: a source
+  // must carry data to an output before the backend is asked to run the design
+  const nodes = BX.nodes || [], edges = BX.edges || [];
+  const bad = new Set(), reach = new Set(), inPorts = new Map();
+  if (!nodes.length) return { ok: false, bad, why: "the canvas is empty" };
+  for (const n of nodes) inPorts.set(n.id, new Set());
+  for (const e of edges) if (inPorts.has(e.to)) inPorts.get(e.to).add(e.toPort || 0);
+  const feeds_itself = (n) => n.kind === "input" || n.kind === "dataset" ||
+    ((n.kind === "tokenize" || n.kind === "hf") && !inPorts.get(n.id).size) ||
+    n.kind === "script";
+  const q = [];
+  for (const n of nodes)
+    if (!bxOffHere(n) && feeds_itself(n)) { reach.add(n.id); q.push(n.id); }
+  while (q.length) {
+    const id = q.shift();
+    for (const e of edges)
+      if (e.from === id && !reach.has(e.to)) { reach.add(e.to); q.push(e.to); }
+  }
+  if (!nodes.some(n => !bxOffHere(n) && feeds_itself(n)))
+    return { ok: false, bad,
+             why: "nothing makes the data \u2014 add an input (or a tokenizer with text)" };
+  const outs = nodes.filter(n => n.kind === "output" && !bxOffHere(n));
+  if (outs.length && !outs.some(o => reach.has(o.id))) {
+    for (const o of outs) bad.add(o.id);
+    const names = outs.map(o => o.name || o.id).slice(0, 3);
+    return { ok: false, bad,
+             why: "the data never reaches " + names.join(", ")
+                  + " \u2014 wire the run through from an input" };
+  }
+  return { ok: true, bad };
+}
 function bxtRunGo() {
   if (bxRunFix()) return;                      // a model box without its file
   const canvas = (typeof bxExportCanvas === "function") ? bxExportCanvas() : null;
@@ -5934,7 +5974,8 @@ function bxtRunGo() {
         continue;
       }
       if (n.input_mode === "python" || n.input_mode === "random") continue;  // the box defines it
-      const raw = String(BXRUN.inputs[n.id] != null ? BXRUN.inputs[n.id] : "1");
+      const raw = String(BXRUN.inputs[n.id] != null ? BXRUN.inputs[n.id]
+                                                    : (n.values || "1"));
       const parts = raw.replace(/,/g, " ").split(/\s+/).filter(Boolean).map(Number);
       if (!parts.length || parts.some(isNaN)) {
         bxtRunMsg("input \u201c" + (n.name || n.id) + "\u201d needs numbers");
@@ -5942,6 +5983,13 @@ function bxtRunGo() {
       }
       feeds[n.id] = parts;
     }
+  }
+  const flow = bxFlowVerify();                 // the browser verifies the dataflow first
+  if (!flow.ok) {
+    bxRunErr = { ids: flow.bad, here: null, msg: flow.why };
+    bxRender();                                // the boxes it blames go red
+    bxtRunMsg(flow.why);
+    return;
   }
   BXRUN.running = true;
   BXRUN.msg = "";
@@ -7332,11 +7380,14 @@ function bxForm(kind, ev, node, mode) {
     f.name = nameField(bxDefaultName(kind));
     f.a = numField("size", null);
     f.mode = inputModeField("values");
+    f.values = textField("values", "1", "1 2 3 — the numbers the input carries");
     f.text = textField("text", "", "the text to tokenize");
     f.icode = inputCodeField("");
     f.rows = numField("rows", null);
   } else if (mode === "matrix") {
     f.mode = inputModeField(node ? node.input_mode || "values" : "values");
+    f.values = textField("values", node ? node.values || "" : "",
+                         "1 2 3 — the numbers the input carries");
     f.text = textField("text", node ? node.text || "" : "", "the text to tokenize");
     f.icode = inputCodeField(node ? node.input_code || "" : "");
     f.rows = numField("rows", node ? node.input_rows : null);
@@ -7422,6 +7473,7 @@ function bxForm(kind, ev, node, mode) {
     const syncInput = () => {
       const m = f.mode.value;
       if (f.icode._box) f.icode._box.hidden = m !== "python";
+      if (f.values && f.values.parentNode) f.values.parentNode.hidden = m !== "values";
       if (f.text && f.text.parentNode) f.text.parentNode.hidden = m !== "text";
       if (f.rows && f.rows.parentNode) f.rows.parentNode.hidden = m !== "random";
       bxMenuPlace();
@@ -7442,6 +7494,7 @@ function bxForm(kind, ev, node, mode) {
     if (f.eps) v.eps = f.eps.value;
     if (f.t) v.t = f.t.value;
     if (f.mode) v.input_mode = f.mode.value;
+    if (f.values) v.values = f.values.value;
     if (f.icode) v.input_code = f.icode.value;
     if (f.rows) v.input_rows = f.rows.value;
     if (f.vocab) v.vocab = f.vocab.value;
