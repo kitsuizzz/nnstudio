@@ -215,9 +215,9 @@
     <li><b>Wire two boxes</b> — drag from a box's <b>right dot</b> (its output) to
         another box's <b>left dot</b> (its input). Right-click a wire to reshape or
         remove it.</li>
-    <li><b>Edit a box</b> — right-click it. Its menu renames it, changes its
-        settings (the activation, the operation, the embedding…), and offers
-        <b>freeze</b> (keep its weights fixed) and <b>off</b> (skip it on runs).</li>
+    <li><b>Edit a box</b> — right-click it. Its menu renames it (the Run box
+        excepted), changes its settings (the activation, the operation, the embedding…),
+        and offers <b>freeze</b> (keep its weights fixed) and <b>off</b> (skip it on runs).</li>
     <li><b>Step inside a nested box</b> — double-click a
         <span class="pill">custom</span> box. A nested box is a whole network of
         its own — that's the "nested" in nnstudio. Double-clicking again goes
@@ -613,6 +613,7 @@
       conditions; <b>y</b> is what the model is scored on, in supervised), the
       classes (when y is a label), the signal — the <b>target</b> output box it
       scores, or, in <b>rl</b>, the reward box — and every parameter of the run.
+      There is only ever one, it cannot be renamed, and it lives at the top level.
       Its window opens with the <b>mode</b> switch — inference or training, which
       the Run button follows — and then shows the setup, the step counter, and the
       live curves: loss and
@@ -676,7 +677,9 @@
         the <span class="pill">dataset</span> box; give it rows
         (<code>prompt&lt;TAB&gt;completion</code> or JSONL). A second dataset box
         is the held-out test split, if you have one.</li>
-    <li>Add a <span class="pill">Run</span> box — the <b>hub of the training</b> — from the <span class="pill grey">Run ▾</span> menu (not the Palette).
+    <li>Add a <span class="pill">Run</span> box — the <b>hub of the training</b> —
+        from the <span class="pill grey">Run ▾</span> menu (not the Palette). There
+        is only one, and it lives at the top level.
         Right-click it → <b>set up the training …</b>: bind the dataset (and the
         test split), name the <b>x</b> column (the model's input) and the
         <b>y</b> column (what the model is scored on), pick the <b>target</b> —
@@ -868,6 +871,8 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
   <p>
     Training needs one place to say <i>what</i> the model learns from and
     <i>how</i>. That place is the <span class="pill">Run</span> box — the hub.
+    There is only ever one Run box, it cannot be renamed, and it lives at the
+    top level of the design; a nested box never holds one.
     It owns the data (the <code>dataset</code> that feeds the run, and an optional
     <code>test_dataset</code> the trainer scores but never trains on), the columns
     (<code>x_col</code> conditions, <code>y_col</code> is the target), the

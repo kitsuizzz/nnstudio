@@ -1583,6 +1583,7 @@ function bxAddGGUF(x, y) {                       // drop a GGUF node, then pick 
 }
 function bxAdd(kind, x, y, v) {
   v = v || {};
+  if (kind === "train" && !bxTrainAllowed()) return null;   // one Run box, top level only
   const gguf = kind === "gguf";                // a GGUF node *is* a nested box:
   if (gguf) kind = "custom";                   // a model is loaded into it
   const sizeless = kind === "act" || kind === "script" || kind === "custom" ||
@@ -2306,6 +2307,7 @@ function bxPrunePort(target, dir, index) {
 function bxMoveInto(nodeId, targetId) {
   const node = bxNode(nodeId), target = bxNode(targetId);
   if (!node || !target || node.id === target.id || target.kind !== "custom") return false;
+  if (node.kind === "train") return false;     // the Run box stays at the top level
   if (bxHasInside(node, target.id)) return false;          // never into itself or its own inside
   const inner = target.inner = target.inner || { nodes: [], edges: [] };
   inner.edges = inner.edges || [];
@@ -2408,7 +2410,9 @@ function bxDropTargetAt(ev) {
   const id = el && el.getAttribute ? el.getAttribute("data-id") : null;
   const n = id ? bxNode(id) : null;
   if (!n || n.kind !== "custom" || n.id === bxDrag.id) return null;
-  if (bxHasInside(bxNode(bxDrag.id), n.id)) return null;
+  const dragging = bxNode(bxDrag.id);
+  if (!dragging || dragging.kind === "train") return null;   // the Run box stays at the top
+  if (bxHasInside(dragging, n.id)) return null;
   return n.id;
 }
 // one wire per input dot: a new wire replaces whatever was on that dot
@@ -2451,7 +2455,7 @@ function bxEdgeMismatch(e) {
 function bxConfigure(id, vals) {
   const n = bxNode(id);
   if (!n || !vals) return false;
-  if (vals.name !== undefined)
+  if (vals.name !== undefined && n.kind !== "train")   // the Run box has no rename
     n.name = String(vals.name).trim() || n.name || bxKindLabel(n.kind);
   if (n.kind === "act" && vals.act !== undefined) {
     const want = String(vals.act);
@@ -3233,6 +3237,36 @@ const TINT_TAG = { tsrc: "src", ttest: "test", tscored: "scored",
 function bxTrainHub() {                           // the train node: training's home
   for (const n of BX.nodes || []) if (n.kind === "train") return n;
   return null;
+}
+function bxTrainAnywhere() {                      // the one Run box, from the top down
+  let hit = null;
+  const walk = (nodes) => {
+    for (const n of nodes || []) {
+      if (!hit && n.kind === "train") hit = n;
+      if (n.kind === "custom" && n.inner) walk(n.inner.nodes);
+    }
+  };
+  walk(BX.up && BX.stack && BX.stack.length ? BX.stack[0].nodes : BX.nodes);
+  return hit;
+}
+function bxTrainAllowed() {                       // one Run box, at the top level only
+  return !BX.up && !bxTrainAnywhere();
+}
+function bxTrainPrune(doc, allow) {               // strip what the rules forbid
+  const cut = new Set();
+  let kept = false;
+  for (const n of doc.nodes || []) {
+    if (n.kind !== "train") continue;
+    if (!allow || kept) cut.add(n.id);            // inside a nested box: never
+    else kept = true;                             // at the level itself: at most one
+  }
+  if (cut.size) {
+    doc.nodes = (doc.nodes || []).filter(n => !cut.has(n.id));
+    doc.edges = (doc.edges || []).filter(e => !cut.has(e.from) && !cut.has(e.to));
+  }
+  for (const n of doc.nodes || [])
+    if (n.kind === "custom" && n.inner) bxTrainPrune(n.inner, false);
+  return doc;
 }
 function bxEdgePairs() {                          // mirrors the engine's _edge_pairs
   const pairs = [];
@@ -4016,6 +4050,7 @@ function bxPasteBoxes(text, at) {
   if (obj.type === "nested") {               // a whole design: one nested box
     const doc = bxJSONDocFrom(obj, "nested");
     if (!doc) return false;
+    bxTrainPrune(doc, false);                // a Run box never lands inside one
     const p = at || bxPastePoint();
     bxUndoLock++;
     const n = bxAdd("custom", p.x, p.y, { name: doc.name });
@@ -4028,7 +4063,9 @@ function bxPasteBoxes(text, at) {
     return true;
   }
   const doc = bxJSONDocFrom(obj, "boxes");
-  if (!doc || !doc.nodes.length) return false;
+  if (!doc) return false;
+  bxTrainPrune(doc, !BX.up && !bxTrainAnywhere());   // one Run box, at the top only
+  if (!doc.nodes.length) return false;
   const p = at || bxPastePoint();
   const xs = doc.nodes.map(n => n.x), ys = doc.nodes.map(n => n.y);
   const dx = Math.round(p.x - (Math.min(...xs) + Math.max(...xs)) / 2);
@@ -4354,6 +4391,7 @@ function bxJSONApply(read, where) {
   if (read.kind === "nested" && where.box) {    // into one nested box, in place
     const b = typeof where.box === "string" ? bxNode(where.box) : where.box;
     if (!b || b.kind !== "custom") return { ok: false, error: "no nested box there" };
+    bxTrainPrune(read.doc, false);              // a Run box never lands inside one
     b.inner = { nodes: read.doc.nodes, edges: read.doc.edges };
     if (read.doc.name) b.name = read.doc.name;
     if (BX.up === b.id) { BX.nodes = b.inner.nodes; BX.edges = b.inner.edges; }
@@ -4367,6 +4405,7 @@ function bxJSONApply(read, where) {
     if (BX.up) return { ok: false, error: "a canvas loads at the top level only" };
     BX.stack = [];
     BX.up = null;
+    bxTrainPrune(read.doc, true);               // one Run box, at the top only
     BX.nodes = read.doc.nodes;
     BX.edges = read.doc.edges;
     BX.model = read.doc.model || null;          // its own numbers + the estimate knobs
@@ -4380,6 +4419,7 @@ function bxJSONApply(read, where) {
   }
   if (read.kind === "nested box") {             // a nested box, wherever you are
     bxUndoLock++;                           // the box and its network land together
+    bxTrainPrune(read.doc, false);              // a Run box never lands inside one
     const n = bxAdd("custom", where.x || 0, where.y || 0, { name: read.doc.name });
     n.inner = { nodes: read.doc.nodes, edges: read.doc.edges };
     bxSettleSizes();
@@ -5049,11 +5089,11 @@ function bxMenuBuild(mode, id, ev) {
       const allOff = group.every(x => bxOffHere(x));    // what the cards show
       const allFrozen = group.every(x => x.frozen);
       // this box: its name, copy, and whatever sets this kind
-      const mine = [
-        ["rename this box", () => bxForm(n.kind, null, n, "rename")],
-        [many ? ("copy these " + selIds.length + " boxes") : "copy this box",
-         () => { bxMenuClose(); bxCopyBoxes(many ? selIds : [n.id]); }],
-      ];
+      const mine = [];
+      if (n.kind !== "train")                    // the Run box has no rename
+        mine.push(["rename this box", () => bxForm(n.kind, null, n, "rename")]);
+      mine.push([many ? ("copy these " + selIds.length + " boxes") : "copy this box",
+                 () => { bxMenuClose(); bxCopyBoxes(many ? selIds : [n.id]); }]);
       if (n.kind === "act") mine.push(["set the activation", () => bxForm(n.kind, null, n, "activation")]);
       else if (n.kind === "agent" || n.kind === "train") {
         if (n.kind === "train")
@@ -5597,10 +5637,15 @@ function bxtRunRender() {
   // the Run box: the mode switch and the training's home. It is deployed
   // from this menu (not the palette), so it is offered in every mode,
   // including the default inference, where a Run box is what lets the
-  // design flip over to training.
+  // design flip over to training. There is only ever one, and it lives
+  // at the top level; a nested box never holds one.
   menu.appendChild(mk("div", { class: "mhead", text: "run box" }));
-  const hub = bxTrainHub();
-  if (!hub) {
+  const hub = bxTrainAnywhere();
+  if (BX.up) {
+    menu.appendChild(mk("div", { class: "bxbhint",
+      text: hub ? "the Run box lives at the top level \u2014 the full training runs from there"
+                : "the Run box lives at the top level \u2014 go back out to add it" }));
+  } else if (!hub) {
     menu.appendChild(mk("div", { class: "bxbhint",
       text: "no Run box on the canvas \u2014 it holds the mode switch, the "
            + "data and the signal, and it's where the full training runs" }));
@@ -7449,7 +7494,6 @@ function bxForm(kind, ev, node, mode) {
     f.pattern = textField("regex (optional)", node ? node.pattern || "" : "");
     f.match = textField("exact match (optional)", node ? node.match || "" : "");
   } else if ((mode === "add" && kind === "train") || mode === "train") {
-    f.name = nameField(node ? node.name : bxDefaultName(kind));
     f.dataset = pickField("data", optsOf("dataset"), node ? node.dataset : null);
     f.test_dataset = pickField("test data", optsOf("dataset"), node ? node.test_dataset : null);
     f.x_col = textField("x col", node ? node.x_col || "A" : "A");
@@ -7740,6 +7784,7 @@ function bxDropPalette(kind, ev) {
   const y = ev ? (ev.clientY || 0) : r.top + (r.height || 400) / 2;
   const p = bxPoint({ clientX: x, clientY: y });
   const n = bxAddKind(kind, p.x, p.y, {});
+  if (!n) return null;                         // refused (a second Run box, say)
   bxSelectBoxes([n.id]);                       // ready to move / configure / delete
   return n;
 }

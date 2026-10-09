@@ -3531,7 +3531,7 @@ check("the Run box: the hub of the training — data, columns, signal, parameter
   const labels = Array.from(getEl("bxmenu").children[0].children)
     .filter(c => c.textContent);   // the field labels (the chip row carries no text)
   eql(labels.map(c => c.textContent),
-      ["name", "data", "test data", "x col", "y col", "classes", "paradigm",
+      ["data", "test data", "x col", "y col", "classes", "paradigm",
        "target", "reward", "learning rate", "optimizer", "weight decay",
        "batch", "steps", "grad clip", "save every", "eval every",
        "temperature (rl)", "max tokens (rl)", "n samples (rl)"],
@@ -3549,8 +3549,8 @@ check("the Run box: the hub of the training — data, columns, signal, parameter
                                 classes: "cat dog", paradigm: "supervised", target: out.id,
                                 lr: 0.01, batch: 8, steps: 40 }), "configuring lands");
   eql([tr.name, tr.dataset, tr.x_col, tr.y_col, tr.paradigm, tr.target],
-      ["hub", ds.id, "A", "B", "supervised", out.id],
-      "the node binds the data, the columns and the signal");
+      ["run 1", ds.id, "A", "B", "supervised", out.id],
+      "the node binds the data, the columns and the signal (the name is not ours to set)");
   eql(tr.classes, ["cat", "dog"], "…and the classes land as a list");
   eql([tr.lr, tr.batch, tr.steps], [0.01, 8, 40], "…and the parameters as numbers");
   // and it all travels with the design
@@ -3574,6 +3574,70 @@ check("the Run box: the hub of the training — data, columns, signal, parameter
   __t.bxRemove(tr.id);
   __t.bxRemove(ds.id);
   __t.bxRemove(out.id);
+});
+
+check("the Run box: one only, at the top level, and no rename", () => {
+  const tr = __t.bxAdd("train", 0, 0, {});
+  ok(!!tr && tr.name === "run 1", "a Run box lands, named run 1");
+  ok(__t.bxAdd("train", 200, 0, {}) === null, "…a second one is refused");
+  ok(__t.bxDropPalette("train", null) === null, "…however it is dropped");
+  // the right-click menu: no rename; the hub's own setup form has no name field
+  __t.bxMenuBuild("box", tr.id, {});
+  openCat(getEl("bxmenu"), "this box");
+  const items = catItems(getEl("bxmenu"));
+  ok(items.indexOf("rename this box") < 0, "…and it cannot be renamed");
+  ok(items.some(t => t.indexOf("set up the training") === 0),
+     "…while setting up the training stays one click away");
+  __t.bxForm("train", null, tr, "train");
+  const labels = Array.from(getEl("bxmenu").children[0].children).filter(c => c.textContent);
+  ok(labels.map(c => c.textContent).indexOf("name") < 0, "…its setup form has no name field");
+  __t.bxMenuClose();
+  // a nested box never holds one
+  const nest = __t.bxAdd("custom", 0, 300, {});
+  __t.bxEnter(nest.id);
+  ok(__t.bxAdd("train", 0, 0, {}) === null, "inside a nested box a Run box is refused");
+  __t.BX_BACKEND.mode = "local";
+  __t.BX_BACKEND.key = "";
+  __t.BXRUN = { local: { connected: true, agent: { name: "gpu-box", remote: "127.0.0.1:1",
+      since: 1, last_seen: 1, specs: { name: "gpu-box", os: "Linux-test", cpu: "Test CPU",
+      cores: 16, ram_gb: 64, gpu: "NVIDIA RTX 5090", vram_gb: 32, device: "cuda",
+      cuda: true, torch: "2.13.0" } } },
+      inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
+      msg: "", running: false };
+  const rm = getEl("bxtRunMenu");
+  ok(__t.bxtRunToggle() === true && !rm.hidden, "the Run menu opens inside one");
+  const state = rm.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
+  const chips = () => rm.querySelectorAll(".chip").map(e => e.textContent);
+  ok(state.indexOf("top level") >= 0, "…and says the Run box lives at the top level");
+  ok(chips().indexOf("add a Run box") < 0, "…with no offer to add one there");
+  ok(chips().indexOf("run the design") >= 0, "…while the run itself stays available");
+  __t.bxtRunToggle();
+  __t.BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
+                loaded: null, loading: false, loadKey: null, msg: "", running: false };
+  __t.bxtRunRefresh();
+  __t.bxLeave();
+  // it never moves into one, and a paste never makes a second
+  ok(__t.bxMoveInto(tr.id, nest.id) === false, "it never moves into a nested box");
+  ok(__t.bxCopyBoxes([tr.id]), "the hub copies");
+  const before = __t.BX.nodes.length;
+  ok(__t.bxPasteBoxes(null, { x: 320, y: 320 }) === false, "…but pasting it makes no second");
+  ok(__t.BX.nodes.length === before, "…and nothing lands");
+  // a canvas with stray ones loads with the extras stripped
+  const doc = { type: "canvas", version: 1, nodes: [
+      { id: "t1", kind: "train", x: 0, y: 0, name: "one" },
+      { id: "t2", kind: "train", x: 260, y: 0, name: "two" },
+      { id: "cc", kind: "custom", x: 0, y: 260,
+        inner: { type: "nested", version: 1,
+                 nodes: [{ id: "t3", kind: "train", x: 0, y: 0 }], edges: [] } }],
+      edges: [] };
+  const res = __t.bxImportJSON(JSON.stringify(doc), {});
+  eql(res.ok, true, "a canvas with stray Run boxes loads: " + (res.error || ""));
+  const kept = __t.BX.nodes.filter(n => n.kind === "train");
+  eql([kept.length, kept[0].name], [1, "one"], "…one Run box kept (the first)");
+  const held = __t.BX.nodes.find(n => n.kind === "custom");
+  eql((held.inner.nodes || []).filter(n => n.kind === "train").length, 0,
+      "…and none inside the nested box");
+  for (const n of __t.BX.nodes.slice()) __t.bxRemove(n.id);
 });
 
 if (failed) { console.log("ui_boot: " + failed + " failure(s)"); process.exit(1); }
