@@ -34,8 +34,31 @@ import sys
 import threading
 import time
 
-# a card that fills up fragments; let the allocator grow segments instead
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+# a card that fills up fragments; let the allocator grow segments instead — but
+# never take the expandable-segments IPC branch: it asks NVML for peer/fabric
+# access, and where the driver's NVML cannot initialize inside PyTorch (common
+# on some Windows/container setups) that probe asserts instead of running
+# ("INTERNAL ASSERT FAILED at c10/cuda/PeerToPeerAccess.cpp"). A single design
+# run never shares segments across processes, so the branch is useless here.
+# And only ask for expandable segments at all when NVML initializes cleanly.
+def _nvml_ok():
+    """Whether the NVIDIA driver's NVML can initialize in this process."""
+    try:
+        import ctypes
+        for name in ("libnvidia-ml.so.1", "libnvidia-ml.so", "nvml.dll"):
+            try:
+                lib = ctypes.CDLL(name)
+            except OSError:
+                continue
+            return int(lib.nvmlInit_v2()) == 0
+    except Exception:  # noqa: BLE001 — no NVML is a fine answer
+        pass
+    return False
+
+
+os.environ.setdefault("TORCH_CUDA_EXPANDABLE_SEGMENTS_IPC", "0")
+if _nvml_ok():
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 VERSION = 1
 _DEVICE = None
@@ -168,6 +191,18 @@ def usage():
     except Exception:  # noqa: BLE001 — a machine without torch still reports RAM
         pass
     return u
+
+
+def _run_error_text(e):
+    """The run's failure, with a hint for the NVML/fabric assert PyTorch raises
+    where the driver's NVML cannot initialize inside the process."""
+    t = str(e)
+    low = t.lower()
+    if "nvml" in low or "peertopeeraccess" in low or "INTERNAL ASSERT FAILED" in t:
+        t = ("the NVIDIA driver's NVML could not initialize inside PyTorch — "
+             "update the NVIDIA driver, or restart the agent with "
+             "TORCH_CUDA_EXPANDABLE_SEGMENTS_IPC=0. " + t)
+    return t
 
 
 def _canvas_key(canvas, device, mode="inference"):
@@ -583,7 +618,7 @@ def serve_session(sock, name, log):
                     _release(e)                  # the frames held the graph
                     log("run %s failed: %s" % (rid or "?", e))
                     send({"type": "result", "id": rid, "ok": False,
-                          "error": str(e)[:500],
+                          "error": _run_error_text(e)[:700],
                           "box": getattr(e, "box", None) or None,
                           "nid": getattr(e, "nid", None) or None})
                 if failed:                     # hand the freed pages back now

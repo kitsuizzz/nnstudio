@@ -65,6 +65,15 @@ nothing and changes nothing.
 
 ## Troubleshooting
 
+- A run fails with `INTERNAL ASSERT FAILED` at `c10/cuda/PeerToPeerAccess.cpp`
+  (or `NVML_SUCCESS == ... nvmlInit_v2`): PyTorch's CUDA allocator asked the
+  driver's NVML for peer/fabric access and it could not initialize there (a
+  driver/NVML mismatch, or a container without the driver's NVML). The agent
+  keeps the expandable-segments IPC branch off
+  (`TORCH_CUDA_EXPANDABLE_SEGMENTS_IPC=0`) and only asks for expandable
+  segments when NVML initializes cleanly, so this should not surface; if it
+  still does, update the NVIDIA driver (or start the agent with that variable
+  set to `0`).
 - `quant kernels: f16 dequant at load` when you expected native:
   - no GPU, or PyTorch built for CPU: check `torch.cuda.is_available()`;
   - Triton missing: use a PyTorch wheel that bundles it (all official CUDA and
