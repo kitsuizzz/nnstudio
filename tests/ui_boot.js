@@ -217,7 +217,7 @@ globalThis.__t = {
   bxTasksFetch, bxTaskLogFetch, bxTasksApply, bxLogApply, bxLogState,
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
-  bxRunFeeds,
+  bxRunFeeds, bxInputFill, bxInputExpand,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
   bxTableRead, bxTableWrite, bxTableType, bxTableSetCell, bxTableRenameCol,
   bxTableInsertCol, bxTableDeleteCol, bxTableAddRow, bxTableDeleteRow,
@@ -1359,6 +1359,42 @@ check("the connection audit marks the boxes it blames", () => {
   ok(why.indexOf("feeds nothing") >= 0, "the reason travels with the mark: " + why);
   ok(cls.indexOf("audit") >= 0, "the box wears it: " + cls);
   ok(!__t.bxAudit, "cleared again");
+});
+
+check("the input box edits its data right on the canvas", () => {
+  const i = __t.bxAdd("input", 0, 0, { values: "4 5 6", dout: 3 });
+  const fill = () => { const d = document.createElement("div"); __t.bxInputFill(d, i); return d; };
+  const sel = fill().querySelectorAll(".bxsel")[0];
+  ok(sel && sel.value === "values", "the box shows the datatype: " + (sel && sel.value));
+  eql(sel.children.map(o => o.textContent), ["values", "text", "python", "random"],
+      "…values, text, python or random");
+  const vals = fill().querySelectorAll(".bxbin")[0];
+  eql(vals.value, "4 5 6", "…with the data it carries, editable in place");
+  vals.value = "7 8";
+  vals.dispatchEvent({ type: "change" });
+  eql([i.values, i.dout], ["7 8", 2], "typing the numbers sizes the box to fit them");
+  // the mode switches the editor
+  const s2 = fill().querySelectorAll(".bxsel")[0];
+  s2.value = "text";
+  s2.dispatchEvent({ type: "change" });
+  eql(i.input_mode, "text", "switching the datatype lands on the box");
+  eql(__t.bxShape(i), "text", "…and the card says text");
+  const txt = fill().querySelectorAll(".bxbin")[0];
+  ok(txt && String(txt.placeholder).indexOf("string") >= 0,
+     "…and the field now asks for the string");
+  txt.value = "hello";
+  txt.dispatchEvent({ type: "change" });
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(i)).text, "hello", "…and it travels with the design");
+  // the size and the open editor travel too
+  __t.bxInputExpand(i);
+  eql([i.box.w, i.box.h], [420, 280], "the editor expands to the bigger size");
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(i)).box.w, 420, "…and the size travels with the design");
+  // after a run, the box shows what it carried
+  __t.bxRunValues = { [i.id]: { shape: [3], peek: [4, 5, 6], mean: 5 } };
+  ok(fill().querySelectorAll(".panehint").map(e => e.textContent).join("|")
+       .indexOf("4, 5, 6") >= 0, "…and the box shows the data a run left on it");
+  __t.bxRunValues = {};
+  __t.bxRemove(i.id);
 });
 
 check("re-placing a box keeps the last run's data (an edit still clears it)", () => {

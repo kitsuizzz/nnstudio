@@ -810,6 +810,24 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 /* the Run box's window: the machine, the weights, the feeds, the readout */
 .bxrunbody { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex;
              flex-direction: column; }
+/* the input box's own editor, in the box */
+.bxinputbody { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex;
+               flex-direction: column; gap: 4px; padding: 2px 0; }
+.bxinputbody label.rf { display: flex; align-items: center; gap: 6px;
+                        font-size: 12px; color: var(--ink-dim); }
+.bxinputbody label.rf span { min-width: 46px; }
+.bxinputbody .bxsel { flex: 1 1 auto; min-width: 0; padding: 3px 6px;
+                      border-radius: 8px; font: 12px var(--mono); }
+.bxinputbody input[type="text"] {
+  flex: 1 1 auto; min-width: 0; width: auto; padding: 4px 8px;
+  border-radius: 8px; font: 12px var(--mono);
+  background: rgba(0,0,0,.3); color: var(--ink); border: 1px solid var(--panel-brd);
+}
+.bxinputbody textarea {
+  width: 100%; min-height: 52px; padding: 4px 8px; border-radius: 8px;
+  font: 12px var(--mono); background: rgba(0,0,0,.3); color: var(--ink);
+  border: 1px solid var(--panel-brd); resize: none;
+}
 /* the Run box's own menu: Execute (the run) and Spec (the backend) */
 .runmenu { display: flex; gap: 2px; padding: 2px 4px 0;
            border-bottom: 1px solid var(--panel-brd); }
@@ -2741,6 +2759,11 @@ function bxDatasetExpand(n) {                  // the sheet, small or big
   p.expand = !p.expand;
   n.box = p.expand ? { w: 860, h: 520 } : { w: 440, h: 300 };
 }
+function bxInputExpand(n) {                    // the input's editor, small or big
+  const p = n.panel || (n.panel = {});
+  p.expand = !p.expand;
+  n.box = p.expand ? { w: 420, h: 280 } : { w: 300, h: 170 };
+}
 function bxCsvParse(text) {                   // RFC 4180-ish: quotes and commas
   const rows = [];
   let row = [], field = "", q = false;
@@ -3573,6 +3596,63 @@ function bxTrainFill(pane, n) {                   // the hub: Execute and Spec, 
     pane.appendChild(mk("div", { class: "bxbhint " + (outcome.ok ? "runok" : "runbad"),
                                  text: outcome.text }));
 }
+function bxInputFill(pane, n) {                // the input box's own editor, in the box:
+  // the datatype, and the data itself — typed right on the canvas
+  pane.innerHTML = "";
+  bxBehaveInside(pane);
+  const head = mk("div", { class: "bxlogrow" });
+  head.appendChild(mk("b", { text: "input" }));
+  const st = bxNodeState(n);
+  if (st) head.appendChild(mk("span", { class: "panehint",
+                                        text: "ran \u00b7 " + (bxStateText(st) || "?") }));
+  pane.appendChild(head);
+  const mrow = mk("label", { class: "rf" });
+  mrow.appendChild(mk("span", { text: "data" }));
+  const sel = mk("select", { class: "bxsel" });
+  for (const [k, t] of [["values", "values"], ["text", "text"],
+                        ["python", "python"], ["random", "random"]])
+    sel.appendChild(mk("option", { value: k, text: t }));
+  sel.value = n.input_mode || "values";
+  mrow.appendChild(sel);
+  pane.appendChild(mrow);
+  const body = mk("div", { class: "bxinputbody" });
+  pane.appendChild(body);
+  const save = (patch) => bxConfigure(n.id, patch);   // settles, renders, one undo step
+  const field = (label, value, ph, fn) => {
+    const lab = mk("label", { class: "rf" });
+    lab.appendChild(mk("span", { text: label }));
+    const inp = mk("input", { type: "text", class: "bxbin", placeholder: ph || "",
+                              value: value == null ? "" : String(value) });
+    lab.appendChild(inp);
+    body.appendChild(lab);
+    inp.addEventListener("change", () => fn(inp.value));
+    return inp;
+  };
+  const mode = n.input_mode || "values";
+  if (mode === "values") {
+    field("values", n.values || "1", "4 5 6 \u2014 the numbers it carries", (v) => {
+      const parts = v.replace(/,/g, " ").split(/\s+/).filter(Boolean);
+      const nums = parts.length && parts.every(x => isFinite(Number(x)));
+      save({ input_mode: "values", values: v,
+             dout: nums ? parts.length : undefined });   // its width is its data
+    });
+  } else if (mode === "text") {
+    field("text", n.text || "", "the string it carries",
+          (v) => save({ input_mode: "text", text: v }));
+  } else if (mode === "python") {
+    const ta = mk("textarea", { class: "bxjson", spellcheck: "false",
+                                placeholder: "x = [[1.0, 2.0], [3.0, 4.0]]" });
+    ta.value = n.input_code || "";
+    body.appendChild(ta);
+    ta.addEventListener("change", () => save({ input_mode: "python", input_code: ta.value }));
+  } else {
+    field("rows", n.input_rows == null ? "1" : n.input_rows, "2 \u2014 the batch",
+          (v) => save({ input_mode: "random", input_rows: v }));
+    field("size", n.dout == null ? "" : n.dout, "8 \u2014 the vector's width",
+          (v) => save({ input_mode: "random", dout: v }));
+  }
+  sel.addEventListener("change", () => save({ input_mode: sel.value }));
+}
 function bxRunOutcome() {                       // the run's verdict, in one line
   if (BXRUN.running) return { ok: true, text: "\u2026 running the design" };
   if (BXRUN.loading) return { ok: true, text: "\u2026 loading the weights" };
@@ -3949,6 +4029,8 @@ function bxJSONNode(n) {
     if (n.input_rows != null) o.input_rows = n.input_rows;
     if (n.values) o.values = n.values;
     if (n.text) o.text = n.text;
+    if (n.box) o.box = { w: Math.round(n.box.w || 300), h: Math.round(n.box.h || 170) };
+    if (n.panel) o.panel = n.panel;      // {expand} — the editor's size
   }
   else if (n.kind === "output") o.din = n.din == null ? null : n.din;
   else if (n.kind === "layer") { o.din = n.din == null ? null : n.din;
@@ -4273,6 +4355,9 @@ function bxJSONNodeFrom(o) {
     if (rows && rows >= 1) n.input_rows = rows;
     if (typeof o.values === "string" && o.values.trim()) n.values = bxClip(o.values, 4096);
     if (typeof o.text === "string") n.text = bxClip(o.text, 4096);
+    if (o.box && typeof o.box === "object")
+      n.box = { w: bxSize(o.box.w, 300), h: bxSize(o.box.h, 170) };
+    if (o.panel && typeof o.panel === "object") n.panel = { expand: !!o.panel.expand };
   }
   else if (o.kind === "output") n.din = bxSize(o.din);
   else if (o.kind === "layer") { n.din = bxSize(o.din); n.dout = bxSize(o.dout); }
@@ -4588,6 +4673,8 @@ function bxNodeW(n) {
     return Math.max(320, Number((n.box || {}).w) || 480);
   if (n && n.kind === "dataset")           // …and so is the dataset's sheet
     return Math.max(320, Number((n.box || {}).w) || 440);
+  if (n && n.kind === "input")             // …and the input's own editor
+    return Math.max(240, Number((n.box || {}).w) || 300);
   return BXW;
 }
 function bxNodeH(n) {
@@ -4595,6 +4682,8 @@ function bxNodeH(n) {
     return Math.max(160, Number((n.box || {}).h) || 320);
   if (n && n.kind === "dataset")
     return Math.max(180, Number((n.box || {}).h) || 300);
+  if (n && n.kind === "input")
+    return Math.max(120, Number((n.box || {}).h) || 170);
   const p = Math.max(bxPortDefs(n, "in").length, bxPortDefs(n, "out").length);
   return p > 2 ? 40 * Math.ceil((30 + 16 * p) / 40) : BXH;   // whole cells, always
 }
@@ -4962,7 +5051,8 @@ function bxCard(n) {
     g.appendChild(svgText(cx, cy + 4,
                           Math.round(100 * bxTaskFraction(task)) + "%", "dringnum"));
   }
-  if ((n.kind === "agent" || n.kind === "train" || n.kind === "dataset") && !preview) {
+  if ((n.kind === "agent" || n.kind === "train" || n.kind === "dataset" ||
+       n.kind === "input") && !preview) {
     const fo = svg("foreignObject",       // the display lives inside the card
                    { x: n.x + 5, y: n.y + 40,
                      width: Math.max(80, w - 10),
@@ -4971,6 +5061,7 @@ function bxCard(n) {
     pane.setAttribute("data-agent", n.id);
     if (n.kind === "dataset") bxDatasetFill(pane, n);
     else if (n.kind === "train") bxTrainFill(pane, n);
+    else if (n.kind === "input") bxInputFill(pane, n);
     else bxAgentFill(pane, n);
     fo.appendChild(pane);
     g.appendChild(fo);
@@ -7761,9 +7852,11 @@ function bxDblClick(ev) {
   const id = onBox && onBox.getAttribute ? onBox.getAttribute("data-id") : null;
   const n = id ? bxNode(id) : null;
   if (n && n.kind === "custom") { ev.preventDefault(); bxEnter(n.id); return; }
-  if (n && (n.kind === "agent" || n.kind === "train" || n.kind === "dataset")) {
+  if (n && (n.kind === "agent" || n.kind === "train" || n.kind === "dataset" ||
+            n.kind === "input")) {
     ev.preventDefault();                       // a display box: expand / shrink
     if (n.kind === "dataset") bxDatasetExpand(n);
+    else if (n.kind === "input") bxInputExpand(n);
     else {
       const p = n.panel || (n.panel = {});
       p.expand = !p.expand;
