@@ -1397,6 +1397,22 @@ check("the input box edits its data right on the canvas", () => {
   __t.bxRemove(i.id);
 });
 
+check("an agent refresh leaves the input box's editor alone", () => {
+  const i = __t.bxAdd("input", 0, 0, { values: "4 5 6" });
+  __t.bxRender();
+  __t.bxAgentSync();                           // the agent state sweeps every pane
+  const pane = getEl("bxcanvas").querySelectorAll(".bxlogpane")
+    .find(p => p.getAttribute("data-agent") === i.id);
+  ok(!!pane, "the input box has its pane");
+  ok(pane.querySelectorAll(".bxsel").length === 1 &&
+     pane.querySelectorAll(".bxbin").length === 1,
+     "…still the input editor");
+  ok(pane.querySelectorAll(".bxbbtn").length === 0 &&
+     pane.querySelectorAll(".bxptitle").length === 0,
+     "…not the agent's buttons and task list");
+  __t.bxRemove(i.id);
+});
+
 check("re-placing a box keeps the last run's data (an edit still clears it)", () => {
   __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
   const i = __t.bxAdd("input", 0, 0, { dout: 2 });

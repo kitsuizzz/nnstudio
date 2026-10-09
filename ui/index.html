@@ -5059,10 +5059,7 @@ function bxCard(n) {
                      height: Math.max(40, h - 46), class: "bxlogfo" });
     const pane = mk("div", { class: "bxlogpane" });
     pane.setAttribute("data-agent", n.id);
-    if (n.kind === "dataset") bxDatasetFill(pane, n);
-    else if (n.kind === "train") bxTrainFill(pane, n);
-    else if (n.kind === "input") bxInputFill(pane, n);
-    else bxAgentFill(pane, n);
+    bxPaneFill(pane, n);
     fo.appendChild(pane);
     g.appendChild(fo);
   }
@@ -6768,6 +6765,12 @@ function bxAgentFill(pane, n) {                // fill one box's pane from the s
   grip.addEventListener("mousedown", (ev) => bxAgentGrip(ev, n));
   pane.appendChild(grip);
 }
+function bxPaneFill(pane, n) {                 // one pane, filled by its kind —
+  if (n.kind === "dataset") bxDatasetFill(pane, n);   // every renderer goes through
+  else if (n.kind === "train") bxTrainFill(pane, n);  // this, so none can drift
+  else if (n.kind === "input") bxInputFill(pane, n);
+  else bxAgentFill(pane, n);
+}
 function bxAgentSync() {                       // every pane follows the state, live
   const root = bxHost() && bxHost().querySelector ? bxHost().querySelector(".bxsvg") : null;
   if (root && root.querySelectorAll) {
@@ -6775,9 +6778,7 @@ function bxAgentSync() {                       // every pane follows the state, 
       const id = pane.getAttribute ? pane.getAttribute("data-agent") : null;
       const n = id ? bxNode(id) : null;
       if (!n) continue;
-      if (n.kind === "dataset") bxDatasetFill(pane, n);
-      else if (n.kind === "train") bxTrainFill(pane, n);
-      else bxAgentFill(pane, n);
+      bxPaneFill(pane, n);
     }
   }
   bxAgentTick();
