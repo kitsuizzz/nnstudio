@@ -607,6 +607,15 @@
   .chip.tiny { padding: 3px 9px; font-size: 11.5px; font-family: var(--mono); }
   .chip.tiny:hover { color: var(--warm); border-color: rgba(251,191,36,.5); background: rgba(251,191,36,.10); }
   .chip.act { color: var(--accent2); border-color: rgba(253,186,116,.5); background: rgba(253,186,116,.1); }
+  /* the Run box's run action: a green play button, and the outcome line */
+  .chip.play { color: #07240f; background: #22c55e; border-color: #22c55e; font-weight: 600; }
+  .chip.play:hover { color: #07240f; background: #16a34a; border-color: #16a34a; }
+  .chip.play.off { color: var(--ink-dim); background: rgba(34,197,94,.16);
+                   border-color: rgba(34,197,94,.45); font-weight: 400; }
+  .chip.play.off:hover { color: var(--ink); background: rgba(34,197,94,.24);
+                         border-color: rgba(34,197,94,.6); }
+  .runok { color: #4ade80; }
+  .runbad { color: var(--err); }
   .lmcap { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; margin: 14px 0 0; }
   .rhead { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
   .rhead h2 { margin: 0; }
@@ -3540,12 +3549,12 @@ function bxTrainFill(pane, n) {                   // the hub: Execute and Spec, 
   pane.appendChild(mk("div", { class: "mhead", text: "mode" }));
   pane.appendChild(bxRunModeSeg());
   const runbar = mk("div", { class: "rrow" });
-  const go = mk("span", { class: "chip tiny" + (bxtRunEnabled() ? "" : " off"),
+  const go = mk("span", { class: "chip tiny play" + (bxtRunEnabled() ? "" : " off"),
                           text: BXRUN.running ? "running\u2026"
                                : BXRUN.loading ? "loading\u2026"
                                : (BXRUN.mode || "inference") === "training"
-                                 ? "train the design"
-                                 : "run the design" });
+                                 ? "\u25b6 train the design"
+                                 : "\u25b6 run the design" });
   go.title = bxtRunEnabled() ? "the whole design on the backend"
                              : "connect a backend first \u2014 Backend \u25be";
   go.addEventListener("click", () => {
@@ -3553,8 +3562,23 @@ function bxTrainFill(pane, n) {                   // the hub: Execute and Spec, 
   });
   runbar.appendChild(go);
   pane.appendChild(runbar);
-  if (BXRUN.msg)                               // a step of the run, or what went wrong
-    pane.appendChild(mk("div", { class: "bxbhint", text: BXRUN.msg }));
+  const outcome = bxRunOutcome();               // did it run, and what came back
+  if (outcome)
+    pane.appendChild(mk("div", { class: "bxbhint " + (outcome.ok ? "runok" : "runbad"),
+                                 text: outcome.text }));
+}
+function bxRunOutcome() {                       // the run's verdict, in one line
+  if (BXRUN.running) return { ok: true, text: "\u2026 running the design" };
+  if (BXRUN.loading) return { ok: true, text: "\u2026 loading the weights" };
+  if (BXRUN.msg) return { ok: !BXRUN.error,
+                          text: (BXRUN.error ? "\u2717 " : "\u2026 ") + BXRUN.msg };
+  const r = BXRUN.last;
+  if (!r || !Object.keys(bxRunValues || {}).length) return null;   // stale once edited
+  const n = Object.keys(r.values || {}).length + Object.keys(r.texts || {}).length;
+  const bits = [n + " box" + (n === 1 ? "" : "es"), (r.ms || 0) + " ms"];
+  if (r.device) bits.push("on " + r.device);
+  else if (r.backend) bits.push("on " + r.backend);
+  return { ok: true, text: "\u2713 ran the design \u00b7 " + bits.join(" \u00b7 ") };
 }
 function bxTrainSpec(pane) {                  // Spec: the machine, its usage, and
   // how the design's weights sit on it
@@ -5989,6 +6013,7 @@ function bxtRunGo() {
   }
   const flow = bxFlowVerify();                 // the browser verifies the dataflow first
   if (!flow.ok) {
+    BXRUN.error = true;                        // the run did not happen
     bxRunErr = { ids: flow.bad, here: null, msg: flow.why };
     bxRender();                                // the boxes it blames go red
     bxtRunMsg(flow.why);
@@ -5997,6 +6022,7 @@ function bxtRunGo() {
   BXRUN.running = true;
   BXRUN.msg = "";
   BXRUN.error = false;
+  BXRUN.last = null;                           // the last run's readout is stale now
   bxFlowStep = null;                           // the first pass counts as new
   bxFlowClear();                               // the last run's lights wash out
   bxRunErrClear();

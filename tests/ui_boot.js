@@ -226,6 +226,7 @@ globalThis.__t = {
   bxMarkAudit, bxAuditClear, get bxAudit() { return bxAudit; },
   get bxFlowSet() { return bxFlowSet; }, get bxFlowNow() { return bxFlowNow; },
   get bxDataState() { return bxDataState; }, set bxDataState(v) { bxDataState = v; },
+  get bxRunValues() { return bxRunValues; }, set bxRunValues(v) { bxRunValues = v; },
   get BXRUN() { return BXRUN; }, set BXRUN(v) { BXRUN = v; },
   bxCopySelection, bxCopyBoxes, bxPasteBoxes, bxPastePoint, bxOnCopy, bxOnPaste, bxTyping,
   bxLevelOff, bxLevelFrozen, bxBoxOff, bxBoxFrozen, bxOffHere, bxInnerOutOff, bxWarnSet,
@@ -749,13 +750,28 @@ check("the Run box carries the machine, the weights and the run's readout", () =
   ok(fill("exec").querySelectorAll(".bxbspec").length === 0,
      "…the machine stays out of Execute");
   ok(fill("exec").querySelectorAll(".chip").length === 1 &&
-     fill("exec").querySelectorAll(".bxbin").length === 0 &&
-     fill("exec").querySelectorAll(".bxbhint").length === 0,
+     fill("exec").querySelectorAll(".bxbin").length === 0,
      "…Execute keeps only the mode switch and the run action");
+  const play = fill("exec").querySelectorAll(".chip")[0];
+  ok(play && String(play.className).indexOf("play") >= 0 &&
+     play.textContent.indexOf("run the design") >= 0,
+     "…the run action is a green play button: " + (play && play.textContent));
+  __t.BXRUN.error = true;
   __t.BXRUN.msg = "the dataflow is not whole";
-  ok(fill("exec").querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ")
-       .indexOf("dataflow") >= 0, "…and a run's message shows under the run action");
+  ok(fill("exec").querySelectorAll(".bxbhint.runbad").map(e => e.textContent).join(" | ")
+       .indexOf("dataflow") >= 0, "…and a failed run shows why, in red");
+  __t.BXRUN.error = false;
   __t.BXRUN.msg = "";
+  __t.BXRUN.last = { ms: 12, device: "cuda", values: { a: {}, b: {} }, texts: {} };
+  __t.bxRunValues = { a: { shape: [1] }, b: { shape: [1] } };
+  ok(fill("exec").querySelectorAll(".bxbhint.runok").map(e => e.textContent).join(" | ")
+       .indexOf("ran the design") >= 0, "…and a good run says so, in green");
+  ok(fill("exec").querySelectorAll(".bxbhint.runok").map(e => e.textContent).join(" | ")
+       .indexOf("cuda") >= 0, "…naming the device it ran on");
+  __t.BXRUN.last = null;
+  __t.bxRunValues = {};
+  ok(fill("exec").querySelectorAll(".bxbhint").length === 0,
+     "…and an edit clears the verdict");
   ok(fill("spec").querySelectorAll(".chip").map(c => c.textContent)
        .indexOf("run the design") < 0, "…and the run action stays out of Spec");
   // the menu switches views, and the choice sticks to the box
@@ -767,7 +783,8 @@ check("the Run box carries the machine, the weights and the run's readout", () =
      "…and the design carries the open view");
   fill("spec").querySelectorAll(".runmi").find(b => b.textContent === "Execute").click();
   eql(tr.panel.tab, "exec", "…and back to Execute");
-  const goOff = fill("exec").querySelectorAll(".chip").find(c => c.textContent === "run the design");
+  const goOff = fill("exec").querySelectorAll(".chip")
+    .find(c => c.textContent.indexOf("run the design") >= 0);
   ok(goOff && String(goOff.className).indexOf("off") >= 0,
      "the run action lives in the box, off without a backend");
   __t.BX_BACKEND.mode = "local";
@@ -780,7 +797,8 @@ check("the Run box carries the machine, the weights and the run's readout", () =
                vram_used_gb: 6.1, vram_total_gb: 32, vram_pct: 19 } } },
       inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
       msg: "", running: false };
-  const goOn = fill("exec").querySelectorAll(".chip").find(c => c.textContent === "run the design");
+  const goOn = fill("exec").querySelectorAll(".chip")
+    .find(c => c.textContent.indexOf("run the design") >= 0);
   ok(goOn && String(goOn.className).indexOf("off") < 0, "…and it lights with the backend");
   ok(bstate().indexOf("gpu-box") >= 0 && bstate().indexOf("RTX 5090") >= 0 &&
      bstate().indexOf("cuda") >= 0, "Spec shows the backend machine");
