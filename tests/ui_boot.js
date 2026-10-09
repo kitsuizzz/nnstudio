@@ -202,7 +202,7 @@ globalThis.__t = {
   bxTensorDtype, bxApplyManifest,
   bxtFilesToggle, bxtFilesClose, bxtPaletteToggle, bxtVramToggle,
   bxtBackendToggle, bxtBackendPick, get BX_BACKEND() { return BX_BACKEND; },
-  bxtRunToggle, bxtRunRefresh, bxtRunRender, bxtRunEnabled, bxtRunGo, bxtRunLoad,
+  bxtRunToggle, bxtRunRefresh, bxtRunSync, bxtRunEnabled, bxtRunGo, bxtRunLoad,
   bxtRunOffload,
   bxSpecRow, bxSpecRows, fetchBackend, bxWeightedBox, bxEveryBox, bxSetPlace,
   bxSetAllPlaces, bxApplyOffload, bxOffloadPlan, bxOffloadRatio, bxBoxWeightTotal,
@@ -668,47 +668,47 @@ check("the Backend menu: Local and Remote drop down into their instructions", ()
   ok(m.hidden, "…and it closes");
 });
 
-check("the Run menu: dark until a backend is established, then it runs", () => {
+check("the Run button: the box on and off the canvas", () => {
   const btn = getEl("bxtRunBtn");
-  const m = getEl("bxtRunMenu");
-  const state = () => m.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
-  const chips = () => m.querySelectorAll(".chip").map(e => e.textContent);
+  const panes = () => getEl("bxcanvas").querySelectorAll(".bxlogpane")
+    .map(el => el.getAttribute("data-agent"));
+  const trainCount = () => __t.BX.nodes.filter(n => n.kind === "train").length;
+  const disconnected = { local: { connected: false, agent: null }, inputs: {}, last: null,
+                         loaded: null, loading: false, loadKey: null, msg: "", running: false };
   __t.BX_BACKEND.mode = "local";
   __t.BX_BACKEND.key = "";
+  __t.BXRUN = disconnected;
   __t.bxtRunRefresh();
-  ok(String(btn.className).indexOf("off") >= 0, "Run starts disabled without a backend");
-  ok(__t.bxtRunEnabled() === false, "…and knows it");
-  ok(__t.bxtRunToggle() === false && m.hidden, "…and will not open");
-  // an agent connects: Run lights up, and the menu shows the machine live
+  ok(trainCount() === 0, "the canvas starts with no Run box");
+  ok(__t.bxtRunEnabled() === false, "…and no backend is connected");
+  ok(String(btn.className).indexOf("off") >= 0, "…so the Run button reads off");
+  ok(btn.title === "show the Run box", "…saying what a press will do");
+  ok(__t.bxtRunToggle() === true, "the button shows the box");
+  const hub = __t.bxTrainHub();
+  ok(hub && hub.name === "run 1", "…a fresh Run box named run 1");
+  ok(panes().indexOf(hub.id) >= 0, "…drawn on the canvas");
+  ok(String(btn.className).indexOf("off") < 0 && btn.title === "hide the Run box",
+     "…and the button now offers to hide it");
+  ok(__t.bxtRunToggle() === false && hub.hidden === true, "a second press hides the box");
+  ok(panes().indexOf(hub.id) < 0, "…the box leaves the canvas");
+  ok(String(btn.className).indexOf("off") >= 0 && btn.title === "show the Run box",
+     "…and the button offers to show it again");
+  ok(__t.bxTrainHub() && __t.bxTrainHub().id === hub.id, "…hidden, it is still the hub");
+  ok(__t.bxAdd("train", 200, 0, {}) === null, "…so a second one stays refused");
+  eql(__t.bxJSONNode(hub).hidden, true, "…and the design carries the hidden flag");
+  ok(__t.bxImportJSON(JSON.stringify(__t.bxExportCanvas()), {}).ok, "the canvas round-trips");
+  const back = __t.bxTrainHub();
+  ok(back && back.hidden === true, "…and the box comes back hidden");
+  ok(__t.bxtRunToggle() === true && !back.hidden, "a press shows it again");
+  ok(panes().indexOf(back.id) >= 0, "…and the box is back on the canvas");
+  // Backend -> Local keeps the connection, and points at the Run box
   __t.BXRUN = { local: { connected: true, agent: { name: "gpu-box", remote: "127.0.0.1:1",
       since: 1, last_seen: 1, specs: { name: "gpu-box", os: "Linux-test", cpu: "Test CPU",
       cores: 16, ram_gb: 64, gpu: "NVIDIA RTX 5090", vram_gb: 32, device: "cuda",
-      cuda: true, torch: "2.13.0" },
-      usage: { ram_used_gb: 14.2, ram_total_gb: 64, ram_pct: 22,
-               vram_used_gb: 6.1, vram_total_gb: 32, vram_pct: 19 } } },
+      cuda: true, torch: "2.13.0" } } },
       inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
       msg: "", running: false };
-  __t.bxtRunRefresh();
-  ok(String(btn.className).indexOf("off") < 0, "an agent lights Run up");
-  ok(__t.bxtRunToggle() === true && !m.hidden, "…and it opens");
-  ok(chips().indexOf("run the design") >= 0, "…and the run action");
-  ok(m.querySelectorAll(".bxbspec").length === 0 && state().indexOf("gpu-box") < 0,
-     "…the machine's specs are in the Run box, not here");
-  ok(chips().indexOf("show the Run box") >= 0, "…offering the Run box the canvas lacks");
-  // bad input text is refused before anything is sent
-  const inNode = __t.BX.nodes.find(n => n.kind === "input");
-  if (inNode) {
-    __t.BXRUN.inputs[inNode.id] = "not numbers";
-    __t.bxtRunGo();
-    ok(__t.BXRUN.msg.indexOf("needs numbers") >= 0, "an input that is not numbers is refused");
-    __t.BXRUN.inputs = {};
-    __t.BXRUN.msg = "";
-    __t.BXRUN.last = null;
-    __t.bxtRunRender();
-  }
-  // Backend -> Local keeps the connection, and points at Run for the specs
-  __t.bxtRunToggle();
-  __t.bxtBackendToggle();                       // closes Run, opens Backend
+  __t.bxtBackendToggle();
   const bm = getEl("bxtBackendMenu");
   const heads = () => bm.children.filter(c => c.className === "bxtcat");
   const firstOpen = () => ((heads()[0].querySelectorAll(".chev")[0] || {}).textContent === "\u25be");
@@ -717,23 +717,17 @@ check("the Run menu: dark until a backend is established, then it runs", () => {
   const hint = pane.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
   ok(hint.indexOf("connected") >= 0 && hint.indexOf("live usage are in the Run box") >= 0,
      "Backend → Local keeps the connection and points at the Run box");
-  ok(pane.querySelectorAll(".bxbspec").length === 0, "…with the specs moved out");
   __t.bxtBackendToggle();
-  // the agent leaves: the light goes out
-  __t.BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
-                loaded: null, loading: false, loadKey: null, msg: "", running: false };
-  __t.bxtRunRefresh();
-  ok(String(btn.className).indexOf("off") >= 0, "the agent leaves — Run goes dark");
-  // a saved Modal key is enough to enable it; the menu says what is missing
+  // a saved Modal key still counts as a backend (the run action's readiness)
   __t.BX_BACKEND.mode = "remote";
   __t.BX_BACKEND.key = "ak-test";
-  __t.bxtRunRefresh();
   ok(__t.bxtRunEnabled() === true, "a saved Modal key also establishes a backend");
-  ok(__t.bxtRunToggle() === true && !m.hidden, "…and Run opens");
-  ok(state().indexOf("not wired yet") >= 0, "…saying the Modal transport is not wired yet");
-  __t.bxtRunToggle();
   __t.BX_BACKEND.mode = "local";
   __t.BX_BACKEND.key = "";
+  // leave the canvas and the backend as the next block found them
+  const fin = __t.bxTrainHub();
+  if (fin) __t.bxRemove(fin.id);
+  __t.BXRUN = disconnected;
   __t.bxtRunRefresh();
 });
 
@@ -745,6 +739,9 @@ check("the Run box carries the machine, the weights and the run's readout", () =
   const bchips = () => fill().querySelectorAll(".chip").map(e => e.textContent);
   const specsIn = (root) => root.querySelectorAll(".bxbspec")
     .map(r => r.children.map(c => c.textContent).join(" ")).join(" | ");
+  const goOff = fill().querySelectorAll(".chip").find(c => c.textContent === "run the design");
+  ok(goOff && String(goOff.className).indexOf("off") >= 0,
+     "the run action lives in the box, off without a backend");
   __t.BX_BACKEND.mode = "local";
   __t.BX_BACKEND.key = "";
   __t.BXRUN = { local: { connected: true, agent: { name: "gpu-box", remote: "127.0.0.1:1",
@@ -755,6 +752,8 @@ check("the Run box carries the machine, the weights and the run's readout", () =
                vram_used_gb: 6.1, vram_total_gb: 32, vram_pct: 19 } } },
       inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
       msg: "", running: false };
+  const goOn = fill().querySelectorAll(".chip").find(c => c.textContent === "run the design");
+  ok(goOn && String(goOn.className).indexOf("off") < 0, "…and it lights with the backend");
   ok(bstate().indexOf("gpu-box") >= 0 && bstate().indexOf("RTX 5090") >= 0 &&
      bstate().indexOf("cuda") >= 0, "it shows the backend machine");
   const specs = specsIn(fill());
@@ -833,68 +832,6 @@ check("the Run box carries the machine, the weights and the run's readout", () =
   __t.bxRemove(tr.id);
 });
 
-
-check("the Run menu toggles the Run box's appearance on the canvas", () => {
-  const m = getEl("bxtRunMenu");
-  const state = () => m.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
-  const chips = () => m.querySelectorAll(".chip").map(e => e.textContent);
-  const trainCount = () => __t.BX.nodes.filter(n => n.kind === "train").length;
-  const panes = () => getEl("bxcanvas").querySelectorAll(".bxlogpane")
-    .map(el => el.getAttribute("data-agent"));
-  const disconnected = { local: { connected: false, agent: null }, inputs: {}, last: null,
-                         loaded: null, loading: false, loadKey: null, msg: "", running: false };
-  // a connected backend, and the canvas has no Run box yet
-  __t.BX_BACKEND.mode = "local";
-  __t.BX_BACKEND.key = "";
-  __t.BXRUN = { local: { connected: true, agent: { name: "gpu-box", remote: "127.0.0.1:1",
-      since: 1, last_seen: 1, specs: { name: "gpu-box", os: "Linux-test", cpu: "Test CPU",
-      cores: 16, ram_gb: 64, gpu: "NVIDIA RTX 5090", vram_gb: 32, device: "cuda",
-      cuda: true, torch: "2.13.0" } } },
-      inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
-      msg: "", running: false };
-  ok(trainCount() === 0, "the canvas starts with no Run box");
-  ok(__t.bxtRunToggle() === true && !m.hidden, "…and Run opens");
-  ok(chips().indexOf("show the Run box") >= 0, "…offering to show one in the default inference state");
-  ok(state().indexOf("no Run box") >= 0, "…and explaining what the Run box is for");
-  // the chip shows the box and dismisses the menu so the box lands on the canvas
-  const offer = m.querySelectorAll(".chip").find(c => c.textContent === "show the Run box");
-  offer.click();
-  const hub = __t.BX.nodes.find(n => n.kind === "train");
-  ok(hub && hub.name === "run 1", "the chip shows a Run box named run 1");
-  ok(__t.bxTrainHub() && __t.bxTrainHub().id === hub.id, "…and it becomes the training hub");
-  ok(m.hidden, "…and the menu dismisses");
-  ok(panes().indexOf(hub.id) >= 0, "…and the box is drawn on the canvas");
-  // re-open: the menu offers to hide it, next to the run button
-  ok(__t.bxtRunToggle() === true && !m.hidden, "…and it opens again");
-  ok(chips().indexOf("show the Run box") < 0, "…the show offer is gone once a Run box exists");
-  ok(chips().indexOf("hide the Run box") >= 0 && chips().indexOf("run the design") >= 0,
-     "…offering to hide the box, next to the run button");
-  // toggling hides it: the box leaves the canvas, the hub stays
-  m.querySelectorAll(".chip").find(c => c.textContent === "hide the Run box").click();
-  ok(hub.hidden === true, "hiding lands on the node");
-  ok(panes().indexOf(hub.id) < 0, "…and the box leaves the canvas");
-  ok(chips().indexOf("show the Run box") >= 0, "…and the toggle flips to show");
-  ok(state().indexOf("still trains from it") >= 0, "…saying the design still trains from it");
-  ok(__t.bxTrainHub() && __t.bxTrainHub().id === hub.id, "…and it is still the hub");
-  ok(__t.bxAdd("train", 200, 0, {}) === null, "…so a second one stays refused");
-  eql(__t.bxJSONNode(hub).hidden, true, "…and the design carries the hidden flag");
-  ok(__t.bxImportJSON(JSON.stringify(__t.bxExportCanvas()), {}).ok, "the canvas round-trips");
-  const back = __t.bxTrainHub();
-  ok(back && back.hidden === true, "…and the box comes back hidden");
-  // show it again: the box returns to the canvas
-  __t.bxtRunRender();                          // the chip now points at the new node
-  m.querySelectorAll(".chip").find(c => c.textContent === "show the Run box").click();
-  ok(__t.bxTrainHub() && !__t.bxTrainHub().hidden, "showing lands too");
-  ok(panes().indexOf(back.id) >= 0, "…and the box is back on the canvas");
-  // leave the canvas and the backend as the next block found them
-  __t.bxtRunToggle();
-  const fin = __t.bxTrainHub();
-  if (fin) __t.bxRemove(fin.id);
-  __t.BXRUN = disconnected;
-  __t.BX_BACKEND.mode = "local";
-  __t.BX_BACKEND.key = "";
-  __t.bxtRunRefresh();
-});
 
 check("the cpu-offload ratio splits the first layers", () => {
   // a small nested model: one box with four layer blocks, 40 000 B each
@@ -1120,7 +1057,6 @@ check("a generate run posts the ids to grow and the logits to read", () => {
                 inputs: {}, texts: {}, last: null, loaded: null, loading: false,
                 loadKey: null, msg: "", running: false, gen: 3, temp: 0 };
   __t.BXRUN.texts[t.id] = "The capital of France is";
-  __t.bxtRunRender();
   const realFetch = global.fetch;
   let sent = null;
   global.fetch = async (url, opts) => {
@@ -3634,25 +3570,10 @@ check("the Run box: one only, at the top level, and no rename", () => {
   const nest = __t.bxAdd("custom", 0, 300, {});
   __t.bxEnter(nest.id);
   ok(__t.bxAdd("train", 0, 0, {}) === null, "inside a nested box a Run box is refused");
-  __t.BX_BACKEND.mode = "local";
-  __t.BX_BACKEND.key = "";
-  __t.BXRUN = { local: { connected: true, agent: { name: "gpu-box", remote: "127.0.0.1:1",
-      since: 1, last_seen: 1, specs: { name: "gpu-box", os: "Linux-test", cpu: "Test CPU",
-      cores: 16, ram_gb: 64, gpu: "NVIDIA RTX 5090", vram_gb: 32, device: "cuda",
-      cuda: true, torch: "2.13.0" } } },
-      inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
-      msg: "", running: false };
-  const rm = getEl("bxtRunMenu");
-  ok(__t.bxtRunToggle() === true && !rm.hidden, "the Run menu opens inside one");
-  const state = rm.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
-  const chips = () => rm.querySelectorAll(".chip").map(e => e.textContent);
-  ok(state.indexOf("top level") >= 0, "…and says the Run box lives at the top level");
-  ok(chips().indexOf("add a Run box") < 0, "…with no offer to add one there");
-  ok(chips().indexOf("run the design") >= 0, "…while the run itself stays available");
-  __t.bxtRunToggle();
-  __t.BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
-                loaded: null, loading: false, loadKey: null, msg: "", running: false };
+  ok(__t.bxtRunToggle() === false, "…and the Run button shows no box here");
   __t.bxtRunRefresh();
+  ok(getEl("bxtRunBtn").title.indexOf("top level") >= 0,
+     "…and says the Run box lives at the top level");
   __t.bxLeave();
   // it never moves into one, and a paste never makes a second
   ok(__t.bxMoveInto(tr.id, nest.id) === false, "it never moves into a nested box");

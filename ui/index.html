@@ -764,7 +764,7 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 #bxtRunBtn { color: #1a120b; background: var(--accent); border-color: var(--accent);
              padding: 3px 15px; }
 #bxtRunBtn:hover { color: #1a120b; border-color: var(--accent); }
-#bxtRunBtn.off { opacity: 1; color: var(--ink-dim); cursor: default;
+#bxtRunBtn.off { opacity: 1; color: var(--ink-dim);
                  background: rgba(249,115,22,.22); border-color: rgba(249,115,22,.45); }
 #bxtRunBtn.off:hover { color: var(--ink-dim); border-color: rgba(249,115,22,.45); }
 .bxtdrop { position: absolute; top: 32px; left: 10px; z-index: 40; min-width: 158px; padding: 4px;
@@ -793,13 +793,12 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 .bxbspec { display: flex; justify-content: space-between; gap: 12px;
            font: 11px/1.5 var(--mono); color: var(--ink-dim); }
 .bxbspec b { color: var(--ink); font-weight: 600; text-align: right; }
-#bxtRunMenu { min-width: 300px; }
-#bxtRunMenu label.rf, .bxrunbody label.rf { display: flex; align-items: center; gap: 6px;
-                       font-size: 12px; color: var(--ink-dim); }
-#bxtRunMenu input.bxoff, .bxrunbody input.bxoff { flex: 1; min-width: 96px; accent-color: var(--accent);
-                          height: 16px; }
-#bxtRunMenu .wmode, .bxrunbody .wmode { margin-left: auto; font: 11px var(--mono); color: var(--ink-dim); }
-/* the Run box's window: the details the Run menu used to carry live here */
+.bxrunbody label.rf { display: flex; align-items: center; gap: 6px;
+                      font-size: 12px; color: var(--ink-dim); }
+.bxrunbody input.bxoff { flex: 1; min-width: 96px; accent-color: var(--accent);
+                         height: 16px; }
+.bxrunbody .wmode { margin-left: auto; font: 11px var(--mono); color: var(--ink-dim); }
+/* the Run box's window: the machine, the weights, the feeds, the readout */
 .bxrunbody { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex;
              flex-direction: column; }
 .modeseg { display: flex; gap: 4px; }
@@ -872,8 +871,7 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
       <div class="bxtdrop" id="bxtPalMenu" hidden></div>
       <span class="bxtbtn" id="bxtBackend" title="where the heavy work runs">Backend ▾</span>
       <div class="bxtdrop" id="bxtBackendMenu" hidden></div>
-      <span class="bxtbtn off" id="bxtRunBtn" title="connect a backend first — Backend ▾">Run ▾</span>
-      <div class="bxtdrop" id="bxtRunMenu" hidden></div>
+      <span class="bxtbtn off" id="bxtRunBtn" title="show the Run box">Run</span>
       <span class="bxtspace"></span>
       <span class="bxtbtn" id="bxtVram" title="the VRAM estimate">VRAM ▾</span>
       <div class="bxtdrop bxtdrop-r" id="bxtVramMenu" hidden>
@@ -3469,7 +3467,7 @@ function bxTrainLoadCkpt(n, st) {                 // train → inference, with t
   BXRUN.error = false;
   BXRUN.msg = "loading the last checkpoint\u2026";
   bxRender();
-  bxtRunRender();
+  bxtRunSync();
   fetch("/api/load", { method: "POST", headers: { "Content-Type": "application/json" },
                        body: JSON.stringify({ canvas, mode: "inference",
                                                checkpoint: st.saved_at }) })
@@ -3480,14 +3478,14 @@ function bxTrainLoadCkpt(n, st) {                 // train → inference, with t
         throw new Error((res.d && res.d.error) || "the checkpoint could not be loaded");
       BXRUN.loaded = res.d;
       BXRUN.warmMode = (res.d && res.d.mode) || "inference";
-      bxtRunRender();
+      bxtRunSync();
       bxRender();
       bxTrainNote(n, "loaded — the graph now carries the trained weights");
       fetchBackend();
     })
     .catch(e => {
       BXRUN.loading = false;
-      bxtRunRender();
+      bxtRunSync();
       bxRender();
       bxTrainNote(n, String((e && e.message) || e));
     });
@@ -3507,6 +3505,20 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
   // the mode switch lives in the Run box, not the toolbar
   pane.appendChild(mk("div", { class: "mhead", text: "mode" }));
   pane.appendChild(bxRunModeSeg());
+  const runbar = mk("div", { class: "rrow" });
+  const go = mk("span", { class: "chip tiny" + (bxtRunEnabled() ? "" : " off"),
+                          text: BXRUN.running ? "running\u2026"
+                               : BXRUN.loading ? "loading\u2026"
+                               : (BXRUN.mode || "inference") === "training"
+                                 ? "train the design"
+                                 : "run the design" });
+  go.title = bxtRunEnabled() ? "the whole design on the backend"
+                             : "connect a backend first \u2014 Backend \u25be";
+  go.addEventListener("click", () => {
+    if (bxtRunEnabled() && !BXRUN.running && !BXRUN.loading) bxtRunGo();
+  });
+  runbar.appendChild(go);
+  pane.appendChild(runbar);
   const body = mk("div", { class: "bxrunbody" });
   body.addEventListener("scroll", () => { n._scroll = body.scrollTop; });
   pane.appendChild(body);
@@ -3625,9 +3637,8 @@ function bxTrainFill(pane, n) {                   // the hub: setup, curves, the
   if (st.error) pane.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + st.error }));
   body.scrollTop = keepTop;                    // a refresh never loses the place
 }
-function bxTrainDetails(pane) {                // the details the Run menu used to
-  // carry: the machine, the weights, the feeds and the run's readout. They
-  // live with the Run box now; the menu is the run button alone.
+function bxTrainDetails(pane) {                // the machine, the weights, the feeds,
+  // the run's readout and the run action itself — all in the Run box
   const a = BXRUN.local && BXRUN.local.agent;
   const remote = BX_BACKEND.mode === "remote";
   pane.appendChild(mk("div", { class: "mhead", text: "backend" }));
@@ -3687,7 +3698,7 @@ function bxTrainDetails(pane) {                // the details the Run menu used 
     BX.model = BX.model || {};
     BX.model.cpu_offload = Math.max(0, Math.min(100, Number(orange.value) || 0));
     bxApplyOffload("gpu");                     // one undo step, the boxes follow
-    bxtRunRender();
+    bxtRunSync();
   });
   orender();
   pane.appendChild(oread);
@@ -4111,7 +4122,7 @@ function bxJSONNode(n) {
     if (n.box) o.box = { w: Math.round(n.box.w || 480), h: Math.round(n.box.h || 320) };
     if (n.panel) o.panel = n.panel;      // {expand} — the display's size
     if (n.collapsed) o.collapsed = true;
-    if (n.hidden) o.hidden = true;       // the Run menu toggles the box's appearance
+    if (n.hidden) o.hidden = true;       // the Run button toggles the box's appearance
   }
   else if (n.kind === "dataset") {
     if (n.text) o.text = n.text;
@@ -5500,7 +5511,7 @@ function bxtForm(mode) {
 function bxtExport() { return bxtForm("export"); }
 function bxtImport() { return bxtForm("import"); }
 function bxtDropsClose(keep) {
-  for (const id of ["bxtFilesMenu", "bxtPalMenu", "bxtBackendMenu", "bxtRunMenu", "bxtVramMenu"]) {
+  for (const id of ["bxtFilesMenu", "bxtPalMenu", "bxtBackendMenu", "bxtVramMenu"]) {
     if (id === keep) continue;
     const m = $(id);
     if (m) m.hidden = true;
@@ -5660,22 +5671,39 @@ function bxtRunEnabled() {
   return !!(BXRUN.local && BXRUN.local.connected) ||
          (BX_BACKEND.mode === "remote" && !!(BX_BACKEND.key || "").trim());
 }
-function bxtRunRefresh() {
+function bxtRunRefresh() {                    // the button follows the box's appearance
   const btn = $("bxtRunBtn");
   if (!btn) return;
-  const on = bxtRunEnabled();
-  if (btn.classList) btn.classList.toggle("off", !on);
-  btn.title = on ? "run the whole design on the backend"
-                 : "connect a backend first \u2014 Backend \u25be";
+  const hub = bxTrainAnywhere();
+  const shown = !BX.up && !!hub && !hub.hidden;
+  if (btn.classList) btn.classList.toggle("off", !shown);
+  btn.title = BX.up ? "come back out to the top level first"
+            : shown ? "hide the Run box"
+                    : "show the Run box";
 }
-function bxtRunToggle() {
+function bxtRunToggle() {                     // the Run button: the box on / off
+  if (BX.up) return false;                    // the Run box lives at the top level
+  bxtDropsClose();                            // a plain button: no dropdown to close
+  const hub = bxTrainAnywhere();
+  if (!hub) {                                 // none yet: the toggle creates it
+    bxDropPalette("train", null);
+    bxtRunRefresh();
+    return true;
+  }
+  hub.hidden = !hub.hidden;
+  if (hub.hidden && bxSel && bxSel.kind === "boxes") {
+    bxSel.ids = bxSel.ids.filter(x => x !== hub.id);
+    if (!bxSel.ids.length) bxSel = null;
+  }
+  bxCommit();
+  bxRender();                                 // the canvas and the button follow
+  return !hub.hidden;
+}
+function bxtRunMsg(text) { BXRUN.msg = text; bxtRunSync(); }
+function bxtRunSync() {                       // every run surface, fresh
   bxtRunRefresh();
-  if (!bxtRunEnabled()) return false;
-  const open = bxtToggle("bxtRunMenu");
-  if (open) { bxtRunRender(); fetchBackend(); }
-  return open;
+  bxTrainRefresh();
 }
-function bxtRunMsg(text) { BXRUN.msg = text; bxtRunRender(); }
 function bxGB(bytes) {
   const b = Number(bytes) || 0;
   if (b >= 2 ** 30) return (b / 2 ** 30).toFixed(2) + " GB";
@@ -5687,78 +5715,6 @@ function bxUsageRow(pane, label, used, total, pct) {
   bxSpecRow(pane, label, used.toFixed(1) + " / " + total.toFixed(1) + " GB"
             + (pct == null ? "" : " \u00b7 " + pct + "%"));
 }
-function bxtRunRender() {
-  const menu = $("bxtRunMenu");
-  if (!menu) return;
-  menu.innerHTML = "";
-  const a = BXRUN.local && BXRUN.local.agent;
-  const remote = BX_BACKEND.mode === "remote";
-  // the menu is the run button alone now: the machine, the weights and the
-  // run's readout live in the Run box
-  if (!a) {
-    menu.appendChild(mk("div", { class: "bxbhint",
-      text: remote ? "remote (Modal) \u2014 the transport is not wired yet"
-                   : "no backend connected \u2014 connect one in Backend \u2192 Local" }));
-    bxTrainRefresh();
-    return;
-  }
-  const hub = bxTrainAnywhere();
-  if (BX.up) {
-    menu.appendChild(mk("div", { class: "bxbhint",
-      text: hub ? "the whole design runs from the top level \u2014 the Run box up there holds the machine and the weights"
-                : "the whole design runs from the top level \u2014 go back out to show its Run box" }));
-  } else {
-    const row = mk("div", { class: "rrow" });
-    if (!hub) {
-      menu.appendChild(mk("div", { class: "bxbhint",
-        text: "no Run box on the canvas \u2014 show it for the mode switch, the "
-             + "data and the run's settings" }));
-      const b = mk("span", { class: "chip tiny", text: "show the Run box" });
-      b.addEventListener("click", () => {
-        bxMenuClose();
-        bxDropPalette("train", null);
-        bxtRunToggle();
-      });
-      row.appendChild(b);
-    } else {
-      if (hub.hidden)
-        menu.appendChild(mk("div", { class: "bxbhint",
-          text: "the Run box is hidden \u2014 the design still trains from it" }));
-      const b = mk("span", { class: "chip tiny",
-                             text: hub.hidden ? "show the Run box" : "hide the Run box" });
-      b.addEventListener("click", () => {       // the canvas follows the toggle
-        hub.hidden = !hub.hidden;
-        if (hub.hidden && bxSel && bxSel.kind === "boxes") {
-          bxSel.ids = bxSel.ids.filter(x => x !== hub.id);
-          if (!bxSel.ids.length) bxSel = null;
-        }
-        bxCommit();
-        bxRender();
-        bxtRunRender();
-      });
-      row.appendChild(b);
-    }
-    menu.appendChild(row);
-  }
-  const row = mk("div", { class: "rrow" });
-  const can = !BX.up;
-  const go = mk("span", { class: "chip tiny" + (can ? "" : " off"),
-                          text: BXRUN.running ? "running\u2026"
-                               : BXRUN.loading ? "loading\u2026"
-                               : (BXRUN.mode || "inference") === "training"
-                                 ? "train the design"
-                                 : "run the design" });
-  if (can)
-    go.addEventListener("click", () => { if (!BXRUN.running && !BXRUN.loading) bxtRunGo(); });
-  else
-    go.title = "go back out to the top level first";
-  row.appendChild(go);
-  menu.appendChild(row);
-  if ((!hub || hub.hidden) && BXRUN.msg)      // no visible Run box to read it in:
-    menu.appendChild(mk("div", { class: "bxbhint", text: BXRUN.msg }));   // the button says it
-  bxTrainRefresh();
-}
-
 function bxRunFeeds(pane) {                       // inference: what the model reads
   const ins = BX.nodes.filter(n => n.kind === "input");
   if (ins.length) {
@@ -5850,7 +5806,7 @@ function bxRunModeSeg() {                          // the inference/training swi
     b.addEventListener("click", () => {
       if (BXRUN.running || BXRUN.loading) return;
       BXRUN.mode = m;
-      bxtRunRender();
+      bxtRunSync();
       bxRender();                          // the signal's marks follow the mode
     });
     seg.appendChild(b);
@@ -5867,7 +5823,7 @@ function bxtRunLoad() {                        // the whole design, loaded warm
   BXRUN.error = false;
   BXRUN.msg = "loading the whole design\u2026"
               + (ratio ? " (" + ratio + "% on the system)" : "");
-  bxtRunRender();
+  bxtRunSync();
   bxUsageWatch(true);                          // watch the memory move while it loads
   let prog = 0;                                // and how far the compile is
   if (typeof setInterval === "function")
@@ -5879,7 +5835,7 @@ function bxtRunLoad() {                        // the whole design, loaded warm
           if (!ld || !ld.total || !BXRUN.loading) return;
           BXRUN.msg = "loading\u2026 " + (100 * ld.bytes / ld.total).toFixed(0)
                     + "% \u00b7 " + bxGB(ld.bytes) + " / " + bxGB(ld.total);
-          bxtRunRender();
+          bxtRunSync();
         })
         .catch(() => {});
     }, 900);
@@ -5896,7 +5852,7 @@ function bxtRunLoad() {                        // the whole design, loaded warm
       BXRUN.loaded = res.d;
       BXRUN.warmMode = (res.d && res.d.mode) || null;
       BXRUN.msg = "";
-      bxtRunRender();
+      bxtRunSync();
       fetchBackend();                          // the agent just measured — show it now
     })
     .catch(e => {
@@ -5997,13 +5953,13 @@ function bxRunResult(d) {                      // a finished run: keep every val
     bxRunValues[path] = { text: txt };
   bxFlowIngest((d && d.flow) || []);           // every finished box stays lit
   bxRender();
-  bxtRunRender();
+  bxtRunSync();
 }
 // ---- the run's error: mark the block the backend blamed --------------------
 function bxRunErrClear() { bxRunErr = null; }
 function bxRunStatusClear() {                  // a progress batch arrived: the status
   if (!BXRUN.running || BXRUN.error) return;   // line makes way — never an error
-  if (BXRUN.msg) { BXRUN.msg = ""; bxtRunRender(); }
+  if (BXRUN.msg) { BXRUN.msg = ""; bxtRunSync(); }
 }
 function bxAuditClear() { bxAudit = null; }
 function bxMarkAudit(audit) {
@@ -6054,7 +6010,7 @@ function bxMarkRunError(info) {
 function bxtRunOffload() {                     // let the backend drop everything
   BXRUN.offloading = true;
   BXRUN.msg = "";
-  bxtRunRender();
+  bxtRunSync();
   bxUsageWatch(true);
   const name = (BXRUN.local.agent && BXRUN.local.agent.name) || "the backend";
   fetch("/api/offload", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -6072,7 +6028,7 @@ function bxtRunOffload() {                     // let the backend drop everythin
       BXRUN.msg = "offloaded \u00b7 ram " + num(b.ram_used_gb) + " \u2192 " + num(a.ram_used_gb)
                 + " GB \u00b7 vram " + num(b.vram_used_gb) + " \u2192 "
                 + num(a.vram_used_gb) + " GB";
-      bxtRunRender();
+      bxtRunSync();
       fetchBackend();
     })
     .catch(e => {
@@ -6124,7 +6080,7 @@ function bxtRunGo() {
   bxDataState = {};
   bxRunValues = {};
   bxRender();
-  bxtRunRender();
+  bxtRunSync();
   bxUsageWatch(true);                          // the weights land during compile too
   const name = (BXRUN.local.agent && BXRUN.local.agent.name) || "the backend";
   let poll = 0;
@@ -6140,13 +6096,13 @@ function bxtRunGo() {
           bxFlowBeginStep(p.step);           // a new pass re-walks: the marks restart
           if (p.note) {                      // e.g. huggingface downloading a model
             BXRUN.msg = p.note;
-            bxtRunRender();
+            bxtRunSync();
           }
           const ld = p.load;
           if (ld && ld.total && !ld.done) {    // the compile phase: show the build
             BXRUN.msg = "building\u2026 " + (100 * ld.bytes / ld.total).toFixed(0)
                       + "% \u00B7 " + bxGB(ld.bytes) + " / " + bxGB(ld.total);
-            bxtRunRender();
+            bxtRunSync();
           }
           if (p.nodes && p.nodes.length) {
             bxRunStatusClear();          // the flow has started: drop the status line
@@ -6224,7 +6180,7 @@ function fetchBackend() {                      // the stateful channel, from the
       BXRUN.local = d.local;
       bxtRunRefresh();
       if ($("bxtBackendMenu") && !$("bxtBackendMenu").hidden) bxtBackendRender();
-      bxtRunRender();                      // the menu and the Run box, with fresh numbers
+      bxtRunSync();                      // the button and the Run box, with fresh numbers
       if ($("bxtVramMenu") && !$("bxtVramMenu").hidden) bxRenderEstimate();
     })
     .catch(() => {});
@@ -6912,7 +6868,7 @@ function bxRunFix() {                          // true: the run must wait
   if (typeof fetch === "function" && !bxRunFixing) {
     bxRunFixing = true;
     BXRUN.msg = "checking the model files\u2026";
-    bxtRunRender();
+    bxtRunSync();
     fetch("/api/models").then(r => r.json()).then(d => {
       bxModels = (d && d.models) || [];
       bxRunFixing = false;
