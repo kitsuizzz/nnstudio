@@ -127,16 +127,20 @@ def _allocator_env():
     access; where NVML cannot initialize inside the process that probe asserts
     instead of running. A single design run never shares segments between
     processes, so the IPC branch stays off — and a machine whose NVML is broken
-    takes the async allocator, which never asks NVML at all."""
+    takes the async allocator, which never asks NVML at all. Returns what it
+    chose, for the startup log."""
     os.environ.setdefault("TORCH_CUDA_EXPANDABLE_SEGMENTS_IPC", "0")
     gpu, _vram = _nvidia()
     if _nvml_ok():
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    elif gpu:                                  # an NVIDIA card whose NVML is broken
+        return "native, expandable segments (nvml ok, ipc off)"
+    if gpu:                                    # an NVIDIA card whose NVML is broken
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "backend:cudaMallocAsync")
+        return "cudaMallocAsync (nvml unavailable, so the native path is avoided)"
+    return "default (no nvidia gpu seen)"
 
 
-_allocator_env()
+_ALLOC_NOTE = _allocator_env()
 
 
 _CAPS = None
@@ -703,6 +707,7 @@ def main():
         print("[nnstudio-agent] " + line, flush=True)
 
     log("agent v%d for %s:%d" % (VERSION, host, port))
+    log("cuda allocator: " + _ALLOC_NOTE)
     signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
     while True:
         try:
