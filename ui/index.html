@@ -828,6 +828,9 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
   font: 12px var(--mono); background: rgba(0,0,0,.3); color: var(--ink);
   border: 1px solid var(--panel-brd); resize: none;
 }
+/* the data a box shows (the output's readout): plain, selectable numbers */
+.bxdata { font: 12px/1.6 var(--mono); color: #e5e5e5; white-space: pre-wrap;
+          word-break: break-word; }
 /* the Run box's own menu: Execute (the run) and Spec (the backend) */
 .runmenu { display: flex; gap: 2px; padding: 2px 4px 0;
            border-bottom: 1px solid var(--panel-brd); }
@@ -2764,6 +2767,11 @@ function bxInputExpand(n) {                    // the input's editor, small or b
   p.expand = !p.expand;
   n.box = p.expand ? { w: 420, h: 280 } : { w: 300, h: 170 };
 }
+function bxOutputExpand(n) {                   // the output's readout, small or big
+  const p = n.panel || (n.panel = {});
+  p.expand = !p.expand;
+  n.box = p.expand ? { w: 420, h: 280 } : { w: 300, h: 170 };
+}
 function bxCsvParse(text) {                   // RFC 4180-ish: quotes and commas
   const rows = [];
   let row = [], field = "", q = false;
@@ -3650,6 +3658,43 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
   }
   sel.addEventListener("change", () => save({ input_mode: sel.value }));
 }
+function bxOutputFill(pane, n) {               // the output's window: whatever data
+  // the last run handed it, and nothing else
+  pane.innerHTML = "";
+  bxBehaveInside(pane);
+  const head = mk("div", { class: "bxlogrow" });
+  head.appendChild(mk("b", { text: "output" }));
+  const st = bxNodeState(n);
+  if (st) head.appendChild(mk("span", { class: "panehint", text: bxShape(n) }));
+  pane.appendChild(head);
+  const body = mk("div", { class: "bxinputbody" });
+  pane.appendChild(body);
+  if (!st) {
+    body.appendChild(mk("div", { class: "panehint",
+      text: "no data yet \u2014 run the design and what arrives here shows up" }));
+    return;
+  }
+  if (st.text != null) {
+    body.appendChild(mk("div", { class: "bxdata", text: "\u201c" + st.text + "\u201d" }));
+    return;
+  }
+  const sh = (st.shape || []).map(Number);
+  const peek = st.peek || [];
+  const count = sh.reduce((a, b) => a * b, 1);
+  if (peek.length) {
+    body.appendChild(mk("div", { class: "bxdata",
+      text: peek.map(bxNumText).join(", ") + (count > peek.length ? ", \u2026" : "") }));
+  } else if (st.scalar != null) {
+    body.appendChild(mk("div", { class: "bxdata", text: bxNumText(st.scalar) }));
+  }
+  const bits = [];                             // the summary under the numbers
+  if (sh.length) bits.push("shape [" + sh.join("\u00d7") + "]");
+  else if (st.mean != null) bits.push("one value");
+  if (st.mean != null && (peek.length || st.scalar == null)) bits.push("\u03bc " + bxNumText(st.mean));
+  if (st.min != null && st.max != null)
+    bits.push("min " + bxNumText(st.min) + " \u00b7 max " + bxNumText(st.max));
+  if (bits.length) body.appendChild(mk("div", { class: "panehint", text: bits.join(" \u00b7 ") }));
+}
 function bxRunOutcome() {                       // the run's verdict, in one line
   if (BXRUN.running) return { ok: true, text: "\u2026 running the design" };
   if (BXRUN.loading) return { ok: true, text: "\u2026 loading the weights" };
@@ -4029,7 +4074,9 @@ function bxJSONNode(n) {
     if (n.box) o.box = { w: Math.round(n.box.w || 300), h: Math.round(n.box.h || 170) };
     if (n.panel) o.panel = n.panel;      // {expand} — the editor's size
   }
-  else if (n.kind === "output") o.din = n.din == null ? null : n.din;
+  else if (n.kind === "output") { o.din = n.din == null ? null : n.din;
+                                  if (n.box) o.box = { w: Math.round(n.box.w || 300), h: Math.round(n.box.h || 170) };
+                                  if (n.panel) o.panel = n.panel; }
   else if (n.kind === "layer") { o.din = n.din == null ? null : n.din;
                                  o.dout = n.dout == null ? null : n.dout; }
   else if (n.kind === "act") {
@@ -4356,7 +4403,12 @@ function bxJSONNodeFrom(o) {
       n.box = { w: bxSize(o.box.w, 300), h: bxSize(o.box.h, 170) };
     if (o.panel && typeof o.panel === "object") n.panel = { expand: !!o.panel.expand };
   }
-  else if (o.kind === "output") n.din = bxSize(o.din);
+  else if (o.kind === "output") {
+    n.din = bxSize(o.din);
+    if (o.box && typeof o.box === "object")
+      n.box = { w: bxSize(o.box.w, 300), h: bxSize(o.box.h, 170) };
+    if (o.panel && typeof o.panel === "object") n.panel = { expand: !!o.panel.expand };
+  }
   else if (o.kind === "layer") { n.din = bxSize(o.din); n.dout = bxSize(o.dout); }
   else if (o.kind === "act") {
     n.act = BX_ACTS.indexOf(o.act) >= 0 ? o.act : "silu";
@@ -4672,6 +4724,8 @@ function bxNodeW(n) {
     return Math.max(320, Number((n.box || {}).w) || 440);
   if (n && n.kind === "input")             // …and the input's own editor
     return Math.max(240, Number((n.box || {}).w) || 300);
+  if (n && n.kind === "output")            // …and the output's own readout
+    return Math.max(240, Number((n.box || {}).w) || 300);
   return BXW;
 }
 function bxNodeH(n) {
@@ -4680,6 +4734,8 @@ function bxNodeH(n) {
   if (n && n.kind === "dataset")
     return Math.max(180, Number((n.box || {}).h) || 300);
   if (n && n.kind === "input")
+    return Math.max(120, Number((n.box || {}).h) || 170);
+  if (n && n.kind === "output")
     return Math.max(120, Number((n.box || {}).h) || 170);
   const p = Math.max(bxPortDefs(n, "in").length, bxPortDefs(n, "out").length);
   return p > 2 ? 40 * Math.ceil((30 + 16 * p) / 40) : BXH;   // whole cells, always
@@ -4871,7 +4927,7 @@ function bxStateText(st) {                     // the data a box carries, as con
 }
 function bxHasPane(n) {                        // a box whose card holds an editor
   return !!n && (n.kind === "agent" || n.kind === "train" ||
-                 n.kind === "dataset" || n.kind === "input");
+                 n.kind === "dataset" || n.kind === "input" || n.kind === "output");
 }
 function bxCard(n) {
   const preview = String(n.id || "").indexOf("pal-") === 0;   // palette chrome
@@ -6780,6 +6836,7 @@ function bxPaneFill(pane, n) {                 // one pane, filled by its kind �
   if (n.kind === "dataset") bxDatasetFill(pane, n);   // every renderer goes through
   else if (n.kind === "train") bxTrainFill(pane, n);  // this, so none can drift
   else if (n.kind === "input") bxInputFill(pane, n);
+  else if (n.kind === "output") bxOutputFill(pane, n);
   else bxAgentFill(pane, n);
   bxPaneErr(pane, n);
 }
@@ -7866,10 +7923,11 @@ function bxDblClick(ev) {
   const n = id ? bxNode(id) : null;
   if (n && n.kind === "custom") { ev.preventDefault(); bxEnter(n.id); return; }
   if (n && (n.kind === "agent" || n.kind === "train" || n.kind === "dataset" ||
-            n.kind === "input")) {
+            n.kind === "input" || n.kind === "output")) {
     ev.preventDefault();                       // a display box: expand / shrink
     if (n.kind === "dataset") bxDatasetExpand(n);
     else if (n.kind === "input") bxInputExpand(n);
+    else if (n.kind === "output") bxOutputExpand(n);
     else {
       const p = n.panel || (n.panel = {});
       p.expand = !p.expand;

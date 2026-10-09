@@ -217,7 +217,7 @@ globalThis.__t = {
   bxTasksFetch, bxTaskLogFetch, bxTasksApply, bxLogApply, bxLogState,
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
-  bxRunFeeds, bxInputFill, bxInputExpand, bxPaneFill,
+  bxRunFeeds, bxInputFill, bxInputExpand, bxOutputExpand, bxPaneFill,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
   bxTableRead, bxTableWrite, bxTableType, bxTableSetCell, bxTableRenameCol,
   bxTableInsertCol, bxTableDeleteCol, bxTableAddRow, bxTableDeleteRow,
@@ -244,6 +244,14 @@ const openCat = (m, label) => {
 };
 const catItems = (m) => m.children.filter(c => c.className === "mi")
   .map(c => c.textContent).filter(t => t !== "remove this box");   // remove stays top level
+// the text a box's window shows (its data and its hints) — one class per query,
+// because the stub's selector walk only matches a single class
+const paneText = (n) => {
+  const d = document.createElement("div");
+  __t.bxPaneFill(d, n);
+  return d.querySelectorAll(".bxdata").map(e => e.textContent).join(" | ") + " || " +
+         d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
+};
 // the app now boots with its blank-network skeleton (input → output); the
 // checks below start from a truly empty canvas, as they always have
 for (const n of __t.BX.nodes.slice()) __t.bxRemove(n.id);
@@ -1430,6 +1438,22 @@ check("a run's blame shows inside the box, never over its window", () => {
   __t.bxRemove(i.id);
 });
 
+check("the output window shows whatever data it receives", () => {
+  const o = __t.bxAdd("output", 0, 0, { din: 3 });
+  ok(__t.bxNodeW(o) >= 240 && __t.bxNodeH(o) >= 120, "the output box holds a window");
+  ok(paneText(o).indexOf("no data yet") >= 0, "…saying so before a run");
+  __t.bxRunValues = { [o.id]: { shape: [3], mean: 5, min: 4, max: 6, peek: [4, 5, 6] } };
+  ok(paneText(o).indexOf("4, 5, 6") >= 0, "…and the received data after one: " + paneText(o));
+  ok(paneText(o).indexOf("[3]") >= 0, "…with its shape under it");
+  __t.bxRunValues = { [o.id]: { text: "the cat" } };
+  ok(paneText(o).indexOf("the cat") >= 0, "…or the text it produced");
+  __t.bxRunValues = {};
+  __t.bxOutputExpand(o);
+  eql([o.box.w, o.box.h], [420, 280], "…and a double-click grows it");
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(o)).box.w, 420, "…and the size travels with the design");
+  __t.bxRemove(o.id);
+});
+
 check("re-placing a box keeps the last run's data (an edit still clears it)", () => {
   __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
   const i = __t.bxAdd("input", 0, 0, { dout: 2 });
@@ -1439,8 +1463,12 @@ check("re-placing a box keeps the last run's data (an edit still clears it)", ()
                     values: { [i.id]: { shape: [2], mean: 1, peek: [1, 2] },
                               [o.id]: { shape: [2], mean: 3.5, peek: [3, 4] } },
                     texts: {}, flow: [i.id, o.id], generated: [] });
-  const st = (n) => __t.bxCard(n).querySelectorAll(".dstate").map(e => e.textContent).join("");
-  ok(st(o).indexOf("3, 4") >= 0, "the output shows what it received: " + st(o));
+  const win = (n) => {
+    const d = document.createElement("div");
+    __t.bxPaneFill(d, n);
+    return d.querySelectorAll(".bxdata").map(e => e.textContent).join(" | ");
+  };
+  ok(win(o).indexOf("3, 4") >= 0, "the output shows what it received: " + win(o));
   // drag the output somewhere else: the run's marks are not stale — they move with it
   __t.bxStartMove([o.id], o.id, 0, 0);
   __t.bxMove({ clientX: 60, clientY: 80 });
@@ -1449,7 +1477,7 @@ check("re-placing a box keeps the last run's data (an edit still clears it)", ()
   ok(Object.keys(__t.bxRunValues).length === 2, "…the run's values are kept");
   eql(__t.bxFlowSet.size, 2, "…and the flow stays lit");
   __t.bxRender();
-  ok(st(o).indexOf("3, 4") >= 0, "…and the output still shows its data");
+  ok(win(o).indexOf("3, 4") >= 0, "…and the output still shows its data");
   // a real edit is a different story
   __t.bxCommit();
   ok(Object.keys(__t.bxRunValues).length === 0 && __t.bxFlowSet.size === 0,
@@ -1461,24 +1489,32 @@ check("re-placing a box keeps the last run's data (an edit still clears it)", ()
 check("the data boxes show the state of their data after a run", () => {
   const i = __t.bxAdd("input", 0, 0, { dout: 4 });
   const o = __t.bxAdd("output", 0, 200, { din: 4 });
+  const s = __t.bxAdd("sample", 0, 400, { din: 4 });
   __t.bxConnect(i.id, o.id);
   const st = (n) => __t.bxCard(n).querySelectorAll(".dstate").map(e => e.textContent).join("");
-  __t.bxDataState = { [i.id]: { shape: [4], mean: 2.5, min: 1, max: 4, peek: [1, 2, 3, 4] },
-                      [o.id]: { shape: [2, 2], mean: 0.5, peek: [0.1, 0.2, 0.3, 0.4] } };
-  ok(st(i) === "", "the input's editor stays clean — no data painted over it");
-  ok(st(o) === "0.1, 0.2, 0.3, 0.4", "…and the output shows its own");
+  const win = (n) => paneText(n);
+  __t.bxDataState = { [o.id]: { shape: [2, 2], mean: 0.5, peek: [0.1, 0.2, 0.3, 0.4] } };
+  ok(st(o) === "", "the output paints nothing over its window");
+  ok(win(o).indexOf("0.1, 0.2, 0.3, 0.4") >= 0, "…it shows the data it received in it");
+  __t.bxDataState = { [o.id]: { shape: [4], mean: 2.5, min: 1, max: 4, peek: [1, 2, 3, 4] } };
+  ok(win(o).indexOf("1, 2, 3, 4") >= 0, "…with the numbers");
+  ok(win(o).indexOf("[4]") >= 0 && win(o).indexOf("2.5") >= 0,
+     "…and the shape and mean under them");
   __t.bxDataState = { [o.id]: { text: "cab" } };
-  ok(st(o) === "\u201ccab\u201d", "…and a text state is quoted");
-  __t.bxDataState = { [o.id]: { shape: [1], scalar: 15496, peek: [15496] } };
-  ok(st(o) === "15496", "a picked id is its number");
+  ok(win(o).indexOf("\u201ccab\u201d") >= 0, "…a text result is quoted");
   __t.bxDataState = { [o.id]: { shape: [200], mean: 0.5, peek: [1, 2, 3, 4, 5, 6, 7, 8] } };
-  ok(st(o).indexOf("\u2026") >= 0, "a longer tensor trails off: " + st(o));
+  ok(win(o).indexOf("\u2026") >= 0, "…a longer tensor trails off");
   __t.bxDataState = { [o.id]: { shape: [4], mean: 2.5 } };      // no peek: the summary
-  ok(st(o).indexOf("[4] \u00b7 \u03bc 2.5") >= 0, "…and without content it falls back to the summary");
+  ok(win(o).indexOf("[4]") >= 0 && win(o).indexOf("2.5") >= 0,
+     "…and without content it falls back to the summary");
+  // a box without a window still paints its state on the card
+  __t.bxDataState = { [s.id]: { shape: [1], scalar: 15496, peek: [15496] } };
+  ok(st(s) === "15496", "a sample box shows the picked id on its card");
   __t.bxCommit();
   ok(Object.keys(__t.bxDataState).length === 0, "an edit clears the state");
   __t.bxRemove(i.id);
   __t.bxRemove(o.id);
+  __t.bxRemove(s.id);
 });
 
 check("the data flow: lights follow the backend's order across the wires", () => {
@@ -1517,15 +1553,16 @@ check("a finished run lands its flow and paints the output at once", () => {
                     values: { [i.id]: { shape: [2], mean: 1 },
                               [o.id]: { shape: [2], mean: -3.5 } },
                     texts: {}, flow: [i.id, o.id], generated: [] });
-  const state = __t.bxCard(o).querySelectorAll(".dstate")
-    .map(e => e.textContent).join("");
+  const d = document.createElement("div");
+  __t.bxPaneFill(d, o);
+  const state = d.querySelectorAll(".bxdata, .panehint").map(e => e.textContent).join(" | ");
   const lit = [...__t.bxFlowSet];
   __t.bxFlowClear();
   __t.bxDataState = {};
   __t.BXRUN.last = null;
   __t.bxRemove(i.id);
   __t.bxRemove(o.id);
-  ok(state.indexOf("3.5") >= 0, "the output card shows its stats: " + state);
+  ok(state.indexOf("3.5") >= 0, "the output window shows its stats: " + state);
   eql(lit, [i.id, o.id], "the whole flow is marked at once — nothing left queued");
 });
 
@@ -1624,12 +1661,11 @@ check("a run's values land on whichever nesting level you stand on", () => {
   __t.bxRunResult({ ms: 1, flow: [], texts: {}, generated: [],
                     values: { [b.id + "/out1"]: { shape: [2], mean: -1.25 },
                               [top.id]: { shape: [2], mean: 3.5 } } });
-  const topState = __t.bxCard(top).querySelectorAll(".dstate")
-    .map(e => e.textContent).join("");
+  const win = (n) => paneText(n);
+  const topState = win(top);
   __t.bxEnter(b.id);
   __t.bxRender();
-  const inState = __t.bxCard(b.inner.nodes[1]).querySelectorAll(".dstate")
-    .map(e => e.textContent).join("");
+  const inState = win(b.inner.nodes[1]);
   __t.bxLeave();
   __t.bxFlowClear();
   __t.bxDataState = {};
