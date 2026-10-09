@@ -1009,13 +1009,15 @@ let bxFlowStep = null;                         // the forward pass the marks bel
 let bxTrainTint = null;                        // the training signal's marks, at this level
 let bxRunErr = null;                           // the block a failed run pointed at
 let bxAudit = null;                            // connection problems on the design
-function bxCommit() {
+function bxCommit(keep) {
   if (bxUndoLock) return;                      // a composite action is still running
-  bxDataState = {};                            // an edit invalidates the last run
-  bxRunValues = {};
-  bxFlowClear();
-  bxRunErr = null;
-  bxAudit = null;
+  if (!keep) {                                 // `keep`: a re-placement only looks
+    bxDataState = {};                          // different — the last run's data, its
+    bxRunValues = {};                          // marks and its verdict still hold
+    bxFlowClear();
+    bxRunErr = null;
+    bxAudit = null;
+  }
   const snap = bxSnapshotNow();
   const text = JSON.stringify(snap);
   if (text === bxUndoLast) return;             // nothing moved: no new step
@@ -1976,7 +1978,11 @@ function bxDocBad(nodes, edges) {
     // a de-tokenizer's out-dot (the text) may stay unwired: it still shows its state
     if (nOut && !wo.size && n.kind !== "detokenize" && n.kind !== "hf")
       bad.add(n.id);                                               // a dead-end box
-    if (!nIn && !nOut && !wi.size && !wo.size) bad.add(n.id);      // nothing at all
+    if (!nIn && !nOut && !wi.size && !wo.size &&
+        n.kind !== "agent" && n.kind !== "train" && n.kind !== "reward")
+      bad.add(n.id);                           // nothing at all — but a display box
+                                               // (the Run box, an agent, a reward)
+                                               // takes no wires and is not an error
     if (n.kind === "custom" && bxErrorSet(n.inner || { nodes: [], edges: [] }).size)
       bad.add(n.id);                                               // an error inside, deep or near
   }
@@ -6509,7 +6515,8 @@ function bxAgentGrip(ev, n) {                  // drag the corner: the box grows
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
     }
-    bxCommit();                                // one step: the new size
+    bxCommit(true);                            // one step: the new size (the run's
+                                               // marks are untouched by a resize)
   };
   if (typeof window !== "undefined" && window.addEventListener) {
     window.addEventListener("mousemove", move);
@@ -7932,11 +7939,11 @@ function bxUp(ev) {
     return;
   }
   if (bxDrag && bxDrag.moved && bxDrag.kind === "move" && (bxDrag.ids || []).length > 1) {
-    bxCommit();                               // a whole group moved: one step
-  } else if (bxDrag && bxDrag.moved && bxDrag.kind === "move") {
+    bxCommit(true);                           // a whole group moved: one step, the run's
+  } else if (bxDrag && bxDrag.moved && bxDrag.kind === "move") {   // marks stay put
     const into = bxDropTargetAt(ev);          // dropped on a nested box: move it in
-    if (into) bxMoveInto(bxDrag.id, into);
-    else bxCommit();                          // just a move
+    if (into) bxMoveInto(bxDrag.id, into);    // (a structural change: the data is stale)
+    else bxCommit(true);                      // just a move
   } else if (bxDrag && !bxDrag.moved) {
     if (bxDrag.kind === "move") bxSelectBoxes([bxDrag.id]);   // a click leaves just that box
     else bxSelect(null);               // clicking empty canvas clears it

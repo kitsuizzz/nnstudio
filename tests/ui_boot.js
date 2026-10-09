@@ -1361,6 +1361,34 @@ check("the connection audit marks the boxes it blames", () => {
   ok(!__t.bxAudit, "cleared again");
 });
 
+check("re-placing a box keeps the last run's data (an edit still clears it)", () => {
+  __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
+  const i = __t.bxAdd("input", 0, 0, { dout: 2 });
+  const o = __t.bxAdd("output", 240, 0, { din: 2 });
+  __t.bxConnect(i.id, o.id);
+  __t.bxRunResult({ ms: 5, device: "cuda", loaded: false,
+                    values: { [i.id]: { shape: [2], mean: 1, peek: [1, 2] },
+                              [o.id]: { shape: [2], mean: 3.5, peek: [3, 4] } },
+                    texts: {}, flow: [i.id, o.id], generated: [] });
+  const st = (n) => __t.bxCard(n).querySelectorAll(".dstate").map(e => e.textContent).join("");
+  ok(st(o).indexOf("3, 4") >= 0, "the output shows what it received: " + st(o));
+  // drag the output somewhere else: the run's marks are not stale — they move with it
+  __t.bxStartMove([o.id], o.id, 0, 0);
+  __t.bxMove({ clientX: 60, clientY: 80 });
+  __t.bxUp({});
+  ok(o.x !== 240 || o.y !== 0, "the box moved");
+  ok(Object.keys(__t.bxRunValues).length === 2, "…the run's values are kept");
+  eql(__t.bxFlowSet.size, 2, "…and the flow stays lit");
+  __t.bxRender();
+  ok(st(o).indexOf("3, 4") >= 0, "…and the output still shows its data");
+  // a real edit is a different story
+  __t.bxCommit();
+  ok(Object.keys(__t.bxRunValues).length === 0 && __t.bxFlowSet.size === 0,
+     "an edit clears the run's marks");
+  __t.bxRemove(i.id);
+  __t.bxRemove(o.id);
+});
+
 check("input and output show the state of their data after a run", () => {
   const i = __t.bxAdd("input", 0, 0, { dout: 4 });
   const o = __t.bxAdd("output", 0, 200, { din: 4 });
@@ -3635,6 +3663,11 @@ check("the Run box: the hub of the training — data, columns, signal, parameter
 check("the Run box: one only, at the top level, and no rename", () => {
   const tr = __t.bxAdd("train", 0, 0, {});
   ok(!!tr && tr.name === "run 1", "a Run box lands, named run 1");
+  ok(!__t.bxErrorSet().has(tr.id),
+     "…and a lone Run box is not an error — it takes no wires");
+  const ag = __t.bxAdd("agent", 0, 300, {});
+  ok(!__t.bxErrorSet().has(ag.id), "…nor is a lone agent box");
+  __t.bxRemove(ag.id);
   ok(__t.bxAdd("train", 200, 0, {}) === null, "…a second one is refused");
   ok(__t.bxDropPalette("train", null) === null, "…however it is dropped");
   // the right-click menu: no rename; the hub's own setup form has no name field
