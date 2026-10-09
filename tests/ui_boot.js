@@ -742,13 +742,16 @@ check("the Run box carries the machine, the weights and the run's readout", () =
   };
   const bstate = () => fill("spec").querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
   const bchips = () => fill("spec").querySelectorAll(".chip").map(e => e.textContent);
-  const estate = () => fill("exec").querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
   const specsIn = (root) => root.querySelectorAll(".bxbspec")
     .map(r => r.children.map(c => c.textContent).join(" ")).join(" | ");
   eql(fill("exec").querySelectorAll(".runmi").map(e => e.textContent), ["Execute", "Spec"],
       "the box's own menu: Execute and Spec");
   ok(fill("exec").querySelectorAll(".bxbspec").length === 0,
      "…the machine stays out of Execute");
+  ok(fill("exec").querySelectorAll(".chip").length === 1 &&
+     fill("exec").querySelectorAll(".bxbin").length === 0 &&
+     fill("exec").querySelectorAll(".bxbhint").length === 0,
+     "…Execute keeps only the mode switch and the run action");
   ok(fill("spec").querySelectorAll(".chip").map(c => c.textContent)
        .indexOf("run the design") < 0, "…and the run action stays out of Spec");
   // the menu switches views, and the choice sticks to the box
@@ -840,16 +843,6 @@ check("the Run box carries the machine, the weights and the run's readout", () =
   __t.bxEveryBox(n => { delete n.place; });    // leave the design as it was found
   if (extra) __t.bxRemove(extra.id);
   if (madeLayer) __t.bxRemove(layer.id);
-  // a finished run shows what came back
-  __t.BXRUN.last = { ok: true, backend: "gpu-box", device: "cuda", ms: 12, loaded: true,
-                     values: { i1: { shape: [4], mean: 1 }, l1: { shape: [3], mean: 0.5 },
-                               o1: { shape: [3], mean: 0.5 } },
-                     outputs: [{ name: "y", stats: { shape: [3], mean: 0.5 } }],
-                     generated: [] };
-  ok(estate().indexOf("ran 3 boxes") >= 0 && estate().indexOf("12 ms") >= 0 &&
-     estate().indexOf("gpu-box") >= 0, "…and the result of a run, in Execute");
-  ok(estate().indexOf("using the loaded weights") >= 0, "…saying it reused the load");
-  __t.BXRUN.last = null;
   __t.bxRemove(tr.id);
 });
 

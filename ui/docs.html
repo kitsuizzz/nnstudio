@@ -226,9 +226,9 @@
         The toolbar's <span class="pill grey">Run</span> button shows the
         <span class="pill">Run</span> box on the canvas — press it again to hide
         the box when you want the view clear; the design runs either way. The box
-        has its own <b>Execute | Spec</b> menu: <b>Execute</b> holds the
-        <b>mode</b> switch, its <b>run the design</b> chip, the feeds and the
-        run's readout; <b>Spec</b> holds the backend machine, its live usage and
+        has its own <b>Execute | Spec</b> menu: <b>Execute</b> holds just the
+        <b>mode</b> switch and its <b>run the design</b> chip; <b>Spec</b> holds
+        the backend machine, its live usage and
         how the weights sit on it. The mode decides how the
         weights are held: <b>inference</b> keeps no gradients (the lightest run —
         dataset boxes stay idle); <b>training</b> lets the non-frozen weights keep
@@ -621,22 +621,15 @@
       scores, or, in <b>rl</b>, the reward box — and every parameter of the run.
       There is only ever one, it cannot be renamed, and it lives at the top level.
       Its window has its own <b>Execute | Spec</b> menu. <b>Execute</b> carries
-      the <b>mode</b> switch — inference or training, which its
-      <b>run the design</b> chip follows — the feeds, the step counter and the
-      live curves, and the last run's result. <b>Spec</b> carries the backend
+      just the <b>mode</b> switch — inference or training, which its
+      <b>run the design</b> chip follows — and the run itself. <b>Spec</b> carries
+      the backend
       machine and its live usage, the model's provenance, and the weights — the
       offload ratio, <b>load weights</b> / <b>offload</b>, and where the layers
       sit. The toolbar's <b>Run</b> button shows it and hides it — the design
       keeps training from it either way.
-      Then the setup, the step counter, and the
-      live curves: loss and
-      accuracy (solid train, dashed test) — in rl, the mean reward and its
-      baseline — and the controls that matter when a GPU's clock is ticking:
-      <b>start</b>,
-      <b>save now</b> (land a checkpoint where it stands), <b>hold</b> (stop
-      stepping but keep the machine), <b>detach</b> (checkpoint and stop cleanly,
-      freeing the GPU), <b>resume</b> (continue exactly where it stopped) and
-      <b>load last checkpoint</b> (warm a fresh graph with the trained weights).
+      The full training runs as a task (detach, resume and checkpoint are task
+      commands; the curves are the task's readout).
       Right-click → <b>set up the training …</b> to edit it.</p>
       <p class="bfields"><b>Fields:</b> <code>dataset</code>,
       <code>test_dataset</code>, <code>x_col</code>, <code>y_col</code>,
@@ -676,8 +669,10 @@
         the original implementation.</li>
     <li><span class="pill grey">Backend ▾</span> → connect. Press
         <span class="pill grey">Run</span> to show the
-        <span class="pill">Run</span> box → type a prompt in its window → press
-        <b>run the design</b> there. The same button hides the box again.</li>
+        <span class="pill">Run</span> box → press
+        <b>run the design</b> there. (Give the tokenizer its prompt first:
+        right-click it → <b>set the tokenizer …</b>.) The same button hides the
+        box again.</li>
     <li>Double-click the GGUF box to look inside; click boxes to see the numbers
         that flowed through them.</li>
   </ol>
@@ -702,15 +697,15 @@
         <b>y</b> column (what the model is scored on), pick the <b>target</b> —
         the output box the training scores — and set the parameters (learning
         rate, optimizer, batch, steps…).</li>
-    <li>Start it from the Run box — its <b>start</b> chip fires the training
-        task. The box's <b>run</b> chip follows its mode: in <b>training</b> mode
-        it reads <b>train the design</b>, and the run does a single step
-        — the full training runs as a task.</li>
+    <li>The box's <b>run</b> chip follows its mode: in <b>training</b> mode it
+        reads <b>train the design</b> and the run does a single step. Start the
+        full training as a task — from the agent box (or
+        <code>POST /api/tasks</code> below).</li>
     <li>Let it run. <b>Detach</b> whenever — the run checkpoints itself and the GPU
         is free. Days later, <b>resume</b>: same step, same learning rate, same
-        place in the data. This is how you train on monthly GPU credits. The
-        <b>load last checkpoint</b> chip warms a fresh graph with the trained
-        weights — switch back to inference and run it.</li>
+        place in the data. This is how you train on monthly GPU credits. Loading
+        the last checkpoint warms a fresh graph with the trained weights — switch
+        back to inference and run it.</li>
     <li>Advanced: wire a custom loss — a <span class="pill">loss</span> box with
         the model's scores on its <b>first</b> dot and a dataset on its
         <b>second</b>. A dataset→loss wire <b>beats the hub's binding</b>: that
@@ -1057,7 +1052,8 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         layer's output into dot one, the dataset into dot two.</li>
     <li><b>Watch it learn</b> — press <span class="pill grey">Run</span> to show a <span class="pill">Run</span> box, then
         start a training task with the design (ask the agent box:
-        "train the current design"). The curve on the Run box should fall within
+        "train the current design"). The training task's readout should show the
+        loss falling within
         seconds — the network has learned that <code>a</code> is followed by
         <code>c</code>.</li>
     <li><b>Detach, then resume</b> — press <b>detach</b>; watch it checkpoint and

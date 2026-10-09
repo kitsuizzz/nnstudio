@@ -3507,13 +3507,6 @@ function bxTrainFill(pane, n) {                   // the hub: Execute and Spec, 
   n._tabShown = cur;
   pane.innerHTML = "";
   bxBehaveInside(pane);
-  const st = (BXRUN.trainState || {})[n.id] || {};
-  const t = n.task_id ? bxTask(n.task_id) : null;
-  const live = !!n.task_id && !st.error && (!t || t.status === "running");
-  const sum = bxTrainSummary(n);
-  const head = mk("div", { class: "bxlogrow" });
-  head.appendChild(mk("b", { text: n.task_id ? "training · " + n.task_id.slice(-6) : "training · no task" }));
-  pane.appendChild(head);
   // the box's own menu: the run's side (Execute) and the machine's (Spec)
   const menu = mk("div", { class: "runmenu" });
   const tab = (id, label) => {
@@ -3538,7 +3531,7 @@ function bxTrainFill(pane, n) {                   // the hub: Execute and Spec, 
     sbody.scrollTop = keepTop;
     return;
   }
-  // the mode switch lives in the Run box, not the toolbar
+  // Execute: the mode switch and the run action, nothing else
   pane.appendChild(mk("div", { class: "mhead", text: "mode" }));
   pane.appendChild(bxRunModeSeg());
   const runbar = mk("div", { class: "rrow" });
@@ -3555,125 +3548,6 @@ function bxTrainFill(pane, n) {                   // the hub: Execute and Spec, 
   });
   runbar.appendChild(go);
   pane.appendChild(runbar);
-  const body = mk("div", { class: "bxrunbody" });
-  body.addEventListener("scroll", () => {
-    (n._scroll = n._scroll || {})[cur] = body.scrollTop;
-  });
-  pane.appendChild(body);
-  bxTrainRunInfo(body);                        // the feeds, the warm note, the readout
-
-  for (const line of sum.lines)
-    body.appendChild(mk("div", { class: "panehint", text: line }));
-  for (const why of sum.missing)
-    body.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + why }));
-  if (sum.missing.length)
-    body.appendChild(mk("div", { class: "bxbhint",
-      text: "fix the warnings, then start the full training here" }));
-  else
-    body.appendChild(mk("div", { class: "bxbhint",
-      text: "the run button does a single step — the full training starts here" }));
-  const strip = mk("div", { class: "panehint" });
-  if ((n.paradigm || "supervised") === "rl")
-    strip.textContent = "step " + (st.step != null ? st.step : "—")
-        + (st.tloss != null ? "  ·  reward " + Number(st.tloss).toFixed(4) : "")
-        + (st.tacc != null ? "  ·  baseline " + Number(st.tacc).toFixed(4) : "")
-        + (st.sample ? "  ·  \u201c" + String(st.sample).slice(0, 40) + "\u201d" : "")
-        + (st.saved_at ? "  ·  saved " + String(st.saved_at).split("/").slice(-1)[0] : "");
-  else
-    strip.textContent = "step " + (st.step != null ? st.step : "—")
-        + (st.loss != null ? "  ·  loss " + Number(st.loss).toFixed(4) : "")
-        + (st.acc != null ? "  ·  acc " + Number(st.acc).toFixed(3) : "")
-        + (st.tloss != null ? "  ·  test loss " + Number(st.tloss).toFixed(4) : "")
-        + (st.tacc != null ? "  ·  test acc " + Number(st.tacc).toFixed(3) : "")
-        + (st.saved_at ? "  ·  saved " + String(st.saved_at).split("/").slice(-1)[0] : "");
-  body.appendChild(strip);
-  const hist = (BXRUN.trainHist || {})[n.id] || [];
-  if (hist.length > 1) {                          // solid: the train split · dashed: the test
-    const dual = (getTrain, getTest, color) => {
-      const all = [];
-      for (const h0 of hist) {
-        const a = getTrain(h0), b = getTest(h0);
-        if (a != null) all.push(a);
-        if (b != null) all.push(b);
-      }
-      if (all.length < 2) return;
-      const max = Math.max.apply(null, all), min = Math.min.apply(null, all);
-      const span = Math.max(max - min, 1e-6);
-      const w = 220, h = 54;
-      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("viewBox", "0 0 " + w + " " + h);
-      svg.setAttribute("style", "width:100%;height:" + h + "px");
-      const line = (get, stroke, dash) => {
-        const ps = [];
-        for (let i = 0; i < hist.length; i++) {
-          const v = get(hist[i]);
-          if (v == null) continue;
-          ps.push((i / (hist.length - 1) * w).toFixed(1) + "," +
-                  (h - 3 - (v - min) / span * (h - 6)).toFixed(1));
-        }
-        if (ps.length < 2) return;
-        const pl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-        pl.setAttribute("points", ps.join(" "));
-        pl.setAttribute("fill", "none");
-        pl.setAttribute("stroke", stroke);
-        pl.setAttribute("stroke-width", "1.5");
-        if (dash) pl.setAttribute("stroke-dasharray", "4 3");
-        svg.appendChild(pl);
-      };
-      line(getTrain, color, false);
-      line(getTest, color, true);
-      body.appendChild(svg);
-    };
-    if ((n.paradigm || "supervised") === "rl") {
-      // rl: the mean reward and the baseline ride the test slots
-      dual(h0 => h0.tloss, h0 => h0.tacc, "#f97316");
-      body.appendChild(mk("div", { class: "bxbhint",
-        text: "solid — the mean reward · dashed — the baseline" }));
-    } else {
-      dual(h0 => h0.loss, h0 => h0.tloss, "#f97316");
-      dual(h0 => h0.acc, h0 => h0.tacc, "#22c55e");
-      body.appendChild(mk("div", { class: "bxbhint",
-        text: "solid — the train split · dashed — the test split" }));
-    }
-  }
-  const row = mk("div", { class: "rrow" });
-  const chip = (label, fn, title, off) => {
-    const b = mk("span", { class: "chip tiny" + (off ? " off" : ""),
-                            text: label, title: title || "" });
-    b.addEventListener("mousedown", (e) => { if (e && e.stopPropagation) e.stopPropagation(); });
-    b.addEventListener("click", () => {
-      if (off) { if (title) bxTrainNote(n, title); return; }
-      if (fn) fn();
-    });
-    return b;
-  };
-  row.appendChild(chip("set up the training …",
-    () => { bxMenuClose(); bxForm("train", null, n, "train"); },
-    "the hub: data, columns, signal, parameters"));
-  if (live) {
-    row.appendChild(chip("start — already running", null,
-      "the task is live — save, hold or detach it", true));
-    row.appendChild(chip("save now", () => bxTrainCmd(n, "save"), "land a checkpoint where it stands"));
-    row.appendChild(chip("hold", () => bxTrainCmd(n, "pause"), "stop stepping, keep the gpu"));
-    row.appendChild(chip("detach", () => bxTrainCmd(n, "detach"), "checkpoint and let the gpu go"));
-  } else {
-    const first = sum.missing[0] || "ready";
-    row.appendChild(chip("start — " + first,
-      () => bxTrainStart(n),
-      sum.missing.length ? "fix before starting: " + sum.missing.join("; ") : "start training",
-      !!sum.missing.length));
-    if (n.task_id)
-      row.appendChild(chip("resume", () => bxTrainCmd(n, "resume"),
-        "pick up from the last checkpoint"));
-  }
-  if (st.saved_at)
-    row.appendChild(chip("load last checkpoint", () => bxTrainLoadCkpt(n, st),
-      "train → inference: run with the trained weights"));
-  pane.appendChild(row);
-  if ((BXRUN.trainNotes || {})[n.id])
-    pane.appendChild(mk("div", { class: "bxbhint", text: BXRUN.trainNotes[n.id] }));
-  if (st.error) pane.appendChild(mk("div", { class: "bxbhint", text: "⚠ " + st.error }));
-  body.scrollTop = keepTop;                    // a refresh never loses the place
 }
 function bxTrainSpec(pane) {                  // Spec: the machine, its usage, and
   // how the design's weights sit on it
@@ -3793,50 +3667,6 @@ function bxTrainSpec(pane) {                  // Spec: the machine, its usage, a
     for (const is of (BX.model.audit.issues || []).slice(0, 6))
       pane.appendChild(mk("div", { class: "bxbhint",
         text: "\u26a0 " + (is.box || "?") + ": " + is.what }));
-  }
-}
-function bxTrainRunInfo(pane) {               // Execute: the feeds, the warm note, the
-  // run's message and what came back
-  if ((BXRUN.mode || "inference") !== "training") bxRunFeeds(pane);
-  if (BXRUN.warmMode && BXRUN.warmMode !== (BXRUN.mode || "inference"))
-    pane.appendChild(mk("div", { class: "bxbhint",
-      text: "the warm weights are " + BXRUN.warmMode + " \u2014 the next run "
-          + "rebuilds them for " + (BXRUN.mode || "inference") }));
-  if (BXRUN.msg) pane.appendChild(mk("div", { class: "bxbhint", text: BXRUN.msg }));
-  if (BXRUN.last) {                            // what the backend sent back
-    const r = BXRUN.last;
-    pane.appendChild(mk("div", { class: "mhead", text: "result" }));
-    pane.appendChild(mk("div", { class: "bxbhint",
-      text: "ran " + (Object.keys(r.values || {}).length +
-                      Object.keys(r.texts || {}).length) + " boxes \u00b7 "
-          + (r.ms || 0) + " ms on " + ((r.backend || "backend")
-          + (r.device ? " (" + r.device + ")" : ""))
-          + (r.loaded ? " \u00b7 using the loaded weights" : "") }));
-    if (r.probe) {                         // the training's own readout
-      const pb = [];
-      if (r.probe.loss != null) pb.push("loss " + Number(r.probe.loss).toFixed(4));
-      if (r.probe.acc != null) pb.push("acc " + Number(r.probe.acc).toFixed(3));
-      if (r.probe.tloss != null) pb.push("test " + Number(r.probe.tloss).toFixed(4));
-      if (r.probe.tacc != null) pb.push("test acc " + Number(r.probe.tacc).toFixed(3));
-      if (r.probe.reward != null) pb.push("reward " + Number(r.probe.reward).toFixed(4));
-      if (r.probe.sample) pb.push("\u201c" + r.probe.sample + "\u201d");
-      if (r.probe.reason) pb.push(r.probe.reason);
-      if (pb.length)
-        pane.appendChild(mk("div", { class: "bxbhint",
-          text: "probe \u00b7 " + pb.join(" \u00b7 ") }));
-    }
-    for (const [path, st] of Object.entries(r.values || {}).slice(0, 12)) {
-      const tail = path.split("/").pop();
-      const node = (typeof bxNode === "function") ? bxNode(tail) : null;
-      bxSpecRow(pane, (node && node.name) || tail,
-                JSON.stringify(st.shape) + " \u00b7 \u03bc " + st.mean);
-    }
-    if ((r.generated || []).length)
-      bxSpecRow(pane, "generated", r.generated.join(" "));
-    for (const [id, text] of Object.entries(r.texts || {})) {
-      const node = (typeof bxNode === "function") ? bxNode(id) : null;
-      bxSpecRow(pane, (node && node.name) || id, "\u201c" + bxClip(text, 40) + "\u201d");
-    }
   }
 }
 function bxTrainRefresh() {                    // repaint every Run box's window, live
