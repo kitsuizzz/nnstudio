@@ -217,7 +217,7 @@ globalThis.__t = {
   bxTasksFetch, bxTaskLogFetch, bxTasksApply, bxLogApply, bxLogState,
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
-  bxRunFeeds, bxInputFill, bxInputExpand,
+  bxRunFeeds, bxInputFill, bxInputExpand, bxPaneFill,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
   bxTableRead, bxTableWrite, bxTableType, bxTableSetCell, bxTableRenameCol,
   bxTableInsertCol, bxTableDeleteCol, bxTableAddRow, bxTableDeleteRow,
@@ -1413,6 +1413,20 @@ check("an agent refresh leaves the input box's editor alone", () => {
   ok(pane.querySelectorAll(".bxbbtn").length === 0 &&
      pane.querySelectorAll(".bxptitle").length === 0,
      "…not the agent's buttons and task list");
+  __t.bxRemove(i.id);
+});
+
+check("a run's blame shows inside the box, never over its window", () => {
+  const i = __t.bxAdd("input", 0, 0, { values: "4 5 6" });
+  __t.bxMarkRunError({ nid: i.id, error: "input \u201cin\u201d needs numbers" });
+  ok(__t.bxCard(i).querySelectorAll(".dstate").length === 0,
+     "no blame text is painted over the editor");
+  ok(__t.bxCard(i).className.indexOf("runerr") >= 0, "…the card wears the runerr mark");
+  const d = document.createElement("div");
+  __t.bxPaneFill(d, i);
+  ok(d.querySelectorAll(".bxbhint.runbad").map(e => e.textContent).join("|")
+       .indexOf("needs numbers") >= 0, "…and the message shows inside its window");
+  __t.bxRunErrClear();
   __t.bxRemove(i.id);
 });
 

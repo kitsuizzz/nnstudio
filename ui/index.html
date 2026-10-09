@@ -3792,7 +3792,7 @@ function bxTrainRefresh() {                    // repaint every Run box's window
     if (!n || n.kind !== "train") continue;
     if (typeof document !== "undefined" && document.activeElement && el.contains &&
         el.contains(document.activeElement)) continue;   // let a typist keep the field
-    bxTrainFill(el, n);
+    bxPaneFill(el, n);
   }
 }
 function bxTrainCmd(n, cmd) {
@@ -5063,19 +5063,22 @@ function bxCard(n) {
     fo.appendChild(pane);
     g.appendChild(fo);
   }
-  if (!isSheet && bxRunErr && bxRunErr.ids && bxRunErr.ids.has(n.id))
-    g.appendChild(svgText(n.x + 9, n.y + 48,
-                          bxClip(bxRunErr.here === n.id
-                                 ? String(bxRunErr.msg).replace(/^[^:]{1,80}:\s*/, "")
-                                 : "failed inside", 24),
-                          "dstate err"));
-  else if (task)
-    g.appendChild(svgText(n.x + 9, n.y + 48,
-                          bxClip(bxTaskProgress(task) || bxTaskChip(task), 24),
-                          "dstate rev"));
-  else if (stateText && !bxHasPane(n))         // a pane box shows its state in its
-    g.appendChild(svgText(n.x + 9, n.y + 48, bxClip(stateText, 24), "dstate"));
-                                               // own editor — never over it
+  // a pane box owns the space below its title — its data, its task and the
+  // run's blame live in its window, never painted over it
+  if (!isSheet && !bxHasPane(n)) {
+    if (bxRunErr && bxRunErr.ids && bxRunErr.ids.has(n.id))
+      g.appendChild(svgText(n.x + 9, n.y + 48,
+                            bxClip(bxRunErr.here === n.id
+                                   ? String(bxRunErr.msg).replace(/^[^:]{1,80}:\s*/, "")
+                                   : "failed inside", 24),
+                            "dstate err"));
+    else if (task)
+      g.appendChild(svgText(n.x + 9, n.y + 48,
+                            bxClip(bxTaskProgress(task) || bxTaskChip(task), 24),
+                            "dstate rev"));
+    else if (stateText)
+      g.appendChild(svgText(n.x + 9, n.y + 48, bxClip(stateText, 24), "dstate"));
+  }
   const dot = (at, dir, i, size) => {
     const dead = off || (dir === "out" && bxPortOff(n, "out", i));
     const mark = dead ? " doff" : (dir === "in" && starved.has(i) ? " dstarved" : "");
@@ -6766,11 +6769,19 @@ function bxAgentFill(pane, n) {                // fill one box's pane from the s
   grip.addEventListener("mousedown", (ev) => bxAgentGrip(ev, n));
   pane.appendChild(grip);
 }
+function bxPaneErr(pane, n) {                  // the run's blame, shown inside the
+  if (!bxRunErr || !bxRunErr.ids || !bxRunErr.ids.has(n.id)) return;   // window
+  pane.appendChild(mk("div", { class: "bxbhint runbad",
+    text: "\u26a0 " + (bxRunErr.here === n.id
+                        ? String(bxRunErr.msg).replace(/^[^:]{1,80}:\s*/, "")
+                        : "failed inside this box") }));
+}
 function bxPaneFill(pane, n) {                 // one pane, filled by its kind —
   if (n.kind === "dataset") bxDatasetFill(pane, n);   // every renderer goes through
   else if (n.kind === "train") bxTrainFill(pane, n);  // this, so none can drift
   else if (n.kind === "input") bxInputFill(pane, n);
   else bxAgentFill(pane, n);
+  bxPaneErr(pane, n);
 }
 function bxAgentSync() {                       // every pane follows the state, live
   const root = bxHost() && bxHost().querySelector ? bxHost().querySelector(".bxsvg") : null;
