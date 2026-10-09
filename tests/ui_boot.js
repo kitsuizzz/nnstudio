@@ -691,10 +691,10 @@ check("the Run menu: dark until a backend is established, then it runs", () => {
   __t.bxtRunRefresh();
   ok(String(btn.className).indexOf("off") < 0, "an agent lights Run up");
   ok(__t.bxtRunToggle() === true && !m.hidden, "…and it opens");
-  ok(chips().indexOf("run the design") >= 0, "…and the run action, alone");
+  ok(chips().indexOf("run the design") >= 0, "…and the run action");
   ok(m.querySelectorAll(".bxbspec").length === 0 && state().indexOf("gpu-box") < 0,
      "…the machine's specs are in the Run box, not here");
-  ok(chips().indexOf("add a Run box") >= 0, "…offering the Run box the canvas lacks");
+  ok(chips().indexOf("show the Run box") >= 0, "…offering the Run box the canvas lacks");
   // bad input text is refused before anything is sent
   const inNode = __t.BX.nodes.find(n => n.kind === "input");
   if (inNode) {
@@ -834,11 +834,13 @@ check("the Run box carries the machine, the weights and the run's readout", () =
 });
 
 
-check("the Run menu deploys the Run box when the canvas has none", () => {
+check("the Run menu toggles the Run box's appearance on the canvas", () => {
   const m = getEl("bxtRunMenu");
   const state = () => m.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
   const chips = () => m.querySelectorAll(".chip").map(e => e.textContent);
   const trainCount = () => __t.BX.nodes.filter(n => n.kind === "train").length;
+  const panes = () => getEl("bxcanvas").querySelectorAll(".bxlogpane")
+    .map(el => el.getAttribute("data-agent"));
   const disconnected = { local: { connected: false, agent: null }, inputs: {}, last: null,
                          loaded: null, loading: false, loadKey: null, msg: "", running: false };
   // a connected backend, and the canvas has no Run box yet
@@ -852,23 +854,42 @@ check("the Run menu deploys the Run box when the canvas has none", () => {
       msg: "", running: false };
   ok(trainCount() === 0, "the canvas starts with no Run box");
   ok(__t.bxtRunToggle() === true && !m.hidden, "…and Run opens");
-  ok(chips().indexOf("add a Run box") >= 0, "…offering to add a Run box in the default inference state");
+  ok(chips().indexOf("show the Run box") >= 0, "…offering to show one in the default inference state");
   ok(state().indexOf("no Run box") >= 0, "…and explaining what the Run box is for");
-  // the chip deploys the box and dismisses the menu so the box shows on the canvas
-  const offer = m.querySelectorAll(".chip").find(c => c.textContent === "add a Run box");
+  // the chip shows the box and dismisses the menu so the box lands on the canvas
+  const offer = m.querySelectorAll(".chip").find(c => c.textContent === "show the Run box");
   offer.click();
   const hub = __t.BX.nodes.find(n => n.kind === "train");
-  ok(hub && hub.name === "run 1", "the chip deploys a Run box named run 1");
+  ok(hub && hub.name === "run 1", "the chip shows a Run box named run 1");
   ok(__t.bxTrainHub() && __t.bxTrainHub().id === hub.id, "…and it becomes the training hub");
   ok(m.hidden, "…and the menu dismisses");
-  // re-open: the offer is gone, and the menu points at the box for the mode switch
+  ok(panes().indexOf(hub.id) >= 0, "…and the box is drawn on the canvas");
+  // re-open: the menu offers to hide it, next to the run button
   ok(__t.bxtRunToggle() === true && !m.hidden, "…and it opens again");
-  ok(chips().indexOf("add a Run box") < 0, "…the offer is gone once a Run box exists");
-  ok(chips().length === 1 && chips()[0] === "run the design" && state() === "",
-     "…and the menu is the run button alone");
+  ok(chips().indexOf("show the Run box") < 0, "…the show offer is gone once a Run box exists");
+  ok(chips().indexOf("hide the Run box") >= 0 && chips().indexOf("run the design") >= 0,
+     "…offering to hide the box, next to the run button");
+  // toggling hides it: the box leaves the canvas, the hub stays
+  m.querySelectorAll(".chip").find(c => c.textContent === "hide the Run box").click();
+  ok(hub.hidden === true, "hiding lands on the node");
+  ok(panes().indexOf(hub.id) < 0, "…and the box leaves the canvas");
+  ok(chips().indexOf("show the Run box") >= 0, "…and the toggle flips to show");
+  ok(state().indexOf("still trains from it") >= 0, "…saying the design still trains from it");
+  ok(__t.bxTrainHub() && __t.bxTrainHub().id === hub.id, "…and it is still the hub");
+  ok(__t.bxAdd("train", 200, 0, {}) === null, "…so a second one stays refused");
+  eql(__t.bxJSONNode(hub).hidden, true, "…and the design carries the hidden flag");
+  ok(__t.bxImportJSON(JSON.stringify(__t.bxExportCanvas()), {}).ok, "the canvas round-trips");
+  const back = __t.bxTrainHub();
+  ok(back && back.hidden === true, "…and the box comes back hidden");
+  // show it again: the box returns to the canvas
+  __t.bxtRunRender();                          // the chip now points at the new node
+  m.querySelectorAll(".chip").find(c => c.textContent === "show the Run box").click();
+  ok(__t.bxTrainHub() && !__t.bxTrainHub().hidden, "showing lands too");
+  ok(panes().indexOf(back.id) >= 0, "…and the box is back on the canvas");
   // leave the canvas and the backend as the next block found them
   __t.bxtRunToggle();
-  __t.bxRemove(hub.id);
+  const fin = __t.bxTrainHub();
+  if (fin) __t.bxRemove(fin.id);
   __t.BXRUN = disconnected;
   __t.BX_BACKEND.mode = "local";
   __t.BX_BACKEND.key = "";

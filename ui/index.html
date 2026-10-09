@@ -1254,11 +1254,12 @@ function bxViewport() {
   return { w: Math.max(240, (r && r.width) || 900), h: Math.max(180, (r && r.height) || 520) };
 }
 function bxBounds() {
-  if (!BX.nodes.length) return { x0: 0, y0: 0, x1: BXW + 260, y1: BXH + 160 };
-  const xs = BX.nodes.map(n => n.x), ys = BX.nodes.map(n => n.y);
+  const vis = (BX.nodes || []).filter(n => !n.hidden);   // hidden boxes take no room
+  if (!vis.length) return { x0: 0, y0: 0, x1: BXW + 260, y1: BXH + 160 };
+  const xs = vis.map(n => n.x), ys = vis.map(n => n.y);
   return { x0: Math.min(...xs), y0: Math.min(...ys),
-           x1: Math.max(...BX.nodes.map(n => n.x + bxNodeW(n))),
-           y1: Math.max(...BX.nodes.map(n => n.y + bxNodeH(n))) };
+           x1: Math.max(...vis.map(n => n.x + bxNodeW(n))),
+           y1: Math.max(...vis.map(n => n.y + bxNodeH(n))) };
 }
 function bxCenter() {
   const b = bxBounds();
@@ -4110,6 +4111,7 @@ function bxJSONNode(n) {
     if (n.box) o.box = { w: Math.round(n.box.w || 480), h: Math.round(n.box.h || 320) };
     if (n.panel) o.panel = n.panel;      // {expand} — the display's size
     if (n.collapsed) o.collapsed = true;
+    if (n.hidden) o.hidden = true;       // the Run menu toggles the box's appearance
   }
   else if (n.kind === "dataset") {
     if (n.text) o.text = n.text;
@@ -4480,6 +4482,7 @@ function bxJSONNodeFrom(o) {
                   debug: !!p.debug, expand: !!p.expand };
     }
     if (o.collapsed) n.collapsed = true;
+    if (o.hidden) n.hidden = true;       // hidden from the canvas, still the hub
   }
   else {
     const inner = o.inner == null ? { nodes: [], edges: [] } : bxJSONDocFrom(o.inner, "nested");
@@ -5115,7 +5118,7 @@ function bxRender() {
   if ($("bxvram")) bxRenderEstimate();
   for (const e of BX.edges) {
     const a = bxNode(e.from), b = bxNode(e.to);
-    if (!a || !b) continue;
+    if (!a || !b || a.hidden || b.hidden) continue;
     const ac = bxPortDefs(a, "out").length, bc = bxPortDefs(b, "in").length;
     const d = bxWirePath(a, b, e.via, e.fromPort, ac, e.toPort, bc);
     const state = bxWireState(e);
@@ -5137,7 +5140,7 @@ function bxRender() {
     hitAttrs.class = "dedge-hit" + sel;        // its own class, not the wire's
     root.appendChild(svg("path", hitAttrs));
   }
-  for (const n of BX.nodes) root.appendChild(bxCard(n));
+  for (const n of BX.nodes) if (!n.hidden) root.appendChild(bxCard(n));
   if (bxGuides.length) root.appendChild(bxGuideLayer());
   if (bxMarqueeRect) {
     const r = bxMarqueeRect;
@@ -5703,19 +5706,38 @@ function bxtRunRender() {
   if (BX.up) {
     menu.appendChild(mk("div", { class: "bxbhint",
       text: hub ? "the whole design runs from the top level \u2014 the Run box up there holds the machine and the weights"
-                : "the whole design runs from the top level \u2014 go back out to add its Run box" }));
-  } else if (!hub) {
-    menu.appendChild(mk("div", { class: "bxbhint",
-      text: "no Run box on the canvas \u2014 add one for the mode switch, the "
-           + "data and the run's settings" }));
+                : "the whole design runs from the top level \u2014 go back out to show its Run box" }));
+  } else {
     const row = mk("div", { class: "rrow" });
-    const b = mk("span", { class: "chip tiny", text: "add a Run box" });
-    b.addEventListener("click", () => {
-      bxMenuClose();
-      bxDropPalette("train", null);
-      bxtRunToggle();
-    });
-    row.appendChild(b);
+    if (!hub) {
+      menu.appendChild(mk("div", { class: "bxbhint",
+        text: "no Run box on the canvas \u2014 show it for the mode switch, the "
+             + "data and the run's settings" }));
+      const b = mk("span", { class: "chip tiny", text: "show the Run box" });
+      b.addEventListener("click", () => {
+        bxMenuClose();
+        bxDropPalette("train", null);
+        bxtRunToggle();
+      });
+      row.appendChild(b);
+    } else {
+      if (hub.hidden)
+        menu.appendChild(mk("div", { class: "bxbhint",
+          text: "the Run box is hidden \u2014 the design still trains from it" }));
+      const b = mk("span", { class: "chip tiny",
+                             text: hub.hidden ? "show the Run box" : "hide the Run box" });
+      b.addEventListener("click", () => {       // the canvas follows the toggle
+        hub.hidden = !hub.hidden;
+        if (hub.hidden && bxSel && bxSel.kind === "boxes") {
+          bxSel.ids = bxSel.ids.filter(x => x !== hub.id);
+          if (!bxSel.ids.length) bxSel = null;
+        }
+        bxCommit();
+        bxRender();
+        bxtRunRender();
+      });
+      row.appendChild(b);
+    }
     menu.appendChild(row);
   }
   const row = mk("div", { class: "rrow" });
@@ -5732,8 +5754,8 @@ function bxtRunRender() {
     go.title = "go back out to the top level first";
   row.appendChild(go);
   menu.appendChild(row);
-  if (!hub && BXRUN.msg)                       // no Run box to read it in: the
-    menu.appendChild(mk("div", { class: "bxbhint", text: BXRUN.msg }));   // button says it
+  if ((!hub || hub.hidden) && BXRUN.msg)      // no visible Run box to read it in:
+    menu.appendChild(mk("div", { class: "bxbhint", text: BXRUN.msg }));   // the button says it
   bxTrainRefresh();
 }
 

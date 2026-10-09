@@ -223,8 +223,10 @@
         its own — that's the "nested" in nnstudio. Double-clicking again goes
         deeper; the strip above the canvas shows where you are and takes you back.</li>
     <li><b>Run it</b> — connect <span class="pill grey">Backend ▾</span> first. The
-        <span class="pill grey">Run ▾</span> menu is the run button; the
-        <span class="pill">Run</span> box carries the details — the backend machine
+        <span class="pill grey">Run ▾</span> menu is the run button, and it toggles
+        the <span class="pill">Run</span> box's appearance on the canvas — hiding
+        it clears the view, the design still runs. The box carries the details —
+        the backend machine
         and its live usage, the weights (the offload ratio, load / offload), what
         the model reads, and the run's result. Its <b>mode</b> decides how the
         weights are held: <b>inference</b> keeps no gradients (the lightest run —
@@ -622,6 +624,8 @@
       <span class="pill grey">Run ▾</span> menu used to hold: the backend machine
       and its live usage, the weights (the offload ratio, <b>load weights</b> /
       <b>offload</b>), what the model reads (the feeds), and the last run's result.
+      The menu's <b>hide / show the Run box</b> toggle takes it off the canvas —
+      and brings it back — while the design keeps training from it.
       Then the setup, the step counter, and the
       live curves: loss and
       accuracy (solid train, dashed test) — in rl, the mean reward and its
@@ -668,9 +672,9 @@
         <span class="dim">(The first click arms the overwrite — click again to
         confirm.)</span> The box fills with the model's blocks, wired exactly like
         the original implementation.</li>
-    <li><span class="pill grey">Backend ▾</span> → connect. Add a
+    <li><span class="pill grey">Backend ▾</span> → connect. Show the
         <span class="pill">Run</span> box from <span class="pill grey">Run ▾</span>
-        → type a prompt in its window → run. The menu itself is just the run button.</li>
+        → type a prompt in its window → run. The menu itself is the run button.</li>
     <li>Double-click the GGUF box to look inside; click boxes to see the numbers
         that flowed through them.</li>
   </ol>
@@ -685,9 +689,10 @@
         the <span class="pill">dataset</span> box; give it rows
         (<code>prompt&lt;TAB&gt;completion</code> or JSONL). A second dataset box
         is the held-out test split, if you have one.</li>
-    <li>Add a <span class="pill">Run</span> box — the <b>hub of the training</b> —
+    <li>Show the <span class="pill">Run</span> box — the <b>hub of the training</b> —
         from the <span class="pill grey">Run ▾</span> menu (not the Palette). There
-        is only one, and it lives at the top level.
+        is only one, and it lives at the top level; the same menu hides it again
+        when you want the canvas clear.
         Right-click it → <b>set up the training …</b>: bind the dataset (and the
         test split), name the <b>x</b> column (the model's input) and the
         <b>y</b> column (what the model is scored on), pick the <b>target</b> —
@@ -880,7 +885,9 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     Training needs one place to say <i>what</i> the model learns from and
     <i>how</i>. That place is the <span class="pill">Run</span> box — the hub.
     There is only ever one Run box, it cannot be renamed, and it lives at the
-    top level of the design; a nested box never holds one.
+    top level of the design; a nested box never holds one. The
+    <span class="pill grey">Run ▾</span> menu hides it and brings it back —
+    the design trains from it either way.
     It owns the data (the <code>dataset</code> that feeds the run, and an optional
     <code>test_dataset</code> the trainer scores but never trains on), the columns
     (<code>x_col</code> conditions, <code>y_col</code> is the target), the
@@ -1044,7 +1051,7 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         <code>vocab</code> <code>abcd</code>.</li>
     <li><b>Add the loss</b> — a <span class="pill">loss</span> box; wire the
         layer's output into dot one, the dataset into dot two.</li>
-    <li><b>Watch it learn</b> — add a <span class="pill">Run</span> box (from the <span class="pill grey">Run ▾</span> menu), then
+    <li><b>Watch it learn</b> — show a <span class="pill">Run</span> box (from the <span class="pill grey">Run ▾</span> menu), then
         start a training task with the design (ask the agent box:
         "train the current design"). The curve on the Run box should fall within
         seconds — the network has learned that <code>a</code> is followed by
