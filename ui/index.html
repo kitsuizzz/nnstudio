@@ -5151,19 +5151,18 @@ function bxWireKind(a, st) {                   // the data's kind, as a word
   if (st) {
     const sh = (st.shape || []).map(Number);
     const dt = bxDtypeShort(st.dtype) || "";
-    if (sh.length <= 1 && st.scalar != null) return "number";
     if (sh.length <= 1 && /^[ui]\d+$/.test(dt)) return "ids";
-    return sh.length <= 1 ? "vector" : "matrix";
+    return "matrix";                           // a number is a 1-element matrix
   }
   if (a) return bxPortType(a, "out", 0).kind;  // before a run, its own dot knows
   return "matrix";
 }
-function bxWireShape(st) {                     // the shape, when there is one
+function bxWireShape(st) {                     // the shape, always a shape
   if (!st) return null;
   if (st.text != null) return "\u201c" + bxClip(st.text, 36) + "\u201d";
   const sh = (st.shape || []).map(Number);
-  if (st.scalar != null && sh.length <= 1) return bxNumText(st.scalar);
   if (sh.length) return "[" + sh.join("\u00d7") + "]";
+  if (st.scalar != null) return "[1]";         // a lone number is one element
   if (st.image)
     return "[" + (st.image.h || "?") + "\u00d7" + (st.image.w || "?") + "\u00d73]";
   return null;
@@ -5195,13 +5194,12 @@ function bxPortType(n, dir, i) {               // what a dot is built to carry
     if (n.kind === "tokenize") return { kind: "ids", shape: null };
     if (n.kind === "detokenize" || n.kind === "hf") return { kind: "text", shape: null };
   }
-  const p = bxPortDefs(n, dir)[i || 0];        // the declared width: a vector
+  const p = bxPortDefs(n, dir)[i || 0];        // the declared width, as a shape
   const size = p && p.size != null ? p.size : null;
   if (size == null) return { kind: "matrix", shape: null };
-  if (size === 1) return { kind: "number", shape: null };
-  return { kind: "vector", shape: "[" + size + "]" };
+  return { kind: "matrix", shape: "[" + size + "]" };
 }
-function bxTypeText(pt) {                      // "vector [5120]" / "image [768\u00d7768\u00d73]"
+function bxTypeText(pt) {                      // "matrix [5120]" / "image [768\u00d7768\u00d73]"
   if (!pt) return null;
   if (pt.kind === "text" || pt.kind === "ids") return pt.kind;
   return pt.kind + (pt.shape ? " " + pt.shape : "");
@@ -5241,7 +5239,7 @@ function bxTipShow(edge, ev) {                 // a wire: what data rides on it
   const st = bxWireValue(edge).st;
   const kind = bxWireKind(a, st);
   const dt = st ? bxDtypeShort(st.dtype) : null;
-  const numeric = kind === "matrix" || kind === "vector" || kind === "number";
+  const numeric = kind === "matrix";           // the one numeric type
   const outs = bxPortDefs(a, "out").length;
   bxTipAdd(tip, "who", "from " + bxClip(a.name || bxKindLabel(a.kind), 26) +
                        (outs > 1 ? " \u00b7 out " + ((edge.fromPort || 0) + 1) : ""));

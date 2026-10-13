@@ -509,15 +509,20 @@ check("hovering a wire reads out the data on it: type, dtype, shape", () => {
   __t.bxHotSet(e, ev);
   eql(tip.hidden, false, "the card shows while the wire is hot");
   eql(line("who"), "from " + a.name, "…it names where the data comes from");
-  eql(line("what"), "vector", "…and its kind before a run: " + line("what"));
+  eql(line("what"), "matrix", "…and its kind before a run: " + line("what"));
   eql(line("note"), "not run yet", "…saying no value is there yet");
   eql(tip.style.left, "216px", "…placed by the cursor (x): " + tip.style.left);
   // after a run the card carries the type, the dtype and the shape
   const path = a.id;
   __t.bxRunValues = { [path]: { shape: [12], dtype: "i64", mean: 2, peek: [1, 2] } };
   __t.bxHotSet(e, ev);
-  eql(line("what"), "ids", "an integer vector reads as ids: " + line("what"));
+  eql(line("what"), "ids", "an integer stream reads as ids: " + line("what"));
   eql(line("shp"), "[12]", "…with its shape");
+  __t.bxRunValues = { [path]: { shape: [], dtype: "f32", scalar: 0.5,
+                                mean: 0.5, peek: [0.5] } };
+  __t.bxHotSet(e, ev);
+  eql(line("what"), "matrix · f32", "a lone number is a matrix too: " + line("what"));
+  eql(line("shp"), "[1]", "…one element wide");
   __t.bxRunValues = { [path]: { shape: [4, 8], dtype: "f32", mean: 0, peek: [0] } };
   __t.bxHotSet(e, ev);
   eql(line("what"), "matrix \u00b7 f32", "a matrix carries its dtype: " + line("what"));
@@ -548,7 +553,7 @@ check("hovering an input box names it and the type it emits", () => {
   eql(tip.hidden, false, "the card shows over the box");
   eql(line("who"), "input", "…it names the kind");
   eql(line("what"), i.name, "…and the box's name");
-  eql(line("shp"), "emits vector [5120]", "…and the type it will emit");
+  eql(line("shp"), "emits matrix [5120]", "…and the type it will emit");
   eql(line("note"), null, "no run value yet: " + line("note"));
   // the run's own shape rides under the expectation
   __t.bxRunValues = { [i.id]: { shape: [4, 5120], dtype: "f32", mean: 1, peek: [1] } };
@@ -585,7 +590,7 @@ check("hovering an output box says what it expects", () => {
   __t.bxHotMove({ target: __t.bxCard(o), clientX: 140, clientY: 90 });
   eql(line("who"), "output", "the card names the kind");
   eql(line("what"), o.name, "…and the box's name");
-  eql(line("shp"), "expects vector [128]", "…and what it takes");
+  eql(line("shp"), "expects matrix [128]", "…and what it takes");
   __t.bxRunValues = { [o.id]: { shape: [64, 64, 3], dtype: "f32",
                                 image: { w: 64, h: 64, blob: "" } } };
   __t.bxHotSet(null);
@@ -616,20 +621,20 @@ check("a nested box's dots and body read as its own i/o boxes", () => {
   __t.bxHotMove({ target: dot, clientX: 120, clientY: 80 });
   eql(line("who"), "input", "a dot reads as the inner input box");
   eql(line("what"), "tokens", "…its name");
-  eql(line("shp"), "emits vector [12]", "…and what it emits");
+  eql(line("shp"), "emits matrix [12]", "…and what it emits");
   eql(line("note"), "port 1 of Inner-Model", "…and which dot it is");
   __t.bxHotSet(null);
   __t.bxHotMove({ target: g, clientX: 120, clientY: 80 });
   eql(line("who"), "nested box", "the body lists its dots");
   eql(line("what"), "Inner-Model", "…under the box's name");
   eql(tip.querySelectorAll(".row").map(r => String(r.textContent)),
-      ["in  tokens · vector [12]", "out head · vector [128]"],
+      ["in  tokens · matrix [12]", "out head · matrix [128]"],
       "…one row per dot, the inner boxes' own metadata");
   const outDot = g.querySelectorAll(".dport").find(d => String(d.className).indexOf(" out") >= 0);
   __t.bxHotSet(null);
   __t.bxHotMove({ target: outDot, clientX: 120, clientY: 80 });
   eql(line("who"), "output", "an out dot reads as the inner output box");
-  eql(line("shp"), "expects vector [128]", "…and what it takes");
+  eql(line("shp"), "expects matrix [128]", "…and what it takes");
   eql(line("note"), "port 1 of Inner-Model", "…port 1 of the nested box");
   __t.bxHotSet(null);
   __t.bxRemove(c.id);
