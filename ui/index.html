@@ -822,6 +822,17 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
               border-radius: 8px; border: 1px solid var(--panel-brd); }
 .bxoutimg { display: block; max-width: 100%; margin: 6px 0;
             border-radius: 8px; border: 1px solid var(--panel-brd); }
+.bxdrop { display: block; margin: 6px 0; padding: 10px 8px; text-align: center;
+          border: 1px dashed var(--panel-brd); border-radius: 10px;
+          background: rgba(0,0,0,.18); cursor: pointer; }
+.bxdrop:hover, .bxdrop.over { border-color: rgba(249,115,22,.55);
+                              background: rgba(249,115,22,.06); }
+.bxdropimg { display: block; max-width: 100%; max-height: 240px; margin: 0 auto 6px;
+             border-radius: 8px; }
+.bxdropmsg { font: 12px var(--mono); color: var(--ink-dim); line-height: 1.5; }
+.bxdropmsg.faint { color: var(--ink-faint); }
+.bxdropmsg.bad { color: #fca5a5; }
+.bxdroprow { display: flex; gap: 6px; justify-content: center; }
 .bxinputbody input[type="text"] {
   flex: 1 1 auto; min-width: 0; width: auto; padding: 4px 8px;
   border-radius: 8px; font: 12px var(--mono);
@@ -2603,6 +2614,22 @@ function bxConfigure(id, vals) {
       const vv = String(vals.values == null ? "" : vals.values).trim();
       n.values = vv ? bxClip(vv, 4096) : null;
     }
+    if (vals.image !== undefined) {          // the picture an image input carries
+      const s = String(vals.image == null ? "" : vals.image).trim();
+      n.image = s ? bxClip(s, 300) : null;
+    }
+    if (vals.image_size !== undefined) {
+      const s = bxSize(vals.image_size, n.image_size);
+      n.image_size = s && s >= 8 ? s : null;      // the side the pixels are sent at
+    }
+    if (vals.patch_size !== undefined) {
+      const p2 = bxSize(vals.patch_size, n.patch_size);
+      n.patch_size = p2 && p2 >= 1 ? p2 : null;
+    }
+    if (vals.image_mean !== undefined)
+      n.image_mean = String(vals.image_mean == null ? "" : vals.image_mean).slice(0, 80) || null;
+    if (vals.image_std !== undefined)
+      n.image_std = String(vals.image_std == null ? "" : vals.image_std).slice(0, 80) || null;
   }
   if ((n.kind === "tokenize" || n.kind === "detokenize") && vals.repo !== undefined) {
     const s = String(vals.repo == null ? "" : vals.repo).trim();
@@ -3778,38 +3805,66 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
     field("size", n.dout == null ? "" : n.dout, "8 \u2014 the vector's width",
           (v) => save({ input_mode: "random", dout: v }));
   } else if (mode === "image") {
-    // the image: picked here, stored in the app's blob store, shown in place.
-    // The run decodes it to pixels and sends them with the design.
-    const pick = mk("span", { class: "chip tiny",
-      text: n.image ? "replace the image \u2026" : "pick an image \u2026" });
+    // the picture: drop it here, paste it, or choose it. It lands in the
+    // project's media store, the box shows the thumbnail it received, and the
+    // run sends its pixels across the wires as an RGB matrix (h x w x 3).
     const file = mk("input", { type: "file", accept: "image/*" });
     file.hidden = true;
     body.appendChild(file);
-    body.appendChild(pick);
-    pick.addEventListener("click", () => { if (file.click) file.click(); });
-    file.addEventListener("change", () => {
-      const f = file.files && file.files[0];
-      if (!f || typeof fetch !== "function") return;
-      pick.textContent = "uploading \u2026";
-      fetch("/api/blob?name=" + encodeURIComponent(f.name || "image.png"),
-            { method: "POST", body: f })
-        .then(r => r.json())
-        .then(d => {
-          if (!d || !d.ok || !d.id) throw new Error((d && d.error) || "upload failed");
-          save({ input_mode: "image", image: "blob:" + d.id,
-                 image_size: Number(n.image_size) || 768, dout: 3 });
-        })
-        .catch(e => { pick.textContent = String((e && e.message) || e); });
-    });
+    const zone = mk("div", { class: "bxdrop" + (n.image ? " has" : "") });
+    zone.tabIndex = 0;
+    const keep = (e) => {                      // a drop is ours, not the canvas'
+      if (e && e.preventDefault) e.preventDefault();
+      if (e && e.stopPropagation) e.stopPropagation();
+    };
     if (n.image) {
       const bid = String(n.image).replace(/^blob:/, "");
-      const img = mk("img", { class: "bxinputimg",
-                              src: "/api/blob?id=" + encodeURIComponent(bid) });
-      body.appendChild(img);
-      const off = mk("span", { class: "chip tiny", text: "clear the image" });
-      off.addEventListener("click", () => save({ input_mode: "image", image: "" }));
-      body.appendChild(off);
+      zone.appendChild(mk("img", { class: "bxdropimg",
+                                   src: "/api/blob?id=" + encodeURIComponent(bid) }));
+      const row = mk("div", { class: "bxdroprow" });
+      const rep = mk("span", { class: "chip tiny", text: "replace" });
+      rep.addEventListener("click", (e) => {
+        keep(e);
+        if (file.click) file.click();
+      });
+      const off = mk("span", { class: "chip tiny", text: "clear" });
+      off.addEventListener("click", (e) => {
+        keep(e);
+        save({ input_mode: "image", image: "" });
+      });
+      row.appendChild(rep);
+      row.appendChild(off);
+      zone.appendChild(row);
+    } else {
+      zone.appendChild(mk("div", { class: "bxdropmsg", text: "Drop or choose\u2026" }));
+      zone.appendChild(mk("div", { class: "bxdropmsg faint",
+        text: "drag it here, paste it with the box selected, or click to choose" }));
     }
+    const over = (on) => { zone.className = "bxdrop" + (n.image ? " has" : "")
+                                                   + (on ? " over" : ""); };
+    zone.addEventListener("click", () => { if (file.click) file.click(); });
+    zone.addEventListener("dragover", (e) => { keep(e); over(true); });
+    zone.addEventListener("dragleave", () => over(false));
+    zone.addEventListener("drop", (e) => {
+      keep(e);
+      over(false);
+      const dt = e && e.dataTransfer;
+      const f = dt && dt.files && dt.files[0];
+      if (f) bxImageAttach(n, f, zone);
+    });
+    zone.addEventListener("paste", (e) => {
+      const cd = e && e.clipboardData;
+      const f = cd && cd.files && cd.files[0];
+      if (f) {
+        keep(e);
+        bxImageAttach(n, f, zone);
+      }
+    });
+    file.addEventListener("change", () => {
+      const f = file.files && file.files[0];
+      if (f) bxImageAttach(n, f, zone);
+    });
+    body.appendChild(zone);
     field("size", n.image_size == null ? "768" : n.image_size,
           "768 \u2014 the side the pixels are sent at",
           (v) => save({ input_mode: "image", image_size: v }));
@@ -3833,6 +3888,62 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
     pane.appendChild(mk("div", { class: "bxbhint " + (outcome.ok ? "runok" : "runbad"),
                                  text: outcome.text }));
 }
+function bxImageAttach(n, f, zone) {           // a file -> the media store -> the box
+  if (!f) return false;
+  const looks = /^image\//.test(String(f.type || ""))
+             || /\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(String(f.name || ""));
+  if (!looks) {
+    if (zone) zone.appendChild(mk("div", { class: "bxdropmsg bad",
+                                           text: "that is not a picture" }));
+    return false;
+  }
+  if (typeof fetch !== "function") return false;
+  if (zone) zone.appendChild(mk("div", { class: "bxdropmsg", text: "uploading \u2026" }));
+  fetch("/api/blob?name=" + encodeURIComponent(f.name || "image.png"),
+        { method: "POST", body: f })
+    .then(r => r.json())
+    .then(d => {
+      if (!d || !d.ok || !d.id) throw new Error((d && d.error) || "upload failed");
+      bxConfigure(n.id, { input_mode: "image", image: "blob:" + d.id,
+                          image_size: Number(n.image_size) || 768, dout: 3 });
+    })
+    .catch(e => {
+      if (zone) zone.appendChild(mk("div", { class: "bxdropmsg bad",
+                                             text: String((e && e.message) || e) }));
+    });
+  return true;
+}
+function bxImageDraw(body, st) {               // the picture a state carries, drawn
+  const im = st && st.image;                   // as it arrived — blob or thumbnail
+  if (!im || !body) return false;
+  const bid = String(im.blob || "").replace(/^blob:/, "");
+  if (bid) {
+    body.appendChild(mk("img", { class: "bxoutimg",
+                                 src: "/api/blob?id=" + encodeURIComponent(bid) }));
+    return true;
+  }
+  const t = im.thumb;
+  if (t && t.rgb && typeof atob === "function") {
+    const cv = mk("canvas", { class: "bxoutimg" });
+    cv.width = t.w;
+    cv.height = t.h;
+    body.appendChild(cv);
+    const ctx = cv.getContext && cv.getContext("2d");
+    if (ctx) {
+      const bin = atob(t.rgb);                 // the backend's own RGB bytes
+      const px = ctx.createImageData(t.w, t.h);
+      for (let i = 0, j = 0; i < px.data.length; i += 4, j += 3) {
+        px.data[i] = bin.charCodeAt(j);
+        px.data[i + 1] = bin.charCodeAt(j + 1);
+        px.data[i + 2] = bin.charCodeAt(j + 2);
+        px.data[i + 3] = 255;
+      }
+      ctx.putImageData(px, 0, 0);
+    }
+    return true;
+  }
+  return false;
+}
 function bxOutputFill(pane, n) {               // the output's window: whatever data
   // the last run handed it, and nothing else
   pane.innerHTML = "";
@@ -3853,12 +3964,9 @@ function bxOutputFill(pane, n) {               // the output's window: whatever 
     body.appendChild(mk("div", { class: "bxdata", text: "\u201c" + st.text + "\u201d" }));
     return;
   }
-  if (st.image) {                              // a picture arrived: show the picture
-    const bid = String(st.image.blob || "").replace(/^blob:/, "");
-    if (bid) {
-      body.appendChild(mk("img", { class: "bxoutimg",
-                                   src: "/api/blob?id=" + encodeURIComponent(bid) }));
-    } else {
+  if (st.image) {                              // a picture arrived: draw the data
+    const drew = bxImageDraw(body, st);        // as it is, then say what it is
+    if (!drew) {
       body.appendChild(mk("div", { class: "panehint",
         text: "an image arrived (" + (st.image.w || "?") + "\u00d7"
               + (st.image.h || "?") + ")" }));
@@ -4474,6 +4582,18 @@ function bxOnCopy(ev) {                        // the browser's copy event
 }
 function bxOnPaste(ev) {                       // the browser's paste event
   if (bxTyping(ev && ev.target)) return false;
+  const cd0 = ev && ev.clipboardData;
+  const files = cd0 && cd0.files;
+  if (files && files.length) {                 // a picture pasted over the canvas
+    const ids = (typeof bxSelectedIds === "function") ? bxSelectedIds() : [];
+    const n = ids.length === 1 ? bxNode(ids[0]) : null;
+    if (n && n.kind === "input" && n.input_mode === "image") {
+      bxImageAttach(n, files[0], null);        // lands in the selected box
+      if (ev && ev.preventDefault) ev.preventDefault();
+      return true;
+    }
+    return false;
+  }
   const text = ev && ev.clipboardData && ev.clipboardData.getData("text/plain");
   if (!text || !bxPasteBoxes(text)) return false;
   if (ev) ev.preventDefault();

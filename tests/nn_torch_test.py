@@ -2146,10 +2146,52 @@ def vision_takes_a_picture():
         # an image at another size is resized to the tower's own on the way in
         small = tow(torch.rand(8, 8, 3, generator=torch.Generator().manual_seed(4)))
         assert tuple(small.shape) == (1, 12), small.shape
+        # an RGB pixel list [n, 3] (a square) is the same picture
+        c = tow(img.reshape(-1, 3))
+        assert torch.allclose(a, c, atol=1e-5), float((a - c).abs().max())
 
 
 check("a vision tower takes the picture itself, and its patch rows",
       vision_takes_a_picture)
+
+
+def image_matrix_determination():
+    # a python-built [h, w, 3] matrix in 0..1: an output box determines it is
+    # a picture and the backend sends a thumbnail it can draw
+    c = canvas([n("input", "m", input_mode="python",
+                  input_code="torch.zeros(4, 4, 3) + 0.5"),
+                n("output", "out", din=3)], [edge("m", "out")])
+    res = T.run_graph(T.compile_canvas(c), c, {})
+    vals = res.get("values") or {}
+    st = vals.get("out") or {}
+    assert st.get("image"), "the output reads as a picture: %r" % list(st)
+    assert (st["image"]["w"], st["image"]["h"]) == (4, 4), st["image"]
+    th = st["image"].get("thumb") or {}
+    assert (th.get("w"), th.get("h")) == (4, 4) and th.get("rgb"), th
+    import base64 as b64
+    assert len(b64.b64decode(th["rgb"])) == 4 * 4 * 3, "an RGB thumbnail"
+    assert not (vals.get("m") or {}).get("image"), \
+        "…but the box that made it is not re-labelled"
+    # [n, 3] with n a square: an RGB pixel list, also a picture
+    c2 = canvas([n("input", "m", input_mode="python", input_code="torch.rand(16, 3)"),
+                 n("output", "out", din=3)], [edge("m", "out")])
+    r2 = T.run_graph(T.compile_canvas(c2), c2, {})
+    assert ((r2.get("values") or {}).get("out") or {}).get("image"), "a square RGB list"
+    # not a square: a matrix, not a picture
+    c3 = canvas([n("input", "m", input_mode="python", input_code="torch.rand(12, 3)"),
+                 n("output", "out", din=3)], [edge("m", "out")])
+    r3 = T.run_graph(T.compile_canvas(c3), c3, {})
+    assert not ((r3.get("values") or {}).get("out") or {}).get("image"), "a ragged list"
+    # values outside 0..1 are not pixels
+    c4 = canvas([n("input", "m", input_mode="python",
+                   input_code="torch.zeros(4, 4, 3) + 2.0"),
+                 n("output", "out", din=3)], [edge("m", "out")])
+    r4 = T.run_graph(T.compile_canvas(c4), c4, {})
+    assert not ((r4.get("values") or {}).get("out") or {}).get("image"), "2.0 is not a pixel"
+
+
+check("a matrix that reads as a picture is drawn as one (thumbnail and all)",
+      image_matrix_determination)
 
 
 def vision_refuses_unknown_projectors():

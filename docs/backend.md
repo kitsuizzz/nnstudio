@@ -55,15 +55,22 @@ Weights stay f16 at rest (the box's estimate is the file's own bytes); the
 forward computes in f32. The tower honors `place` (gpu/system) like any other
 weight box.
 
-An image input box emits the **picture itself** (`[h, w, 3]`, 0..1) — it
-travels the wires like any value, so an output box it reaches shows the
-image — and the tower does its own preprocessing: resized to `image_size`
+An image input box emits the **picture itself** as a matrix of RGB channels
+(`[h, w, 3]`, 0..1) — it travels the wires like any value, so an output box it
+reaches draws it — and the tower does its own preprocessing: resized to `image_size`
 (the browser already sends at that side; the engine re-does it for API
 clients), normalized with the file's `image_mean`/`image_std`, and cut into
 `patch × patch` patches (rows `k = x + grid_w·y`). Pre-cut patch rows are
 still accepted on the tower's input for API clients. A run sends the raw
 pixels (RGB8, base64) with the design — the backend never reads the
 browser's blob store.
+
+Any box that receives a matrix the backend **determines** to be a picture — an
+RGB matrix in 0..1 (`[h, w, 3]`, or a square `[n, 3]` pixel list) — gets it
+drawn as-is: the run's stats carry the image, and for matrices with no media
+store entry behind them a small base64 thumbnail (`image.thumb`) rides along so
+the app can draw it. Images that came from an image input carry the blob
+instead — the browser shows the full picture.
 
 ## Per platform
 

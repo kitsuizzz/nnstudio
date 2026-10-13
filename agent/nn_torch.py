@@ -587,11 +587,77 @@ def image_story(canvas, collected):
     return out
 
 
-def _stats_with_image(v, story):
-    """One value's stats, with the picture's story attached when it is one."""
+def _thumb(x, max_side=96):
+    """A small RGB copy of a picture, base64 — what the app draws when the
+    value is a matrix the backend *determined* to be an image (no blob of its
+    own). Downscaled so a result never carries a full picture."""
+    h, w = int(x.shape[0]), int(x.shape[1])
+    if max(h, w) > max_side:
+        scale = max_side / float(max(h, w))
+        nh = max(1, int(round(h * scale)))
+        nw = max(1, int(round(w * scale)))
+        x = F.interpolate(x.permute(2, 0, 1)[None], size=(nh, nw),
+                          mode="bilinear", antialias=True)[0].permute(1, 2, 0)
+        h, w = nh, nw
+    px = (x.clamp(0.0, 1.0) * 255.0).round().to(torch.uint8).contiguous().cpu().numpy()
+    return {"w": w, "h": h, "rgb": base64.b64encode(px.tobytes()).decode()}
+
+
+def image_view(v):
+    """Does this value read as a picture? An RGB matrix in 0..1: [h, w, 3], or
+    [n, 3] with n a square (a pixel list). Answers {w, h, thumb} — the data
+    drawn as it is — or None when the matrix is something else."""
+    if not torch.is_tensor(v) or not v.is_floating_point():
+        return None
+    x = v.detach().float()
+    if x.dim() == 3 and int(x.shape[-1]) == 3:
+        h, w = int(x.shape[0]), int(x.shape[1])
+    elif x.dim() == 2 and int(x.shape[-1]) == 3:
+        n = int(x.shape[0])
+        side = int(math.isqrt(n))
+        if side * side != n:
+            return None                          # not a grid: not a picture
+        h = w = side
+        x = x.reshape(h, w, 3)
+    else:
+        return None
+    if h < 2 or w < 2 or h * w < 4:
+        return None                              # a 2x2 grid is the smallest picture
+    lo, hi = float(x.min()), float(x.max())
+    if lo < -0.02 or hi > 1.02:
+        return None                              # not pixel values
+    return {"w": w, "h": h, "blob": "", "thumb": _thumb(x)}
+
+
+def output_paths(canvas):
+    """Every output box's path — the viewable nodes, nested levels included."""
+    out = set()
+
+    def walk(nodes, prefix):
+        for n in (nodes or []):
+            path = prefix + (n.get("id") or "")
+            if n.get("kind") == "custom":
+                walk((n.get("inner") or {}).get("nodes"), path + "/")
+                continue
+            if n.get("kind") == "output":
+                out.add(path)
+
+    walk((canvas or {}).get("nodes"), "")
+    return out
+
+
+def _stats_with_image(v, story, view=False):
+    """One value's stats, with the picture attached when it is one: the marked
+    story (an image input's own, blob and all) always; a matrix the backend
+    determines to be a picture only where it will be shown (`view`), as a
+    small thumbnail."""
     st = tensor_stats(v)
+    if st is None:
+        return None
     meta = story.get(id(v)) if story else None
-    if st is not None and meta:
+    if meta is None and view:
+        meta = image_view(v)
+    if meta:
         st["image"] = meta
     return st
 
@@ -2176,6 +2242,12 @@ class VisionTower(nn.Module):
                                          "wire an image input")
         if patches.dim() == 3 and int(patches.shape[-1]) == 3:
             patches = self._from_image(patches)          # the picture itself
+        elif patches.dim() == 2 and int(patches.shape[-1]) == 3:
+            side = int(math.isqrt(int(patches.shape[0])))    # an RGB pixel list
+            if side * side != int(patches.shape[0]):
+                raise CanvasError(self.name, "its %d RGB rows do not make a square "
+                                             "picture" % int(patches.shape[0]))
+            patches = self._from_image(patches.reshape(side, side, 3))
         elif patches.dim() != 2:
             raise CanvasError(self.name, "it needs an image [h, w, 3] or its "
                                          "patch rows [n, 3*patch*patch]")
@@ -2539,9 +2611,10 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
             vals = passes()
     collected = graph.collect()
     story = image_story(canvas, collected)
+    outs = output_paths(canvas)                  # the viewable nodes
     values = {}
     for path, v in collected.items():
-        st = _stats_with_image(v, story)
+        st = _stats_with_image(v, story, view=(path in outs))
         if st is not None:
             values[path] = st
     texts = {}
@@ -2555,7 +2628,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
         "generated": generated,
         "texts": texts,
         "outputs": [{"id": n["id"], "name": n.get("name"),
-                     "stats": _stats_with_image(vals.get(n["id"]), story)}
+                     "stats": _stats_with_image(vals.get(n["id"]), story, view=True)}
                     for n in canvas.get("nodes", []) if n.get("kind") == "output"],
         "ms": int((time.time() - t0) * 1000),
     }

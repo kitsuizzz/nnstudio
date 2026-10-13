@@ -340,12 +340,15 @@
       <code>python</code> / <code>random</code> / <code>image</code>) and the data
       itself, typed right on the canvas (a <code>values</code> list resizes the box
       to fit its numbers). In <code>image</code> mode you pick a picture from your
-      machine: it lands in the project's media store (the same <code>blob:</code>
-      store the dataset sheet uses), the box shows its preview, and a run decodes
-      it to pixels and sends them with the design. The <b>picture itself travels
-      the wires</b> (<code>h × w × 3</code>, 0..1): an <span class="pill">output</span>
-      box it reaches shows the image, and a vision tower does its own resizing,
-      normalization and patch cutting.
+      machine — or just <b>drag &amp; drop</b> a picture onto the box, or
+      <b>paste</b> one (with the box selected, or into the box's drop zone). The
+      box shows the <b>thumbnail</b> it received, and the picture lives in the
+      project's media store (the same <code>blob:</code> store the dataset sheet
+      uses). The <b>picture itself travels the wires</b> as a matrix of RGB
+      channels (<code>h × w × 3</code>, 0..1): any box that receives it draws it
+      as a thumbnail (an <span class="pill">output</span> box shows the image,
+      and a vision tower does its own resizing, normalization and patch
+      cutting).
       The window also carries the <b>▶ run the design</b> button — the run starts
       where the data is — with the run's verdict line under it.
       Double-click the box to grow or shrink the editor.</p>
@@ -728,8 +731,11 @@
         (one vector per 2×2 patch group).</li>
     <li>To see the picture itself, wire the image input into an
         <span class="pill">output</span> box: the run hands the image over as
-        data, and that box's window <b>displays it</b> (with its size and
-        pixel statistics under it).</li>
+        an RGB matrix, and that box's window <b>draws it</b> (with its size and
+        pixel statistics under it). Any output box does this — even a matrix
+        you built yourself (a python input returning <code>[h, w, 3]</code> or a
+        square <code>[n, 3]</code> list in 0..1): when the values read as pixels,
+        the backend determines it is a picture and sends a thumbnail to draw.</li>
     <li>The tower box's window shows what it is: projector type, image and patch
         size, blocks, output width and the file it reads. <span class="dim">Merging
         those embeddings into the text model's token stream is the next step —

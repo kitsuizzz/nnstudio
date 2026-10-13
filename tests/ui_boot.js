@@ -1377,6 +1377,57 @@ check("an output box shows a picture that travelled to it", () => {
   __t.bxRemove(o.id);
 });
 
+check("the image dropzone: drop or paste a picture into the box", () => {
+  const i = __t.bxAdd("input", 0, 0, { input_mode: "image" });
+  __t.bxSelectBoxes([i.id]);
+  const realFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, opts) => {
+    calls.push([String(url), opts && opts.body]);
+    return { ok: true, status: 200, json: async () => ({ ok: true, id: "abc.png" }) };
+  };
+  const d = document.createElement("div");
+  __t.bxInputFill(d, i);
+  const zone = d.querySelectorAll(".bxdrop")[0];
+  ok(zone, "the dropzone is there");
+  zone.dispatchEvent({ type: "dragover" });
+  ok(String(zone.className).indexOf("over") >= 0, "…and lights up while a drag is over it");
+  zone.dispatchEvent({ type: "dragleave" });
+  ok(String(zone.className).indexOf("over") < 0, "…and calms down when it leaves");
+  const file = { name: "cat.png", type: "image/png" };
+  zone.dispatchEvent({ type: "drop", dataTransfer: { files: [file] } });
+  eql(calls.length, 1, "the drop uploads once");
+  eql(calls[0][0].indexOf("/api/blob?name=cat.png"), 0,
+      "…to the media store: " + calls[0][0]);
+  eql(calls[0][1], file, "…with the file itself");
+  zone.dispatchEvent({ type: "drop",
+                       dataTransfer: { files: [{ name: "x.txt", type: "text/plain" }] } });
+  eql(calls.length, 1, "a non-picture is refused before any upload");
+  __t.bxOnPaste({ clipboardData: { files: [{ name: "p.png", type: "image/png" }] },
+                  target: null, preventDefault() {} });
+  eql(calls.length, 2, "a pasted picture lands in the selected image box");
+  ok(calls[1][0].indexOf("p.png") >= 0, "…under its own name");
+  global.fetch = realFetch;
+  __t.bxRemove(i.id);
+});
+
+check("an output box draws a matrix the backend determined to be a picture", () => {
+  const o = __t.bxAdd("output", 0, 0, { din: 3 });
+  __t.bxRunValues = { [o.id]: { shape: [2, 2, 3], mean: 0.5, min: 0, max: 1,
+                                peek: [0.1, 0.2, 0.3],
+                                image: { w: 2, h: 2, blob: "",
+                                         thumb: { w: 2, h: 2, rgb: "AAAA" } } } };
+  __t.bxRender();
+  const d = document.createElement("div");
+  __t.bxOutputFill(d, o);
+  const cv = d.querySelectorAll(".bxoutimg")[0];
+  ok(cv && String(cv.id).indexOf("canvas") >= 0, "…the thumbnail canvas is drawn");
+  eql([cv.width, cv.height], [2, 2], "…at its own size");
+  __t.bxRunValues = {};
+  __t.bxRender();
+  __t.bxRemove(o.id);
+});
+
 check("a vision canvas lands whole: image input, tower and embeds", () => {
   const box = __t.bxAdd("custom", 320, 0, {});
   __t.BX.nodes.slice().forEach(x => { if (x !== box) __t.bxRemove(x.id); });
@@ -1469,16 +1520,30 @@ check("the input box edits its data right on the canvas", () => {
   eql(__t.bxShape(i), "image", "…and the card says image");
   eql(fill().querySelectorAll(".bxbin").length, 1,
       "…with the side the pixels are sent at");
-  const chips = fill().querySelectorAll(".chip").map(c => String(c.textContent));
-  ok(chips.some(t => t.indexOf("image") >= 0), "…and a way to pick the picture");
+  const zone = fill().querySelectorAll(".bxdrop")[0];
+  const msgs = zone ? zone.querySelectorAll(".bxdropmsg").map(x => String(x.textContent)) : [];
+  ok(msgs.join(" ").indexOf("Drop or choose") >= 0
+     && msgs.join(" ").indexOf("paste") >= 0,
+     "…with the drop-or-choose zone (drop, paste, choose): " + msgs.join(" / "));
   i.image = "blob:abc123.png";
   i.image_size = 768;
   i.patch_size = 16;
-  const img = fill().querySelectorAll(".bxinputimg")[0];
+  const img = fill().querySelectorAll(".bxdropimg")[0];
   ok(img && String(img.src).indexOf("abc123.png") >= 0,
-     "…the picture shows in the box once picked");
+     "…the thumbnail shows in the box once picked");
+  const chips = fill().querySelectorAll(".chip").map(c => String(c.textContent));
+  ok(chips.indexOf("replace") >= 0 && chips.indexOf("clear") >= 0,
+     "…with replace and clear at hand");
   eql(__t.bxJSONNodeFrom(__t.bxJSONNode(i)).image, "blob:abc123.png",
       "…and the blob travels with the design");
+  __t.bxConfigure(i.id, { input_mode: "image", image: "blob:zz.png",
+                          image_size: 512, dout: 3 });
+  eql([i.image, i.image_size, i.dout], ["blob:zz.png", 512, 3],
+      "…an upload lands on the box: the blob, the size, a 3-wide pixel matrix");
+  __t.bxConfigure(i.id, { image: "" });
+  eql(i.image, null, "…and clearing it drops the picture");
+  __t.bxConfigure(i.id, { input_mode: "image", image: "blob:abc123.png",
+                          image_size: 768, dout: 3 });
   // the size and the open editor travel too
   __t.bxInputExpand(i);
   eql([i.box.w, i.box.h], [420, 280], "the editor expands to the bigger size");
