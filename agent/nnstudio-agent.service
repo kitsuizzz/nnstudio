@@ -4,7 +4,7 @@ After=network-online.target
 Wants=nnstudio.service
 
 [Service]
-# edit the paths below for the machine this runs on
+# %h is the user's home — this expects the repo at ~/nnstudio; edit for another place
 Type=simple
 WorkingDirectory=%h/nnstudio
 Environment=PYTHONUNBUFFERED=1

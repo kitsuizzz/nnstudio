@@ -151,8 +151,9 @@ def main():
         check_kernel(qname, blocks, ref_w, rng.standard_normal((5, k)).astype(np.float32))
         print("  %s: %dx%d vs reference ok" % (qname, n, k))
 
-    real = os.environ.get("NNSTUDIO_QUANT_GGUF",
-                          "models/gemma-4-12b-it-UD-Q4_K_XL.gguf")
+    fallback = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "models", "gemma-4-12b-it-UD-Q4_K_XL.gguf")
+    real = os.environ.get("NNSTUDIO_QUANT_GGUF", fallback)
     if os.path.isfile(real):
         reader = GGUFReader(real)
         best = {}

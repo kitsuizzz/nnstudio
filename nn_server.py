@@ -315,6 +315,7 @@ def _spawn_detached(cmd, log, slug):
         for key in ("NNSTUDIO_REVERSE_AGENT", "NNSTUDIO_REVERSE_MODEL",
                     "NNSTUDIO_REVERSE_BASE_URL", "NNSTUDIO_REVERSE_API_KEY",
                     "NNSTUDIO_ARC_STATE_DIR", "NNSTUDIO_ARC_DB",
+                    "NNSTUDIO_TASKS_DB",
                     "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
             if os.environ.get(key):
                 runner += ["--setenv=%s=%s" % (key, os.environ[key])]

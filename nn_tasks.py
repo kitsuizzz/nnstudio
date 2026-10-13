@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""agent_tasks — what the AI agents are doing, as rows in the same database.
+"""agent_tasks — what the AI agents are doing, as rows of their own database.
 
 The task is the entity: it says which agent runs it (`type`), what the user
  asked for (`params`, e.g. `{"repo": "org/name"}` for a reverse job), and where
@@ -22,10 +22,12 @@ fire a task.
       meta TEXT,                -- JSON: family, provider, cancel reason …
       created REAL, started REAL, updated REAL, finished REAL)
 
-It lives in the **hf_arc database** (hf_arc.db; `NNSTUDIO_ARC_DB`) — the same
-file the app and the background jobs already share directly. The table is
-created on first use and grows additively (`ensure` adds missing columns), so
-new agent types can add fields without breaking older databases.
+It lives in **its own database**, `agents/tasks.db` (`NNSTUDIO_TASKS_DB`) —
+git-ignored, like everything under `agents/`, because a row holds what the user
+asked for and the machine paths it runs on. The tracked `hf_arc.db` keeps only
+researched specs. The table is created on first use and grows additively
+(`ensure` adds missing columns), so new agent types can add fields without
+breaking older databases.
 
 Writers keep to their own columns: the job wrapper writes progress
 (`phase`, `todo`, `pids`, `finished`), the app/server writes control state
@@ -45,6 +47,7 @@ import time
 import nn_arc
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+TASKS_DB = os.path.join(ROOT, "agents", "tasks.db")   # its own, git-ignored file
 TASK_TYPES = ("reverse", "python", "train")    # the agent types the app offers
 STATUSES = ("running", "paused", "cancelled", "done")
 _OUTCOMES = ("exact", "approximate", "failed")
@@ -73,9 +76,24 @@ _ADD_COLS = (("agent_pid", "INTEGER"), ("unit", "TEXT"), ("meta", "TEXT"),
 
 
 # ------------------------------------------------------------- the table
+def db_path(path=None):
+    """The tasks' database — never the tracked hf_arc.db, so a user's prompts
+    and machine paths can't ride into git with the researched specs."""
+    return path or os.environ.get("NNSTUDIO_TASKS_DB") or TASKS_DB
+
+
+def connect(path=None):
+    p = db_path(path)
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+    except OSError:
+        pass
+    return nn_arc.connect(p)
+
+
 def ensure(path=None):
     """The task table in hf_arc's database — created, then grown additively."""
-    conn = nn_arc.connect(path)
+    conn = connect(path)
     try:
         conn.execute("CREATE TABLE IF NOT EXISTS agent_tasks" + _TASK_COLS)
         have = {r[1] for r in conn.execute("PRAGMA table_info(agent_tasks)")}
@@ -125,7 +143,7 @@ def create(task_type, params, path=None, log_dir=None):
                log=log_file(rid, log_dir), meta="{}", created=now, started=now,
                updated=now, finished=None)
     ensure(path)
-    conn = nn_arc.connect(path)
+    conn = connect(path)
     try:
         with conn:
             conn.execute("INSERT INTO agent_tasks (%s) VALUES (%s)"
@@ -138,7 +156,7 @@ def create(task_type, params, path=None, log_dir=None):
 
 def get(rid, path=None):
     ensure(path)
-    conn = nn_arc.connect(path)
+    conn = connect(path)
     try:
         return _plain(_row(conn, rid))
     finally:
@@ -148,7 +166,7 @@ def get(rid, path=None):
 def list(path=None):
     """Every task, newest first — the agent box's list."""
     ensure(path)
-    conn = nn_arc.connect(path)
+    conn = connect(path)
     try:
         rows = conn.execute("SELECT * FROM agent_tasks ORDER BY created DESC").fetchall()
         names = [c[0] for c in conn.execute("SELECT * FROM agent_tasks LIMIT 0").description]
@@ -169,7 +187,7 @@ def update(rid, path=None, **cols):
         cols["updated"] = time.time()
     sets = ", ".join("%s = ?" % k for k in cols)
     ensure(path)
-    conn = nn_arc.connect(path)
+    conn = connect(path)
     try:
         with conn:
             conn.execute("UPDATE agent_tasks SET %s WHERE id = ?" % sets,
@@ -184,7 +202,7 @@ def delete(rid, purge=False, path=None, log_dir=None):
     row = get(rid, path)
     if not row:
         return False
-    conn = nn_arc.connect(path)
+    conn = connect(path)
     try:
         with conn:
             conn.execute("DELETE FROM agent_tasks WHERE id = ?", (rid,))

@@ -2,12 +2,25 @@
 
 # secrets and machine-local settings
 .env
+.env.*
 .opencode/
+*.key
+*.pem
+*.p12
+*.crt
+id_rsa*
+.netrc
+.git-credentials
 
 # environments and caches
 .venv/
 __pycache__/
 *.pyc
+.cache/
+.huggingface/
+.hf_token
+.ipynb_checkpoints/
+.DS_Store
 
 # weights and models (tens of GB, never in git)
 models
@@ -19,8 +32,22 @@ weights/
 *.pt
 *.pth
 *.bin
+*.ckpt
+*.onnx
 
-# runtime output: task streams and logs
+# runtime output: task rows, agent streams, checkpoints, media, logs
 agents/
-*.log
+checkpoints/
 datasets/
+blobs/
+media/
+uploads/
+runs/
+outputs/
+logs/
+*.log
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3

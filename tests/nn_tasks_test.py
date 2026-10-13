@@ -30,6 +30,7 @@ def check(name, fn):
 
 WORK = tempfile.mkdtemp(prefix="nnstudio-tasks-")
 os.environ["NNSTUDIO_ARC_DB"] = os.path.join(WORK, "hf_arc.db")
+os.environ["NNSTUDIO_TASKS_DB"] = os.path.join(WORK, "tasks.db")
 os.environ["NNSTUDIO_ARC_STATE_DIR"] = os.path.join(WORK, "state")
 
 

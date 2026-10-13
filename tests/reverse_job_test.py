@@ -125,6 +125,7 @@ def run_job(source, state_dir, family=None, env=None):
     e = dict(os.environ)
     e["NNSTUDIO_REVERSE_AGENT"] = "/bin/true"      # a stub agent: exits at once
     e["NNSTUDIO_ARC_DB"] = os.path.join(state_dir, "hf_arc.db")
+    e["NNSTUDIO_TASKS_DB"] = os.path.join(state_dir, "tasks.db")
     if env:
         e.update({k: v for k, v in env.items() if v is not None})
         for k, v in env.items():
@@ -229,6 +230,7 @@ with tempfile.TemporaryDirectory() as d:
     e = dict(os.environ)
     e["NNSTUDIO_REVERSE_AGENT"] = PY + " " + sleeper
     e["NNSTUDIO_ARC_DB"] = os.path.join(d, "hf_arc.db")
+    e["NNSTUDIO_TASKS_DB"] = os.path.join(d, "tasks.db")
     p = subprocess.Popen([PY, JOB, "llama", "--family", "llama", "--state-dir", d],
                          cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          env=e, start_new_session=True)
@@ -305,15 +307,18 @@ with tempfile.TemporaryDirectory() as d:
 #     the stream to the state-dir path, silently — the box sat at "waiting".)
 with tempfile.TemporaryDirectory() as d2:
     db = os.path.join(d2, "hf_arc.db")
+    tdb = os.path.join(d2, "tasks.db")
     sys.path.insert(0, ROOT)
     import nn_tasks  # noqa: E402
     os.environ["NNSTUDIO_ARC_DB"] = db
+    os.environ["NNSTUDIO_TASKS_DB"] = tdb
     task = nn_tasks.create("reverse", {"repo": "llama"})
     stream = os.path.join(d2, "stream.log")
     nn_tasks.update(task["id"], log=stream)
     e = dict(os.environ)
     e["NNSTUDIO_REVERSE_AGENT"] = "/bin/true"     # a stub agent: exits at once
     e["NNSTUDIO_ARC_DB"] = db
+    e["NNSTUDIO_TASKS_DB"] = tdb
     p = subprocess.run([PY, JOB, "llama", "--family", "llama", "--state-dir", d2,
                         "--task", task["id"]],
                        cwd=ROOT, capture_output=True, text=True, env=e, timeout=900)
@@ -325,5 +330,6 @@ with tempfile.TemporaryDirectory() as d2:
     landed = nn_tasks.get(task["id"])
     assert landed["status"] == "done" and landed["outcome"] == "exact", landed
     del os.environ["NNSTUDIO_ARC_DB"]
+    del os.environ["NNSTUDIO_TASKS_DB"]
 
 print("reverse_job: all assertions passed")
