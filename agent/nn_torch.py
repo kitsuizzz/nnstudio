@@ -1805,7 +1805,8 @@ class Graph(nn.Module):
                     raise
             elif box.kind == "input":
                 if nid not in feeds:
-                    self._fail(nid, "no value was given for this input")
+                    self._fail(nid, "no value was given for this input \u2014 "
+                                    "type its matrix on the box")
                 v = feeds[nid]
                 if torch.is_tensor(v):
                     v = v.to(dev)
@@ -2352,46 +2353,42 @@ def image_tensor(node, spec):
 
 
 # ---------------------------------------------------------------- run
-def build_input(node, seed=0):
-    """One input box's own matrix: python code that produces it (an expression,
-    or statements leaving the value in `x`), or a seeded random tensor of
-    `input_rows` x the box's size."""
+def build_input(node):
+    """One input box's own matrix — the numbers typed on the box, one row per
+    line (spaces or commas between them). A single row is a vector; whole
+    numbers stay whole (ids), a decimal makes the row a float."""
     name = node.get("name") or "input"
-    mode = node.get("input_mode")
-    if mode == "python":
-        code = str(node.get("input_code") or "")
-        if not code.strip():
-            raise CanvasError(name, "its matrix input has no python code")
-        ns = {"torch": torch, "np": np, "math": math}
-        try:                                     # a single expression, first
-            value = eval(compile(code, "<input:%s>" % name, "eval"), ns)
-        except SyntaxError:                      # statements: leave it in x
+    rows = []
+    for line in str(node.get("values") or "").replace(",", " ").splitlines():
+        toks = line.split()
+        if not toks:
+            continue
+        nums = []
+        for tok in toks:
             try:
-                exec(compile(code, "<input:%s>" % name, "exec"), ns)
-            except Exception as e:  # noqa: BLE001 — the run shows the reason
-                raise CanvasError(name, "its python input failed: %s" % e)
-            value = ns.get("x", ns.get("value", ns.get("out")))
-            if value is None:
-                raise CanvasError(name, "its python input must leave the matrix in x")
-        except Exception as e:  # noqa: BLE001
-            raise CanvasError(name, "its python input failed: %s" % e)
-        if value is None:
-            raise CanvasError(name, "its python input returned nothing")
-        return torch.as_tensor(value)
-    if mode == "random":
-        rows = max(1, int(node.get("input_rows") or 1))
-        size = int(node.get("dout") or 0)
-        if size <= 0:
-            raise CanvasError(name, "its size is not set, so the random matrix has no shape")
-        gen = torch.Generator(device="cpu").manual_seed(_seed_for(seed, node.get("id") or name))
-        return torch.randn(rows, size, generator=gen)
-    raise CanvasError(name, "unknown matrix input mode '%s'" % mode)
+                nums.append(int(tok))
+            except ValueError:
+                try:
+                    nums.append(float(tok))
+                except ValueError:
+                    raise CanvasError(name, "its matrix has a value that is not "
+                                            "a number: %s" % tok)
+        rows.append(nums)
+    if not rows:
+        raise CanvasError(name, "its matrix is empty \u2014 type its numbers on the box")
+    width = len(rows[0])
+    for r in rows:
+        if len(r) != width:
+            raise CanvasError(name, "its matrix rows do not line up (%d and %d numbers)"
+                              % (width, len(r)))
+    return torch.as_tensor(rows if len(rows) > 1 else rows[0])
 
 
 def build_feeds(canvas, feeds=None, seed=0):
     """The run's starting feeds: what the caller passed, plus every top-level
-    source's own definition — an input's python/random matrix or its text, a
-    tokenizer's own text."""
+    source's own definition — an input's own matrix or its text, a tokenizer's
+    own text. A matrix input's numbers are typed on the box; an image must ride
+    with the run."""
     out = dict(feeds or {})
     for node in canvas.get("nodes") or []:
         nid = node.get("id")
@@ -2411,10 +2408,12 @@ def build_feeds(canvas, feeds=None, seed=0):
                                   "its image must ride with the run \u2014 the "
                                   "backend cannot read the blob")
             continue
-        if mode in ("python", "random") and nid not in out:
-            out[nid] = build_input(node, seed=seed)
-        elif mode == "text" and nid not in out and str(node.get("text") or ""):
-            out[nid] = str(node["text"])
+        if mode in ("text", "image"):
+            if mode == "text" and nid not in out and str(node.get("text") or ""):
+                out[nid] = str(node["text"])
+            continue
+        if nid not in out and str(node.get("values") or "").strip():
+            out[nid] = build_input(node)         # the matrix the box carries
     return out
 
 

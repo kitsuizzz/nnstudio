@@ -456,6 +456,13 @@
   .bxtip .shp  { font: 11px var(--mono); color: var(--ink-dim); }
   .bxtip .row  { font: 11px var(--mono); color: var(--ink-dim); }
   .bxtip .note { font: 10.5px var(--mono); color: var(--ink-faint); }
+  .bxmat { display: block; width: 100%; min-height: 52px; max-height: 140px;
+           resize: vertical; padding: 6px 8px; border-radius: 8px;
+           border: 1px solid var(--panel-brd); background: rgba(0,0,0,.3);
+           color: var(--ink); font: 11.5px/1.55 var(--mono); }
+  .bxmat:focus { outline: none; border-color: rgba(249,115,22,.55); }
+  .bxmenu .bf .bxmat { width: 340px; max-width: 48vw; height: 78px; }
+  .panehint.bad { color: #fca5a5; }
   .bxmenu .mi { display: block; padding: 5px 9px; border-radius: 7px; cursor: pointer;
                 font: 12px var(--ink); font-family: inherit; color: var(--ink); }
   .bxmenu .mi:hover { background: rgba(255,255,255,.07); }
@@ -1290,7 +1297,8 @@ function bxShape(n) {
     return i + " in · " + o + " out";
   }
   if (n.kind === "input") return n.input_mode === "text" ? "text"
-                               : n.input_mode === "image" ? "image" : bxDim(n.dout);
+                               : n.input_mode === "image" ? "image"
+                               : (bxMatrixShape(n.values) || bxDim(n.dout));
   if (n.kind === "output") {                             // an image that arrived
     const st = bxNodeState(n);
     return (st && st.image) ? "image" : bxDim(n.din);
@@ -1715,12 +1723,8 @@ function bxAdd(kind, x, y, v) {
   }
   if (kind === "input") {                     // the input's own definition, set at add time
     const mode = String(v.input_mode || "");
-    if (mode === "text" || mode === "python" || mode === "random" ||
-        mode === "image") n.input_mode = mode;
-    if (v.input_code != null && String(v.input_code).trim())
-      n.input_code = bxClip(String(v.input_code), 20000);
-    const rows = bxSize(v.input_rows, null);
-    if (rows && rows >= 1) n.input_rows = rows;
+    if (mode === "text" || mode === "image") n.input_mode = mode;
+    else if (mode) n.input_mode = "matrix";  // matrix — and the old python/random
     if (v.text != null && String(v.text)) n.text = bxClip(String(v.text), 4096);
     if (v.values != null && String(v.values).trim()) n.values = bxClip(String(v.values), 4096);
   }
@@ -2606,16 +2610,7 @@ function bxConfigure(id, vals) {
   if (n.kind === "input") {                  // how this input's value is made
     if (vals.input_mode !== undefined) {
       const m = String(vals.input_mode || "");
-      n.input_mode = (m === "python" || m === "random" || m === "text" ||
-                      m === "image") ? m : null;
-    }
-    if (vals.input_code !== undefined) {
-      const code = String(vals.input_code == null ? "" : vals.input_code);
-      n.input_code = code.trim() ? bxClip(code, 20000) : null;
-    }
-    if (vals.input_rows !== undefined) {
-      const r = bxSize(vals.input_rows, n.input_rows);
-      n.input_rows = r && r >= 1 ? r : null;
+      n.input_mode = (m === "text" || m === "image") ? m : "matrix";
     }
     if (vals.text !== undefined) {
       const t = String(vals.text == null ? "" : vals.text);
@@ -3763,6 +3758,31 @@ function bxTrainFill(pane, n) {                   // the Train box: the training
   body.scrollTop = keepTop;                    // a refresh never loses the place
 }
 
+function bxMatrixParse(text) {                 // the numbers a matrix input carries:
+  const rows = [];                             // one row per line, spaces or commas
+  for (const line of String(text == null ? "" : text).split("\n")) {
+    const toks = line.replace(/,/g, " ").split(/\s+/).filter(Boolean);
+    if (!toks.length) continue;
+    const nums = toks.map(Number);
+    if (nums.some(x => !isFinite(x))) return { bad: "a value is not a number" };
+    rows.push(nums);
+  }
+  if (!rows.length) return null;
+  const c = rows[0].length;
+  return { rows: rows, r: rows.length, c: c, ragged: rows.some(x => x.length !== c),
+           count: rows.reduce((a, x) => a + x.length, 0) };
+}
+function bxMatrixShape(text) {                 // its shape, as the card reads it
+  const m = bxMatrixParse(text);
+  if (!m || m.bad) return null;
+  if (m.ragged) return null;                   // not a matrix yet
+  return m.r > 1 ? m.r + "\u00d7" + m.c : String(m.count);
+}
+function bxInputMode(n) {                      // the input's data type — matrix is the
+  if (n && n.input_mode === "text") return "text";    // plain one; the old python/
+  if (n && n.input_mode === "image") return "image";  // random/values read as it
+  return "matrix";
+}
 function bxInputFill(pane, n) {                // the input box's own editor, in the box:
   // the datatype, and the data itself — typed right on the canvas
   pane.innerHTML = "";
@@ -3773,11 +3793,9 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
   const mrow = mk("label", { class: "rf" });
   mrow.appendChild(mk("span", { text: "data" }));
   const sel = mk("select", { class: "bxsel" });
-  for (const [k, t] of [["values", "values"], ["text", "text"],
-                        ["python", "python"], ["random", "random"],
-                        ["image", "image"]])
+  for (const [k, t] of [["matrix", "matrix"], ["text", "text"], ["image", "image"]])
     sel.appendChild(mk("option", { value: k, text: t }));
-  sel.value = n.input_mode || "values";
+  sel.value = bxInputMode(n);
   mrow.appendChild(sel);
   pane.appendChild(mrow);
   const body = mk("div", { class: "bxinputbody" });
@@ -3793,28 +3811,30 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
     inp.addEventListener("change", () => fn(inp.value));
     return inp;
   };
-  const mode = n.input_mode || "values";
-  if (mode === "values") {
-    field("values", n.values || "1", "4 5 6 \u2014 the numbers it carries", (v) => {
-      const parts = v.replace(/,/g, " ").split(/\s+/).filter(Boolean);
-      const nums = parts.length && parts.every(x => isFinite(Number(x)));
-      save({ input_mode: "values", values: v,
-             dout: nums ? parts.length : undefined });   // its width is its data
+  const mode = bxInputMode(n);
+  if (mode === "matrix") {
+    // the matrix itself, typed right here: one row per line, numbers split by
+    // spaces or commas. The box carries it and the run sends it as data
+    const area = mk("textarea", { class: "bxmat", spellcheck: "false",
+                                  placeholder: "1 2 3\n4 5 6 \u2014 one row per line" });
+    area.value = n.values == null ? "" : String(n.values);
+    body.appendChild(area);
+    const m = bxMatrixParse(area.value);
+    body.appendChild(mk("div", { class: "panehint" + ((m && m.bad) ? " bad" : ""),
+      text: !m ? "type its numbers \u2014 one row per line"
+           : m.bad ? m.bad
+           : m.ragged ? "its rows do not line up"
+           : m.r > 1 ? m.r + " \u00d7 " + m.c + " \u00b7 " + m.count + " numbers \u00b7 "
+                       + m.c + " wide"
+           : m.count + " number" + (m.count === 1 ? "" : "s") }));
+    area.addEventListener("change", () => {
+      const mm = bxMatrixParse(area.value);
+      save({ input_mode: "matrix", values: area.value,
+             dout: mm && !mm.bad && !mm.ragged ? mm.c : undefined });
     });
   } else if (mode === "text") {
     field("text", n.text || "", "the string it carries",
           (v) => save({ input_mode: "text", text: v }));
-  } else if (mode === "python") {
-    const ta = mk("textarea", { class: "bxjson", spellcheck: "false",
-                                placeholder: "x = [[1.0, 2.0], [3.0, 4.0]]" });
-    ta.value = n.input_code || "";
-    body.appendChild(ta);
-    ta.addEventListener("change", () => save({ input_mode: "python", input_code: ta.value }));
-  } else if (mode === "random") {
-    field("rows", n.input_rows == null ? "1" : n.input_rows, "2 \u2014 the batch",
-          (v) => save({ input_mode: "random", input_rows: v }));
-    field("size", n.dout == null ? "" : n.dout, "8 \u2014 the vector's width",
-          (v) => save({ input_mode: "random", dout: v }));
   } else if (mode === "image") {
     // the picture: drop it here, paste it, or choose it. It lands in the
     // project's media store, the box shows the thumbnail it received, and the
@@ -4379,9 +4399,8 @@ function bxJSONNode(n) {
   }
   else if (n.kind === "input") {
     o.dout = n.dout == null ? null : n.dout;
-    if (n.input_mode) o.input_mode = n.input_mode;
-    if (n.input_code) o.input_code = n.input_code;
-    if (n.input_rows != null) o.input_rows = n.input_rows;
+    const imode = bxInputMode(n);              // the data type: matrix is the plain one
+    if (imode !== "matrix") o.input_mode = imode;
     if (n.values) o.values = n.values;
     if (n.text) o.text = n.text;
     if (n.image) o.image = n.image;
@@ -4730,13 +4749,8 @@ function bxJSONNodeFrom(o) {
   }
   else if (o.kind === "input") {
     n.dout = bxSize(o.dout);
-    if (o.input_mode === "python" || o.input_mode === "random" ||
-        o.input_mode === "text" || o.input_mode === "image")
-      n.input_mode = o.input_mode;
-    if (typeof o.input_code === "string" && o.input_code.trim())
-      n.input_code = bxClip(o.input_code, 20000);
-    const rows = bxSize(o.input_rows);
-    if (rows && rows >= 1) n.input_rows = rows;
+    if (o.input_mode === "text" || o.input_mode === "image") n.input_mode = o.input_mode;
+    else if (o.input_mode != null) n.input_mode = "matrix";   // legacy python/random/values
     if (typeof o.values === "string" && o.values.trim()) n.values = bxClip(o.values, 4096);
     if (typeof o.text === "string") n.text = bxClip(o.text, 4096);
     if (typeof o.image === "string" && o.image) n.image = bxClip(o.image, 300);
@@ -5189,6 +5203,9 @@ function bxPortType(n, dir, i) {               // what a dot is built to carry
                shape: "[" + (s || "?") + "\u00d7" + (s || "?") + "\u00d73]" };
     }
     if (n.input_mode === "text") return { kind: "text", shape: null };
+    const m = bxMatrixParse(n.values);         // a real matrix, rows above one
+    if (m && !m.bad && !m.ragged && m.r > 1)
+      return { kind: "matrix", shape: "[" + m.r + "\u00d7" + m.c + "]" };
   }
   if (dir === "out") {                         // the kinds that carry text
     if (n.kind === "tokenize") return { kind: "ids", shape: null };
@@ -5515,11 +5532,8 @@ function bxCard(n) {
   const notes = [];
   if (n.kind === "script") notes.push("python script \u2014 runs on the backend CPU "
                                       + "(input prep / output post-processing)");
-  if (n.kind === "input" && n.input_mode === "python")
-    notes.push("input: python code builds it when the run needs it");
-  else if (n.kind === "input" && n.input_mode === "random")
-    notes.push("input: random " + (n.input_rows || 1) + " \u00d7 "
-               + (n.dout == null ? "?" : n.dout) + ", seeded by the run");
+  if (n.kind === "input" && n.input_mode === "matrix")
+    notes.push("matrix input: the numbers it carries \u2014 one row per line");
   else if (n.kind === "input" && n.input_mode === "text")
     notes.push("text input: a string \u2014 wire it into a tokenizer");
   else if (n.kind === "input" && n.input_mode === "image")
@@ -5659,9 +5673,7 @@ function bxCard(n) {
              : n.kind === "script" ? " fn"
              : (unset ? " unset" : "");
   let bottom = bxShape(n);
-  if (n.kind === "input" && n.input_mode === "python") bottom += " \u00b7 py";
-  else if (n.kind === "input" && n.input_mode === "random") bottom += " \u00b7 rand";
-  else if (n.kind === "input" && n.input_mode === "image") bottom += " \u00b7 img";
+  if (n.kind === "input" && n.input_mode === "image") bottom += " \u00b7 img";
   if (n.dtype && (n.kind === "layer" || n.kind === "embed" || n.kind === "norm" ||
                   (n.t && (n.kind === "op" || n.kind === "script"))))
     bottom += " \u00b7 " + n.dtype;              // the weights' dtype, from the file
@@ -6368,21 +6380,11 @@ function bxRunFeeds(pane) {                       // inference: what the model r
         pane.appendChild(lab);
         continue;
       }
-      if (n.input_mode === "python" || n.input_mode === "random") {
-        const lab = mk("label", { class: "rf" });
-        lab.appendChild(mk("span", { text: bxClip(n.name || "input", 14) }));
-        lab.appendChild(mk("span", { class: "wmode",
-          text: n.input_mode === "python" ? "python"
-                : "random " + (n.input_rows || 1) + "\u00d7" + (n.dout == null ? "?" : n.dout) }));
-        pane.appendChild(lab);
-        continue;
-      }
-      const lab = mk("label", { class: "rf" });
+      const lab = mk("label", { class: "rf" });   // the box defines this one: no run field
       lab.appendChild(mk("span", { text: bxClip(n.name || "input", 14) }));
-      const inp = mk("input", { class: "bxbin", type: "text",
-                                value: BXRUN.inputs[n.id] != null ? BXRUN.inputs[n.id] : "1" });
-      inp.addEventListener("input", () => { BXRUN.inputs[n.id] = inp.value; });
-      lab.appendChild(inp);
+      lab.appendChild(mk("span", { class: "wmode",
+        text: n.input_mode === "image" ? "image"
+              : "matrix " + (bxMatrixShape(n.values) || "?") }));
       pane.appendChild(lab);
     }
   }
@@ -6701,22 +6703,10 @@ function bxtRunGo() {
       if (raw) feeds[n.id] = raw;              // a string: the backend tokenizes it
     }                                          // (or continues it, for an hf model)
     for (const n of BX.nodes.filter(n => n.kind === "input")) {
-      if (n.input_mode === "text") {
-        const store = BXRUN.texts || (BXRUN.texts = {});
-        const raw = String(store[n.id] != null ? store[n.id] : (n.text || ""));
-        if (raw) feeds[n.id] = raw;            // a string: the tokenizer downstream reads it
-        continue;
-      }
-      if (n.input_mode === "python" || n.input_mode === "random" ||
-          n.input_mode === "image") continue;  // the box defines it (the image below)
-      const raw = String(BXRUN.inputs[n.id] != null ? BXRUN.inputs[n.id]
-                                                    : (n.values || "1"));
-      const parts = raw.replace(/,/g, " ").split(/\s+/).filter(Boolean).map(Number);
-      if (!parts.length || parts.some(isNaN)) {
-        bxtRunMsg("input \u201c" + (n.name || n.id) + "\u201d needs numbers");
-        return;
-      }
-      feeds[n.id] = parts;
+      if (bxInputMode(n) !== "text") continue;   // a matrix or a picture defines itself
+      const store = BXRUN.texts || (BXRUN.texts = {});
+      const raw = String(store[n.id] != null ? store[n.id] : (n.text || ""));
+      if (raw) feeds[n.id] = raw;            // a string: the tokenizer downstream reads it
     }
   }
   const images = training ? []                     // training feeds the dataset, not
@@ -8101,27 +8091,24 @@ function bxForm(kind, ev, node, mode) {
     wrap.appendChild(ta);
     return ta;
   };
-  const inputModeField = (value) => {          // how this input's value is made
+  const inputModeField = (value) => {          // the data type this input carries
     const lab = mk("label", { text: "input" });
     const sel = mk("select", { class: "bxsel" });
-    for (const [k, t] of [["values", "values \u2014 enter at run"],
-                          ["text", "text \u2014 a string"],
-                          ["python", "python \u2014 build it"],
-                          ["random", "random \u2014 seeded noise"]])
+    for (const [k, t] of [["matrix", "matrix \u2014 type its numbers"],
+                          ["text", "text \u2014 a string"]])
       sel.appendChild(mk("option", { value: k, text: t }));
-    sel.value = (value === "python" || value === "random" || value === "text")
-                ? value : "values";
+    sel.value = value === "text" ? "text" : "matrix";
     lab.appendChild(sel);
     wrap.appendChild(lab);
     return sel;
   };
-  const inputCodeField = (value) => {          // the Python that builds the matrix
+  const matrixField = (value) => {              // the numbers, one row per line
     const box = mk("div", { class: "ifield" });
     box.appendChild(mk("div", { class: "panehint",
-      text: "python \u2014 one expression, or statements leaving the matrix in x" }));
-    const ta = mk("textarea", { class: "bxjson", spellcheck: "false",
-                                placeholder: "x = [[1.0, 2.0], [3.0, 4.0]]" });
-    ta.value = value || "";
+      text: "one row per line \u2014 spaces or commas between the numbers" }));
+    const ta = mk("textarea", { class: "bxmat", spellcheck: "false",
+                                placeholder: "1 2 3\n4 5 6" });
+    ta.value = value == null ? "" : String(value);
     box.appendChild(ta);
     wrap.appendChild(box);
     ta._box = box;
@@ -8243,18 +8230,13 @@ function bxForm(kind, ev, node, mode) {
   } else if (mode === "add" && kind === "input") {
     f.name = nameField(bxDefaultName(kind));
     f.a = numField("size", null);
-    f.mode = inputModeField("values");
-    f.values = textField("values", "1", "1 2 3 — the numbers the input carries");
+    f.mode = inputModeField("matrix");
+    f.values = matrixField("1");
     f.text = textField("text", "", "the text to tokenize");
-    f.icode = inputCodeField("");
-    f.rows = numField("rows", null);
   } else if (mode === "matrix") {
-    f.mode = inputModeField(node ? node.input_mode || "values" : "values");
-    f.values = textField("values", node ? node.values || "" : "",
-                         "1 2 3 — the numbers the input carries");
+    f.mode = inputModeField(node ? bxInputMode(node) : "matrix");
+    f.values = matrixField(node ? node.values || "" : "");
     f.text = textField("text", node ? node.text || "" : "", "the text to tokenize");
-    f.icode = inputCodeField(node ? node.input_code || "" : "");
-    f.rows = numField("rows", node ? node.input_rows : null);
   } else if (mode === "add" && (kind === "tokenize" || kind === "detokenize")) {
     f.name = nameField(bxDefaultName(kind));
     f.vocab = vocabField("");
@@ -8333,13 +8315,12 @@ function bxForm(kind, ev, node, mode) {
     f.paradigm.addEventListener("change", syncRl);
     syncRl();
   }
-  if (f.mode && f.icode) {                    // code fits python, text a string, rows random
+  if (f.mode && f.values) {                   // the type decides which field shows
     const syncInput = () => {
       const m = f.mode.value;
-      if (f.icode._box) f.icode._box.hidden = m !== "python";
-      if (f.values && f.values.parentNode) f.values.parentNode.hidden = m !== "values";
+      const vbox = f.values._box || f.values.parentNode;
+      if (vbox) vbox.hidden = m !== "matrix";
       if (f.text && f.text.parentNode) f.text.parentNode.hidden = m !== "text";
-      if (f.rows && f.rows.parentNode) f.rows.parentNode.hidden = m !== "random";
       bxMenuPlace();
     };
     f.mode.addEventListener("change", syncInput);
@@ -8359,8 +8340,6 @@ function bxForm(kind, ev, node, mode) {
     if (f.t) v.t = f.t.value;
     if (f.mode) v.input_mode = f.mode.value;
     if (f.values) v.values = f.values.value;
-    if (f.icode) v.input_code = f.icode.value;
-    if (f.rows) v.input_rows = f.rows.value;
     if (f.vocab) v.vocab = f.vocab.value;
     if (f.repo) {
       v.repo = f.repo.value;

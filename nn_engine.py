@@ -1811,7 +1811,7 @@ def _wrap_text_pipeline(canvas, repo):
         return canvas
     tok = ins[0]
     tok.update({"kind": "tokenize", "name": "tokenize", "repo": repo, "text": ""})
-    for k in ("input_mode", "input_rows", "input_code"):
+    for k in ("input_mode", "input_rows", "input_code", "values"):
         tok.pop(k, None)
     taken = {n.get("id") for n in nodes}
     detok_id, k = "detok", 2

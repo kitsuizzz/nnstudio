@@ -1057,10 +1057,12 @@ check("the cpu-offload ratio splits the first layers", () => {
   eql([p0.gpu, p0.system], [160000, 0], "0% keeps everything on the gpu");
 });
 
-check("the matrix input: python code or seeded noise, not a run field", () => {
-  __t.bxForm("input", null, null, "add");      // adding one asks in the same form
-  ok(getEl("bxmenu").children[0].children.map(c => c.textContent).join(" | ")
-       .indexOf("input") >= 0, "adding an input asks how its value is made");
+check("the matrix input: numbers typed in the box, one row per line", () => {
+  __t.bxForm("input", null, null, "add");      // adding one asks the same form
+  const fsel = getEl("bxmenu").querySelectorAll(".bxsel")[0];
+  eql(fsel.children.map(o => o.textContent),
+      ["matrix \u2014 type its numbers", "text \u2014 a string"],
+      "adding an input asks its data type");
   __t.bxMenuClose();
   const i = __t.bxAdd("input", 0, 0, {});
   __t.bxMenuBuild("box", i.id, {});
@@ -1069,32 +1071,41 @@ check("the matrix input: python code or seeded noise, not a run field", () => {
     "the input's menu offers the matrix input");
   __t.bxMenuClose();
   __t.bxForm("input", null, i, "matrix");
-  ok(getEl("bxmenu").children[0].children.map(c => c.textContent).join(" | ")
-       .indexOf("input") >= 0, "the form has the input mode");
-  ok(getEl("bxmenu").children[0].children.map(c => c.textContent).join(" | ")
-       .indexOf("values") >= 0, "…and asks for the values it carries");
+  eql(getEl("bxmenu").querySelectorAll(".bxmat").length, 1,
+      "the form asks for the matrix itself");
   __t.bxMenuClose();
-  __t.bxConfigure(i.id, { input_mode: "values", values: "1 2 3" });
-  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(i)).values, "1 2 3",
-    "the input's own numbers travel with the design");
-  __t.bxConfigure(i.id, { input_mode: "python", input_code: "x = [[1, 2], [3, 4]]" });
-  eql([i.input_mode, i.input_code], ["python", "x = [[1, 2], [3, 4]]"],
-    "the design carries the code");
-  const rec = __t.bxJSONNode(i);
-  eql([rec.input_mode, rec.input_code], ["python", "x = [[1, 2], [3, 4]]"], "…and the JSON");
-  ok(__t.bxCard(i).querySelectorAll(".dshape").map(e => e.textContent).join("")
-       .indexOf("py") >= 0, "…and the card says py");
+  __t.bxConfigure(i.id, { input_mode: "matrix", values: "1 2 3\n4 5 6", dout: 3 });
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(i)).values, "1 2 3\n4 5 6",
+      "the matrix travels with the design");
+  eql(__t.bxShape(i), "2\u00d73", "\u2026and the card reads its shape");
+  eql(__t.bxPortDefs(i, "out").map(p => p.size), [3],
+      "\u2026and the wire sizes by its width");
+  // the hover card calls it a matrix, shape and all
+  __t.bxHotSet(null);
+  __t.bxHotMove({ target: __t.bxCard(i), clientX: 120, clientY: 90 });
+  const tip = getEl("bxtip");
+  const line = cls => {
+    const e2 = tip.querySelectorAll("." + cls)[0];
+    return e2 ? String(e2.textContent) : null;
+  };
+  eql(line("shp"), "emits matrix [2\u00d73]", "the hover card reads it as a matrix");
+  __t.bxHotSet(null);
+  // the Run box reads the box's own data \u2014 a matrix is not a run field
   __t.BXRUN = { local: { connected: true,
       agent: { name: "pc", specs: { device: "cpu", cpu: "x" } } },
       inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
       msg: "", running: false };
   const feeds = () => { const d = document.createElement("div"); __t.bxRunFeeds(d); return d; };
   const modes = () => feeds().querySelectorAll(".wmode").map(e => e.textContent).join(" | ");
-  ok(modes().indexOf("python") >= 0, "the Run box shows python for it");
-  __t.bxConfigure(i.id, { input_mode: "random", input_rows: 2, dout: 4 });
-  ok(modes().indexOf("random 2\u00d74") >= 0, "…and random with its shape");
-  ok(__t.bxCard(i).querySelectorAll(".dshape").map(e => e.textContent).join("")
-       .indexOf("rand") >= 0, "…and the card says rand");
+  ok(modes().indexOf("matrix 2\u00d73") >= 0,
+     "the Run box reads matrix 2\u00d73 from the box: " + modes());
+  eql(feeds().querySelectorAll(".bxbin").length, 0, "\u2026and asks for no run field");
+  // a legacy python/random mode reads as the matrix type now
+  __t.bxConfigure(i.id, { input_mode: "python" });
+  eql(i.input_mode, "matrix", "an old python mode reads as matrix");
+  __t.bxConfigure(i.id, { input_mode: "random" });
+  eql(i.input_mode, "matrix", "\u2026and so does random");
+  eql(__t.bxShape(i), "2\u00d73", "\u2026and the card still reads the matrix");
   __t.BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
                 loaded: null, loading: false, loadKey: null, msg: "", running: false };
   __t.bxtRunRefresh();
@@ -1295,7 +1306,10 @@ check("an input's own values flow to the output (the browser verifies first)", (
   };
   __t.bxtRunGo();
   global.fetch = realFetch;
-  eql(sent && sent.feeds && sent.feeds[i.id], [4, 5, 6], "the input's numbers reach the backend");
+  const posted = sent && sent.canvas && (sent.canvas.nodes || []).find(n => n.id === i.id);
+  eql(sent && sent.feeds && sent.feeds[i.id], undefined,
+      "no feed is sent — the box's own matrix is the data");
+  eql(posted && posted.values, "4 5 6", "…and it rides with the design");
   __t.BXRUN.running = false;
   __t.BXRUN.msg = "";
   // a broken dataflow is refused in the browser: the backend is never asked
@@ -1631,14 +1645,18 @@ check("the input box edits its data right on the canvas", () => {
   const i = __t.bxAdd("input", 0, 0, { values: "4 5 6", dout: 3 });
   const fill = () => { const d = document.createElement("div"); __t.bxInputFill(d, i); return d; };
   const sel = fill().querySelectorAll(".bxsel")[0];
-  ok(sel && sel.value === "values", "the box shows the datatype: " + (sel && sel.value));
-  eql(sel.children.map(o => o.textContent), ["values", "text", "python", "random", "image"],
-      "…values, text, python, random or an image");
-  const vals = fill().querySelectorAll(".bxbin")[0];
-  eql(vals.value, "4 5 6", "…with the data it carries, editable in place");
+  ok(sel && sel.value === "matrix", "the box shows the datatype: " + (sel && sel.value));
+  eql(sel.children.map(o => o.textContent), ["matrix", "text", "image"],
+      "…matrix, text or a picture");
+  const vals = fill().querySelectorAll(".bxmat")[0];
+  eql(vals.value, "4 5 6", "…with the matrix it carries, editable in place");
   vals.value = "7 8";
   vals.dispatchEvent({ type: "change" });
   eql([i.values, i.dout], ["7 8", 2], "typing the numbers sizes the box to fit them");
+  vals.value = "7 8\n9 10";                   // a second row makes it a real matrix
+  vals.dispatchEvent({ type: "change" });
+  eql([i.values, i.dout], ["7 8\n9 10", 2], "…and a second row makes it 2-D, 2 wide");
+  eql(__t.bxShape(i), "2×2", "…which the card reads as a shape");
   // the mode switches the editor
   const s2 = fill().querySelectorAll(".bxsel")[0];
   s2.value = "text";
@@ -1706,7 +1724,7 @@ check("an agent refresh leaves the input box's editor alone", () => {
     .find(p => p.getAttribute("data-agent") === i.id);
   ok(!!pane, "the input box has its pane");
   ok(pane.querySelectorAll(".bxsel").length === 1 &&
-     pane.querySelectorAll(".bxbin").length === 1,
+     pane.querySelectorAll(".bxmat").length === 1,
      "…still the input editor");
   ok(pane.querySelectorAll(".bxbbtn").length === 0 &&
      pane.querySelectorAll(".bxptitle").length === 0,
@@ -3119,7 +3137,7 @@ check("a run binds a model box that lost its file, then goes on", () => {
   __t.BXRUN = { local: { connected: true, agent: { name: "pc", specs: {} } }, inputs: {},
                 last: null, loaded: null, loading: false, loadKey: null, msg: "",
                 running: false };
-  __t.BXRUN.inputs[inp.id] = "1";
+  inp.values = "1";                            // the box's own matrix feeds the model
   __t.bxtRunGo();
   eql(__t.bxNode(box.id).file, "models/test-model.gguf", "the file binds by name");
   ok(__t.BXRUN.running === true, "\u2026and the run goes on");

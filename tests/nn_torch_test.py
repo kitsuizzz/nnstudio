@@ -607,8 +607,7 @@ check("an hf: file reference binds like any safetensors — cache first",
 
 def head_ops_do_attention_shapes():
     # permute: a general axis order, not just the last two
-    c = canvas([n("input", "i", dout=6, input_mode="python",
-                  input_code="[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]"),
+    c = canvas([n("input", "i", dout=6, values="1.0 2.0 3.0\n4.0 5.0 6.0"),
                 n("op", "p", op="permute", axes="1,0"),
                 n("output", "o", din=6)], [edge("i", "p"), edge("p", "o")])
     res = T.run(c, {})
@@ -616,23 +615,21 @@ def head_ops_do_attention_shapes():
     assert o["shape"] == [3, 2] and o["peek"] == [1.0, 4.0, 2.0, 5.0, 3.0, 6.0], o
 
     # reshape with a -1: the sequence dim is inferred
-    c = canvas([n("input", "i", dout=6, input_mode="python",
-                  input_code="[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]"),
+    c = canvas([n("input", "i", dout=6, values="1.0 2.0 3.0\n4.0 5.0 6.0"),
                 n("op", "r", op="reshape", dims="-1 2"),
                 n("output", "o", din=6)], [edge("i", "r"), edge("r", "o")])
     o = T.run(c, {})["values"]["o"]
     assert o["shape"] == [3, 2] and o["peek"] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], o
 
     # repeat: kv heads -> q heads (GQA), interleaved
-    c = canvas([n("input", "i", dout=2, input_mode="python", input_code="[[1.0, 2.0]]"),
+    c = canvas([n("input", "i", dout=2),
                 n("op", "g", op="repeat", repeats="3", dim="0"),
                 n("output", "o", din=2)], [edge("i", "g"), edge("g", "o")])
-    o = T.run(c, {})["values"]["o"]
+    o = T.run(c, {"i": [[1.0, 2.0]]})["values"]["o"]      # a 1 x 2 matrix
     assert o["shape"] == [3, 2] and o["peek"] == [1.0, 2.0, 1.0, 2.0, 1.0, 2.0], o
 
     # mask: a causal (optionally windowed) -inf fill, then softmax
-    eye = "[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]"
-    c = canvas([n("input", "i", dout=3, input_mode="python", input_code=eye),
+    c = canvas([n("input", "i", dout=3, values="1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0"),
                 n("op", "m", op="mask", mode="causal"),
                 n("act", "sm", act="softmax"),
                 n("output", "o", din=3)], [edge("i", "m"), edge("m", "sm"), edge("sm", "o")])
@@ -641,7 +638,7 @@ def head_ops_do_attention_shapes():
     row0 = o["peek"][:3]
     assert abs(row0[0] - 1.0) < 1e-6 and abs(row0[1]) < 1e-6 and abs(row0[2]) < 1e-6, row0
     # a window of 1: a position sees only itself
-    c2 = canvas([n("input", "i", dout=3, input_mode="python", input_code=eye),
+    c2 = canvas([n("input", "i", dout=3, values="1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0"),
                  n("op", "m", op="mask", mode="causal", window=1),
                  n("act", "sm", act="softmax"),
                  n("output", "o", din=3)],
@@ -651,10 +648,10 @@ def head_ops_do_attention_shapes():
         "row 1 sees only itself: %r" % o2["peek"]
 
     # scale by a factor: 1/sqrt(head_dim), no weight tensor needed
-    c = canvas([n("input", "i", dout=2, input_mode="python", input_code="[[2.0, 4.0]]"),
+    c = canvas([n("input", "i", dout=2),
                 n("op", "s", op="scale", factor="0.5"),
                 n("output", "o", din=2)], [edge("i", "s"), edge("s", "o")])
-    o = T.run(c, {})["values"]["o"]
+    o = T.run(c, {"i": [[2.0, 4.0]]})["values"]["o"]      # a 1 x 2 matrix
     assert o["peek"] == [1.0, 2.0], o
 
 
@@ -664,22 +661,20 @@ check("the head ops: permute, reshape -1, repeat, mask, scale factor",
 
 def slice_zeros_and_partial_rope():
     # slice by index removes one dimension; by start/stop it keeps a range
-    c = canvas([n("input", "i", dout=6, input_mode="python",
-                  input_code="[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]"),
+    c = canvas([n("input", "i", dout=6, values="1.0 2.0 3.0\n4.0 5.0 6.0"),
                 n("op", "s1", op="slice", axis=1, index=1),
                 n("output", "o1", din=2)], [edge("i", "s1"), edge("s1", "o1")])
     o1 = T.run(c, {})["values"]["o1"]
     assert o1["shape"] == [2] and o1["peek"] == [2.0, 5.0], o1
 
-    c = canvas([n("input", "i", dout=6, input_mode="python",
-                  input_code="[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]"),
+    c = canvas([n("input", "i", dout=6, values="1.0 2.0 3.0\n4.0 5.0 6.0"),
                 n("op", "s2", op="slice", axis=1, start=0, stop=2),
                 n("output", "o2", din=4)], [edge("i", "s2"), edge("s2", "o2")])
     o2 = T.run(c, {})["values"]["o2"]
     assert o2["shape"] == [2, 2] and o2["peek"] == [1.0, 2.0, 4.0, 5.0], o2
 
     # zeros: the same shape, all zero (an elided branch's contribution)
-    c = canvas([n("input", "i", dout=3, input_mode="python", input_code="[1.0, 2.0, 3.0]"),
+    c = canvas([n("input", "i", dout=3, values="1.0 2.0 3.0"),
                 n("op", "z", op="zeros"),
                 n("output", "o", din=3)], [edge("i", "z"), edge("z", "o")])
     o = T.run(c, {})["values"]["o"]
@@ -687,8 +682,7 @@ def slice_zeros_and_partial_rope():
 
     # partial rope: only the leading `dim` rotates, the tail is untouched
     import math
-    c = canvas([n("input", "i", dout=8, input_mode="python",
-                  input_code="[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]"),
+    c = canvas([n("input", "i", dout=8, values="1.0 0.0 0.0 0.0\n0.0 1.0 0.0 0.0"),
                 n("op", "r", op="rope", theta=10000.0, dim=2),
                 n("output", "o", din=8)], [edge("i", "r"), edge("r", "o")])
     o = T.run(c, {})["values"]["o"]
@@ -724,10 +718,9 @@ check("tensor stats stay strictly JSON, inf and nan included",
 def zero_centered_norm_and_residual_add():
     # a zero-centered rms norm: the stored weight is the *delta* from one, so
     # a zero weight is the identity (Qwen3_5's norms); the plain norm scales
-    c = canvas([n("input", "i", dout=4, input_mode="python",
-                   input_code="[1.0, 1.0, 2.0, 2.0]"),
+    c = canvas([n("input", "i", dout=4, values="1.0 1.0 2.0 2.0"),
                  n("norm", "z", norm="rms", eps=1e-6, size=4, zc=True,
-                   input_mode="python", input_code="[0.0, 0.0, 0.0, 0.0]"),
+                   values="0.0 0.0 0.0 0.0"),
                  n("output", "o", din=4)], [edge("i", "z"), edge("z", "o")])
     g = T.compile_canvas(c, device="cpu")
     with torch.no_grad():
@@ -738,8 +731,7 @@ def zero_centered_norm_and_residual_add():
     s = 1.0 / math.sqrt(2.5 + 1e-6)
     assert o["peek"] == [round(s, 4), round(s, 4), round(2 * s, 4), round(2 * s, 4)], o
     # and the same norm without zc scales by the weight: a zero weight is zero
-    c2 = canvas([n("input", "i", dout=4, input_mode="python",
-                    input_code="[1.0, 1.0, 2.0, 2.0]"),
+    c2 = canvas([n("input", "i", dout=4, values="1.0 1.0 2.0 2.0"),
                   n("norm", "p", norm="rms", eps=1e-6, size=4),
                   n("output", "o", din=4)], [edge("i", "p"), edge("p", "o")])
     g2 = T.compile_canvas(c2, device="cpu")
@@ -750,8 +742,8 @@ def zero_centered_norm_and_residual_add():
 
     # a residual add takes every input as an addend: the live branch's output
     # plus the zero its elided twin would have contributed
-    c = canvas([n("input", "a", dout=2, input_mode="python", input_code="[1.0, 2.0]"),
-                 n("input", "b", dout=2, input_mode="python", input_code="[3.0, 4.0]"),
+    c = canvas([n("input", "a", dout=2, values="1.0 2.0"),
+                 n("input", "b", dout=2, values="3.0 4.0"),
                  n("op", "z", op="zeros"),
                  n("op", "sum", op="add"),
                  n("output", "o", din=2)],
@@ -938,8 +930,7 @@ def sample_picks_one():
     got = {pick(s, 2.0) for s in range(1, 9)}
     assert len(got) > 1 and got <= set("abc"), got
     c2 = canvas([
-        n("input", "i", input_mode="python",
-          input_code="[[0.0, 9.0, 0.0], [0.1, 0.2, 8.0]]"),
+        n("input", "i", values="0.0 9.0 0.0\n0.1 0.2 8.0"),
         n("sample", "s", temperature=0),
         n("detokenize", "d", vocab="abc"),
     ], [edge("i", "s"), edge("s", "d")])
@@ -1125,7 +1116,7 @@ check("offload: every reader and tokenizer is let go, and the engine still runs"
 # ---------------------------------------------------------------- matrix inputs
 def input_python_expression():
     c = canvas([
-        n("input", "i", dout=4, input_mode="python", input_code="[1.0, 2.0, 3.0, 4.0]"),
+        n("input", "i", dout=4, values="1.0 2.0 3.0 4.0"),
         n("layer", "l", din=4, dout=3),
         n("output", "o", din=3),
     ], [edge("i", "l"), edge("l", "o")])
@@ -1138,53 +1129,51 @@ def input_python_expression():
     assert torch.allclose(got, want, atol=1e-4), (got, want)
 
 
-check("a python input: one expression, built by the box", input_python_expression)
+check("a matrix input: the numbers typed on the box, built by it",
+      input_python_expression)
 
 
-def input_python_statements():
+def input_matrix_two_rows():
     c = canvas([
-        n("input", "i", dout=2, input_mode="python", input_code="x = [[1, 2], [3, 4]]"),
-        n("layer", "l", din=2, dout=3),
-        n("output", "o", din=3),
-    ], [edge("i", "l"), edge("l", "o")])
+        n("input", "i", dout=4, values="1 2\n3 4"),
+        n("output", "o", din=4),
+    ], [edge("i", "o")])
     res = T.run(c, {})
     assert res["values"]["i"]["shape"] == [2, 2], res["values"]["i"]
+    a = T.build_input(n("input", "i", dout=4, values="1 2\n3 4"))
+    assert a.dtype == torch.int64, a           # whole numbers stay whole (ids)
 
 
-check("a python input: statements, the matrix left in x", input_python_statements)
+check("a matrix input: two rows arrive 2-D", input_matrix_two_rows)
 
 
-def input_random_seeded():
-    node = n("input", "i", dout=3, input_mode="random", input_rows=2)
-    a = T.build_input(node, seed=1)
-    b = T.build_input(node, seed=1)
-    d = T.build_input(node, seed=2)
-    assert tuple(a.shape) == (2, 3), a.shape
-    assert torch.allclose(a, b), "the same seed gives the same matrix"
-    assert not torch.allclose(a, d), "…and another seed does not"
+def input_matrix_decimal_rows():
+    node = n("input", "i", dout=3, values="1.5, 2, 3")
+    a = T.build_input(node)
+    assert tuple(a.shape) == (3,) and a.dtype == torch.float32, a   # one row: a vector
     c = canvas([node, n("output", "o", din=3)], [edge("i", "o")])
     res = T.run(c, {})
-    assert res["values"]["i"]["shape"] == [2, 3], res["values"]["i"]
+    assert res["values"]["i"]["shape"] == [3], res["values"]["i"]
 
 
-check("a random input: rows x size, seeded", input_random_seeded)
+check("a matrix input: commas, decimals, one row is a vector", input_matrix_decimal_rows)
 
 
 def input_feed_wins():
-    node = n("input", "i", dout=2, input_mode="python", input_code="[9, 9]")
+    node = n("input", "i", dout=2, values="9 9")        # the box's own matrix
     out = T.build_feeds(canvas([node], []), {"i": [1, 1]})
     assert list(out["i"]) == [1, 1], "what the caller passed wins"
     out2 = T.build_feeds(canvas([node], []), {})
     assert list(out2["i"]) == [9, 9], out2
 
 
-check("an explicit feed beats the input's own definition", input_feed_wins)
+check("an explicit feed beats the input's own matrix", input_feed_wins)
 
 
 def input_errors_are_named():
-    for node, word in ((n("input", "i", dout=2, input_mode="python", input_code=""),
-                        "no python code"),
-                       (n("input", "i", input_mode="random"), "no shape")):
+    for node, word in ((n("input", "i", dout=2, values=""), "matrix is empty"),
+                       (n("input", "i", dout=2, values="1 2\n3"), "do not line up"),
+                       (n("input", "i", dout=2, values="1 x"), "not a number")):
         try:
             T.build_input(node)
             raise AssertionError("built anyway")
@@ -1192,7 +1181,7 @@ def input_errors_are_named():
             assert e.box == "i" and word in str(e), e
 
 
-check("input definitions fail by name, with a reason", input_errors_are_named)
+check("matrix inputs fail by name, with a reason", input_errors_are_named)
 
 
 def errors_carry_their_box_id():
@@ -1314,15 +1303,14 @@ def storage_dtypes_compile_and_run():
         if name in T._DTYPE_NAMES:
             assert T._DTYPE_BYTES.get(name) == 1, name
     for dtype in ("f64", "u8", "i8", "i32"):
-        c = canvas([n("input", "i", dout=4, input_mode="python",
-                      input_code="[1.0, 1.0, 2.0, 2.0]"),
+        c = canvas([n("input", "i", dout=4, values="1.0 1.0 2.0 2.0"),
                     n("layer", "l", din=4, dout=2, dtype=dtype),
                     n("output", "o", din=2)], [edge("i", "l"), edge("l", "o")])
         res = T.run(c, {})
         assert res["values"]["o"]["shape"] == [2], (dtype, res["values"]["o"])
         assert res["values"]["o"]["mean"] == res["values"]["o"]["mean"], dtype
     # an integer weight cannot ask for gradients — and does not blow up
-    c = canvas([n("input", "i", dout=2, input_mode="python", input_code="[1.0, 2.0]"),
+    c = canvas([n("input", "i", dout=2, values="1.0 2.0"),
                 n("layer", "l", din=2, dout=2, dtype="u8"),
                 n("output", "o", din=2)], [edge("i", "l"), edge("l", "o")])
     g = T.compile_canvas(c)
@@ -1347,8 +1335,7 @@ def quantized_weight_files():
         assert T.load_weight_tensor(path, "a.weight", None).dtype == torch.float8_e4m3fn, \
             "fp8 comes back as stored"
         x = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-        c = canvas([n("input", "i", dout=6, input_mode="python",
-                      input_code="[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]"),
+        c = canvas([n("input", "i", dout=6, values="1.0 2.0 3.0 4.0 5.0 6.0"),
                     n("layer", "a", din=6, dout=2, t="a.weight", file=path, dtype="f8_e4m3"),
                     n("output", "o", din=2)], [edge("i", "a"), edge("a", "o")])
         g = T.compile_canvas(c, device="cpu")
@@ -2156,17 +2143,17 @@ check("a vision tower takes the picture itself, and its patch rows",
 
 
 def stats_carry_dtype():
-    c = canvas([n("input", "ids", input_mode="python", input_code="torch.arange(4)"),
+    c = canvas([n("input", "ids", dout=4, values="0 1 2 3"),
                 n("output", "out", din=4)], [edge("ids", "out")])
     res = T.run_graph(T.compile_canvas(c), c, {})
     st = (res.get("values") or {}).get("out") or {}
     assert st.get("dtype") == "i64", st            # the value's own storage type
-    c2 = canvas([n("input", "f", input_mode="python", input_code="torch.ones(4) * 0.5"),
+    c2 = canvas([n("input", "f", dout=4, values="0.5 0.5 0.5 0.5"),
                  n("output", "out2", din=4)], [edge("f", "out2")])
     res2 = T.run_graph(T.compile_canvas(c2), c2, {})
     st2 = (res2.get("values") or {}).get("out2") or {}
     assert st2.get("dtype") == "f32", st2
-    c3 = canvas([n("input", "i", input_mode="python", input_code="torch.arange(6)"),
+    c3 = canvas([n("input", "i", dout=6, values="0 1 2 3 4 5"),
                  n("output", "out3", din=6)], [edge("i", "out3")])
     r3 = T.run_graph(T.compile_canvas(c3), c3, {})
     assert (r3.get("values") or {}).get("out3", {}).get("shape") == [6], r3
@@ -2176,12 +2163,10 @@ check("every value's stats carry its dtype (and the shape stays)", stats_carry_d
 
 
 def image_matrix_determination():
-    # a python-built [h, w, 3] matrix in 0..1: an output box determines it is
+    # an RGB matrix in 0..1 handed to the run: an output box determines it is
     # a picture and the backend sends a thumbnail it can draw
-    c = canvas([n("input", "m", input_mode="python",
-                  input_code="torch.zeros(4, 4, 3) + 0.5"),
-                n("output", "out", din=3)], [edge("m", "out")])
-    res = T.run_graph(T.compile_canvas(c), c, {})
+    c = canvas([n("input", "m"), n("output", "out", din=3)], [edge("m", "out")])
+    res = T.run_graph(T.compile_canvas(c), c, {"m": torch.full((4, 4, 3), 0.5)})
     vals = res.get("values") or {}
     st = vals.get("out") or {}
     assert st.get("image"), "the output reads as a picture: %r" % list(st)
@@ -2193,20 +2178,16 @@ def image_matrix_determination():
     assert not (vals.get("m") or {}).get("image"), \
         "…but the box that made it is not re-labelled"
     # [n, 3] with n a square: an RGB pixel list, also a picture
-    c2 = canvas([n("input", "m", input_mode="python", input_code="torch.rand(16, 3)"),
-                 n("output", "out", din=3)], [edge("m", "out")])
-    r2 = T.run_graph(T.compile_canvas(c2), c2, {})
+    c2 = canvas([n("input", "m"), n("output", "out", din=3)], [edge("m", "out")])
+    r2 = T.run_graph(T.compile_canvas(c2), c2, {"m": torch.full((16, 3), 0.25)})
     assert ((r2.get("values") or {}).get("out") or {}).get("image"), "a square RGB list"
     # not a square: a matrix, not a picture
-    c3 = canvas([n("input", "m", input_mode="python", input_code="torch.rand(12, 3)"),
-                 n("output", "out", din=3)], [edge("m", "out")])
-    r3 = T.run_graph(T.compile_canvas(c3), c3, {})
+    c3 = canvas([n("input", "m"), n("output", "out", din=3)], [edge("m", "out")])
+    r3 = T.run_graph(T.compile_canvas(c3), c3, {"m": torch.full((12, 3), 0.25)})
     assert not ((r3.get("values") or {}).get("out") or {}).get("image"), "a ragged list"
     # values outside 0..1 are not pixels
-    c4 = canvas([n("input", "m", input_mode="python",
-                   input_code="torch.zeros(4, 4, 3) + 2.0"),
-                 n("output", "out", din=3)], [edge("m", "out")])
-    r4 = T.run_graph(T.compile_canvas(c4), c4, {})
+    c4 = canvas([n("input", "m"), n("output", "out", din=3)], [edge("m", "out")])
+    r4 = T.run_graph(T.compile_canvas(c4), c4, {"m": torch.full((4, 4, 3), 2.0)})
     assert not ((r4.get("values") or {}).get("out") or {}).get("image"), "2.0 is not a pixel"
 
 

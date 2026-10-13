@@ -232,25 +232,20 @@ def main():
             except OSError:
                 pass
 
-        # 6 · matrix inputs: a python-built one, and a seeded random one
-        py = json.loads(json.dumps(CANVAS))
-        py["nodes"][0]["input_mode"] = "python"
-        py["nodes"][0]["input_code"] = "x = [1.0, 2.0, 3.0, 4.0]"
-        status, res = call("/api/run", {"canvas": py, "feeds": {}})
+        # 6 · a matrix input: the numbers typed on the box ride with the design
+        mat = json.loads(json.dumps(CANVAS))
+        mat["nodes"][0]["values"] = "1.0 2.0 3.0 4.0"
+        status, res = call("/api/run", {"canvas": mat, "feeds": {}})
         assert status == 200 and res.get("ok"), res
         st = res["values"]["i1"]
         assert st["shape"] == [4] and abs(st["mean"] - 2.5) < 1e-6, st
-        print("  a python input built the matrix itself (mean %.2f)" % st["mean"])
-        rnd = json.loads(json.dumps(CANVAS))
-        rnd["nodes"][0]["input_mode"] = "random"
-        rnd["nodes"][0]["input_rows"] = 2
-        status, a = call("/api/run", {"canvas": rnd, "feeds": {}})
-        status2, b = call("/api/run", {"canvas": rnd, "feeds": {}})
-        assert status == 200 and status2 == 200 and a.get("ok") and b.get("ok"), (a, b)
-        assert a["values"]["i1"]["shape"] == [2, 4], a["values"]["i1"]
-        assert a["values"]["i1"]["mean"] == b["values"]["i1"]["mean"], "seeded: the same matrix"
-        print("  a random input is seeded (2\u00d74, \u03bc %.4f on both runs)"
-              % a["values"]["i1"]["mean"])
+        print("  a matrix input carries its own numbers (mean %.2f)" % st["mean"])
+        two = json.loads(json.dumps(CANVAS))
+        two["nodes"][0]["values"] = "1 2 3 4\n5 6 7 8"      # two rows: 2 x 4
+        status, res = call("/api/run", {"canvas": two, "feeds": {}})
+        assert status == 200 and res.get("ok"), res
+        assert res["values"]["i1"]["shape"] == [2, 4], res["values"]["i1"]
+        print("  a second row makes it 2-D (\u03bc %.4f)" % res["values"]["i1"]["mean"])
 
         # 7 · a tokenizer / de-tokenizer round trip over the wire
         tok = {"type": "canvas", "version": 2,

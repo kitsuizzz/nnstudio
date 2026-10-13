@@ -338,14 +338,15 @@
       <div class="bwires">0 in · 1 out</div>
     </div>
     <div class="bdet">
-      <p>Where data enters the network: text, numbers you type, or generated values.
-      An input box is what a run feeds — one per thing you want to test, and its
-      values ride with the design: the run hands them to the backend, and the
-      output shows exactly what arrives. Its own window holds the editor — a
-      <b>data</b> dropdown (<code>values</code> / <code>text</code> /
-      <code>python</code> / <code>random</code> / <code>image</code>) and the data
-      itself, typed right on the canvas (a <code>values</code> list resizes the box
-      to fit its numbers). In <code>image</code> mode you pick a picture from your
+      <p>Where data enters the network. An input box is what a run feeds — one
+      per thing you want to test, and its data rides with the design: the run
+      hands it to the backend, and the output shows exactly what arrives. Its own
+      window holds the editor — a <b>data</b> dropdown
+      (<code>matrix</code> / <code>text</code> / <code>image</code>) and the data
+      itself, typed right on the canvas: a <b>matrix</b> is one row per line,
+      numbers split by spaces or commas — one line is a vector
+      (<code>1 2 3</code>), two lines a 2-D matrix (whole numbers stay whole,
+      ids and all). In <code>image</code> mode you pick a picture from your
       machine — or just <b>drag &amp; drop</b> a picture onto the box, or
       <b>paste</b> one (with the box selected, or into the box's drop zone). The
       box shows the <b>thumbnail</b> it received, and the picture lives in the
@@ -358,15 +359,16 @@
       The window also carries the <b>▶ run the design</b> button — the run starts
       where the data is — with the run's verdict line under it.
       Double-click the box to grow or shrink the editor.</p>
-      <p class="bfields"><b>Fields:</b> width <code>dout</code>; mode
-      <code>input_mode</code> — <code>values</code> (the numbers it carries),
-      <code>text</code> (type a prompt), <code>python</code>
-      (a small expression for the values), <code>random</code>, or
+      <p class="bfields"><b>Fields:</b> width <code>dout</code> (a matrix's
+      columns — what a layer reads); data type <code>input_mode</code> —
+      <code>matrix</code> (the numbers it carries, one row per line),
+      <code>text</code> (a string — wire it into a tokenizer), or
       <code>image</code> (a picture, resized to the model's own geometry);
-      the values, text, code or the <code>blob:</code> reference itself;
-      <code>input_rows</code> for batches; for images the side the pixels are
-      sent at (<code>image_size</code>), set for you when a vision tower is
-      loaded.</p>
+      the numbers, the text, or the <code>blob:</code> reference itself; for
+      images the side the pixels are sent at (<code>image_size</code>), set for
+      you when a vision tower is loaded. The backend builds a matrix input's
+      tensor from the box itself (the run's feeds still win when an API client
+      sends its own).</p>
     </div>
   </div>
 
@@ -739,8 +741,8 @@
         <span class="pill">output</span> box: the run hands the image over as
         an RGB matrix, and that box's window <b>draws it</b> (with its size and
         pixel statistics under it). Any output box does this — even a matrix
-        you built yourself (a python input returning <code>[h, w, 3]</code> or a
-        square <code>[n, 3]</code> list in 0..1): when the values read as pixels,
+        you feed in yourself (an <code>[h, w, 3]</code> matrix or a square
+        <code>[n, 3]</code> list in 0..1): when the values read as pixels,
         the backend determines it is a picture and sends a thumbnail to draw.</li>
     <li>The tower box's window shows what it is: projector type, image and patch
         size, blocks, output width and the file it reads. <span class="dim">Merging
