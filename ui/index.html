@@ -818,6 +818,8 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 .bxinputbody label.rf span { min-width: 46px; }
 .bxinputbody .bxsel { flex: 1 1 auto; min-width: 0; padding: 3px 6px;
                       border-radius: 8px; font: 12px var(--mono); }
+.bxinputimg { display: block; max-width: 100%; margin: 6px 0;
+              border-radius: 8px; border: 1px solid var(--panel-brd); }
 .bxinputbody input[type="text"] {
   flex: 1 1 auto; min-width: 0; width: auto; padding: 4px 8px;
   border-radius: 8px; font: 12px var(--mono);
@@ -1172,6 +1174,7 @@ function bxKindLabel(kind) {
        : kind === "agent" ? "Agent"
        : kind === "train" ? "Train"
        : kind === "custom" ? "Nested"
+       : kind === "vision" ? "Vision tower"
        : kind;
 }
 // the activation functions a box can be set to
@@ -1262,7 +1265,8 @@ function bxShape(n) {
     const i = bxPortDefs(n, "in").length, o = bxPortDefs(n, "out").length;
     return i + " in · " + o + " out";
   }
-  if (n.kind === "input") return n.input_mode === "text" ? "text" : bxDim(n.dout);
+  if (n.kind === "input") return n.input_mode === "text" ? "text"
+                               : n.input_mode === "image" ? "image" : bxDim(n.dout);
   if (n.kind === "output") return bxDim(n.din);
   if (n.kind === "sample")
     return n.temperature != null ? "t " + n.temperature : "greedy";
@@ -1419,7 +1423,8 @@ function bxDefaultName(kind) {
              : kind === "hf" ? "hf model"
              : kind === "agent" ? "agent"
              : kind === "train" ? "train"
-             : kind === "custom" ? "nested" : kind;
+             : kind === "custom" ? "nested"
+             : kind === "vision" ? "vision tower" : kind;
   return word + " " + n;
 }
 // what a box accepts / emits: one port each, except a custom box, whose ports
@@ -1490,6 +1495,9 @@ function bxPortDefs(n, dir, seen) {
     return bxBoundary(n, dir).map(k => ({ size: dir === "in" ? k.dout : k.din, node: k,
                                           field: dir === "in" ? "dout" : "din" }));
   }
+  if (n.kind === "vision")                   // an image's patches in, embeddings out
+    return [{ size: dir === "in" ? n.din : n.dout, node: n,
+              field: dir === "in" ? "din" : "dout" }];
   return [{ size: dir === "in" ? n.din : n.dout, node: n, field: dir === "in" ? "din" : "dout" }];
 }
 function bxPortSizes(n, dir, seen) { return bxPortDefs(n, dir, seen).map(p => p.size); }
@@ -1680,7 +1688,8 @@ function bxAdd(kind, x, y, v) {
   }
   if (kind === "input") {                     // the input's own definition, set at add time
     const mode = String(v.input_mode || "");
-    if (mode === "text" || mode === "python" || mode === "random") n.input_mode = mode;
+    if (mode === "text" || mode === "python" || mode === "random" ||
+        mode === "image") n.input_mode = mode;
     if (v.input_code != null && String(v.input_code).trim())
       n.input_code = bxClip(String(v.input_code), 20000);
     const rows = bxSize(v.input_rows, null);
@@ -2570,7 +2579,8 @@ function bxConfigure(id, vals) {
   if (n.kind === "input") {                  // how this input's value is made
     if (vals.input_mode !== undefined) {
       const m = String(vals.input_mode || "");
-      n.input_mode = (m === "python" || m === "random" || m === "text") ? m : null;
+      n.input_mode = (m === "python" || m === "random" || m === "text" ||
+                      m === "image") ? m : null;
     }
     if (vals.input_code !== undefined) {
       const code = String(vals.input_code == null ? "" : vals.input_code);
@@ -2707,6 +2717,7 @@ function bxConfigure(id, vals) {
 function bxWeightedBox(n) {
   if (!n) return false;
   if (n.kind === "layer" || n.kind === "embed" || n.kind === "norm") return true;
+  if (n.kind === "vision") return true;      // the mmproj tower holds its own weights
   if (n.kind === "op" && bxOpName(n) === "scale") return true;
   if (n.kind === "custom")
     return ((n.inner && n.inner.nodes) || []).some(x => bxWeightedBox(x));
@@ -3720,7 +3731,8 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
   mrow.appendChild(mk("span", { text: "data" }));
   const sel = mk("select", { class: "bxsel" });
   for (const [k, t] of [["values", "values"], ["text", "text"],
-                        ["python", "python"], ["random", "random"]])
+                        ["python", "python"], ["random", "random"],
+                        ["image", "image"]])
     sel.appendChild(mk("option", { value: k, text: t }));
   sel.value = n.input_mode || "values";
   mrow.appendChild(sel);
@@ -3755,11 +3767,57 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
     ta.value = n.input_code || "";
     body.appendChild(ta);
     ta.addEventListener("change", () => save({ input_mode: "python", input_code: ta.value }));
-  } else {
+  } else if (mode === "random") {
     field("rows", n.input_rows == null ? "1" : n.input_rows, "2 \u2014 the batch",
           (v) => save({ input_mode: "random", input_rows: v }));
     field("size", n.dout == null ? "" : n.dout, "8 \u2014 the vector's width",
           (v) => save({ input_mode: "random", dout: v }));
+  } else if (mode === "image") {
+    // the image: picked here, stored in the app's blob store, shown in place.
+    // The run decodes it to pixels and sends them with the design.
+    const pick = mk("span", { class: "chip tiny",
+      text: n.image ? "replace the image \u2026" : "pick an image \u2026" });
+    const file = mk("input", { type: "file", accept: "image/*" });
+    file.hidden = true;
+    body.appendChild(file);
+    body.appendChild(pick);
+    pick.addEventListener("click", () => { if (file.click) file.click(); });
+    file.addEventListener("change", () => {
+      const f = file.files && file.files[0];
+      if (!f || typeof fetch !== "function") return;
+      pick.textContent = "uploading \u2026";
+      fetch("/api/blob?name=" + encodeURIComponent(f.name || "image.png"),
+            { method: "POST", body: f })
+        .then(r => r.json())
+        .then(d => {
+          if (!d || !d.ok || !d.id) throw new Error((d && d.error) || "upload failed");
+          const p = Number(n.patch_size) || 16;
+          save({ input_mode: "image", image: "blob:" + d.id,
+                 image_size: Number(n.image_size) || 768, patch_size: p,
+                 image_mean: n.image_mean || "0.5 0.5 0.5",
+                 image_std: n.image_std || "0.5 0.5 0.5", dout: 3 * p * p });
+        })
+        .catch(e => { pick.textContent = String((e && e.message) || e); });
+    });
+    if (n.image) {
+      const bid = String(n.image).replace(/^blob:/, "");
+      const img = mk("img", { class: "bxinputimg",
+                              src: "/api/blob?id=" + encodeURIComponent(bid) });
+      body.appendChild(img);
+      const off = mk("span", { class: "chip tiny", text: "clear the image" });
+      off.addEventListener("click", () => save({ input_mode: "image", image: "" }));
+      body.appendChild(off);
+    }
+    field("size", n.image_size == null ? "768" : n.image_size,
+          "768 \u2014 the side the model reads",
+          (v) => save({ input_mode: "image", image_size: v }));
+    field("patch", n.patch_size == null ? "16" : n.patch_size,
+          "16 \u2014 the patch side",
+          (v) => save({ input_mode: "image", patch_size: v }));
+    field("mean", n.image_mean || "0.5 0.5 0.5", "0.5 0.5 0.5",
+          (v) => save({ input_mode: "image", image_mean: v }));
+    field("std", n.image_std || "0.5 0.5 0.5", "0.5 0.5 0.5",
+          (v) => save({ input_mode: "image", image_std: v }));
   }
   sel.addEventListener("change", () => save({ input_mode: sel.value }));
   // the run action lives here now: where the data is, the way to run it
@@ -4177,7 +4235,7 @@ function bxApplyOffload(key) {                 // write the plan into the places
 const BX_JSON_VERSION = 1;
 const BX_KINDS = ["input", "embed", "layer", "act", "op", "norm", "script",
                   "tokenize", "detokenize", "sample", "hf", "agent", "custom", "output",
-                  "dataset", "loss", "reward", "train"];
+                  "dataset", "loss", "reward", "train", "vision"];
 function bxJSONNode(n) {
   const o = { id: n.id, kind: n.kind, name: n.name, x: Math.round(n.x), y: Math.round(n.y) };
   if (n.kind === "embed") {
@@ -4193,6 +4251,9 @@ function bxJSONNode(n) {
     if (n.input_rows != null) o.input_rows = n.input_rows;
     if (n.values) o.values = n.values;
     if (n.text) o.text = n.text;
+    if (n.image) o.image = n.image;
+    for (const k of ["image_size", "patch_size", "image_mean", "image_std"])
+      if (n[k] != null) o[k] = n[k];
     if (n.box) o.box = { w: Math.round(n.box.w || 300), h: Math.round(n.box.h || 170) };
     if (n.panel) o.panel = n.panel;      // {expand} — the editor's size
   }
@@ -4310,6 +4371,15 @@ function bxJSONNode(n) {
     o.inner = bxJSONDoc((n.inner && n.inner.nodes) || [], (n.inner && n.inner.edges) || [], "nested");
     if (n.gguf) o.gguf = true;
     if (n.repo) o.repo = n.repo;         // the HF repo that filled it, if any
+  }
+  else if (n.kind === "vision") {        // the mmproj tower: its file + geometry
+    o.din = n.din == null ? null : n.din;
+    o.dout = n.dout == null ? null : n.dout;
+    o.projector = n.projector || "";
+    for (const k of ["d_model", "heads", "blocks", "patch", "merge",
+                     "image_size", "proj_dim"])
+      if (n[k] != null) o[k] = n[k];
+    if (n.eps != null) o.eps = n.eps;
   }
   if (n.t) o.t = n.t;
   if (n.file) o.file = n.file;
@@ -4513,7 +4583,8 @@ function bxJSONNodeFrom(o) {
   }
   else if (o.kind === "input") {
     n.dout = bxSize(o.dout);
-    if (o.input_mode === "python" || o.input_mode === "random" || o.input_mode === "text")
+    if (o.input_mode === "python" || o.input_mode === "random" ||
+        o.input_mode === "text" || o.input_mode === "image")
       n.input_mode = o.input_mode;
     if (typeof o.input_code === "string" && o.input_code.trim())
       n.input_code = bxClip(o.input_code, 20000);
@@ -4521,6 +4592,13 @@ function bxJSONNodeFrom(o) {
     if (rows && rows >= 1) n.input_rows = rows;
     if (typeof o.values === "string" && o.values.trim()) n.values = bxClip(o.values, 4096);
     if (typeof o.text === "string") n.text = bxClip(o.text, 4096);
+    if (typeof o.image === "string" && o.image) n.image = bxClip(o.image, 300);
+    const isz = bxSize(o.image_size);
+    if (isz) n.image_size = isz;
+    const psz = bxSize(o.patch_size);
+    if (psz) n.patch_size = psz;
+    if (o.image_mean != null) n.image_mean = String(o.image_mean).slice(0, 80);
+    if (o.image_std != null) n.image_std = String(o.image_std).slice(0, 80);
     if (o.box && typeof o.box === "object")
       n.box = { w: bxSize(o.box.w, 300), h: bxSize(o.box.h, 170) };
     if (o.panel && typeof o.panel === "object") n.panel = { expand: !!o.panel.expand };
@@ -4661,6 +4739,17 @@ function bxJSONNodeFrom(o) {
     }
     if (o.collapsed) n.collapsed = true;
     if (o.hidden) n.hidden = true;       // hidden from the canvas, still the hub
+  }
+  else if (o.kind === "vision") {        // the mmproj tower: its file + geometry
+    n.din = bxSize(o.din);
+    n.dout = bxSize(o.dout);
+    if (typeof o.projector === "string") n.projector = o.projector.slice(0, 40);
+    for (const k of ["d_model", "heads", "blocks", "patch", "merge",
+                     "image_size", "proj_dim"]) {
+      const v = bxSize(o[k]);
+      if (v) n[k] = v;
+    }
+    if (o.eps != null && isFinite(Number(o.eps))) n.eps = Number(o.eps);
   }
   else {
     const inner = o.inner == null ? { nodes: [], edges: [] } : bxJSONDocFrom(o.inner, "nested");
@@ -5079,6 +5168,9 @@ function bxCard(n) {
                + (n.dout == null ? "?" : n.dout) + ", seeded by the run");
   else if (n.kind === "input" && n.input_mode === "text")
     notes.push("text input: a string \u2014 wire it into a tokenizer");
+  else if (n.kind === "input" && n.input_mode === "image")
+    notes.push("image input: " + (n.image ? "the picture rides with the run"
+                                          : "pick an image in the box"));
   {
     const st = bxDataState[n.id];              // what the last run left here
     if (st) {
@@ -5215,6 +5307,7 @@ function bxCard(n) {
   let bottom = bxShape(n);
   if (n.kind === "input" && n.input_mode === "python") bottom += " \u00b7 py";
   else if (n.kind === "input" && n.input_mode === "random") bottom += " \u00b7 rand";
+  else if (n.kind === "input" && n.input_mode === "image") bottom += " \u00b7 img";
   if (n.dtype && (n.kind === "layer" || n.kind === "embed" || n.kind === "norm" ||
                   (n.t && (n.kind === "op" || n.kind === "script"))))
     bottom += " \u00b7 " + n.dtype;              // the weights' dtype, from the file
@@ -6256,7 +6349,8 @@ function bxtRunGo() {
         if (raw) feeds[n.id] = raw;            // a string: the tokenizer downstream reads it
         continue;
       }
-      if (n.input_mode === "python" || n.input_mode === "random") continue;  // the box defines it
+      if (n.input_mode === "python" || n.input_mode === "random" ||
+          n.input_mode === "image") continue;  // the box defines it (the image below)
       const raw = String(BXRUN.inputs[n.id] != null ? BXRUN.inputs[n.id]
                                                     : (n.values || "1"));
       const parts = raw.replace(/,/g, " ").split(/\s+/).filter(Boolean).map(Number);
@@ -6267,6 +6361,15 @@ function bxtRunGo() {
       feeds[n.id] = parts;
     }
   }
+  const images = training ? []                     // training feeds the dataset, not
+    : BX.nodes.filter(n => n.kind === "input" && n.input_mode === "image");
+  const noimg = images.find(n => !n.image);
+  if (noimg) {
+    bxtRunMsg("input \u201c" + (noimg.name || noimg.id)
+              + "\u201d needs an image \u2014 pick one in the box");
+    return;
+  }
+  const send = () => {
   const flow = bxFlowVerify();                 // the browser verifies the dataflow first
   if (!flow.ok) {
     BXRUN.error = true;                        // the run did not happen
@@ -6363,6 +6466,50 @@ function bxtRunGo() {
       bxRender();
       bxtRunMsg("could not run on " + name + " \u2014 " + String((e && e.message) || e));
       fetchBackend();
+    });
+  };
+  if (images.length && typeof fetch === "function"
+      && typeof createImageBitmap === "function") {
+    Promise.all(images.map(n => bxImageFeed(n))).then(vals => {
+      const miss = [];
+      images.forEach((n, i) => { if (vals[i]) feeds[n.id] = vals[i]; else miss.push(n); });
+      if (miss.length) {
+        bxtRunMsg("could not read the image for \u201c" + (miss[0].name || "image")
+                  + "\u201d \u2014 try another file");
+        return;
+      }
+      send();
+    }).catch(() => bxtRunMsg("could not read the image \u2014 try another file"));
+    return;
+  }
+  send();
+}
+function bxImageFeed(n) {                      // a blob -> the pixels a run sends
+  const id = String(n.image || "").replace(/^blob:/, "");
+  if (!id) return Promise.resolve(null);
+  const size = Math.max(8, Math.round(Number(n.image_size) || 768));
+  return fetch("/api/blob?id=" + encodeURIComponent(id), { cache: "no-store" })
+    .then(r => (r.ok ? r.blob() : null))
+    .then(b => (b ? createImageBitmap(b) : null))
+    .then(bmp => {
+      if (!bmp) return null;
+      const cv = document.createElement("canvas");
+      cv.width = size;
+      cv.height = size;
+      const ctx = cv.getContext && cv.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(bmp, 0, 0, size, size);
+      const px = ctx.getImageData(0, 0, size, size).data;
+      const rgb = new Uint8Array(size * size * 3);
+      for (let i = 0, j = 0; i < px.length; i += 4, j += 3) {
+        rgb[j] = px[i];
+        rgb[j + 1] = px[i + 1];
+        rgb[j + 2] = px[i + 2];
+      }
+      let bin = "";
+      for (let i = 0; i < rgb.length; i += 0x8000)
+        bin += String.fromCharCode.apply(null, rgb.subarray(i, i + 0x8000));
+      return { w: size, h: size, rgb: btoa(bin) };
     });
 }
 function fetchBackend() {                      // the stateful channel, from the app's view
@@ -6481,7 +6628,8 @@ function bxGGUFLoad(boxId, canvas, file, repo) {   // put a built model inside a
   const clean = BX.nodes.every(n => n === b || crop(n));
   const textly = (canvas.nodes || []).some(n => n.kind === "tokenize" ||
                                                 n.kind === "detokenize");
-  if (clean && textly) {
+  const whole = textly || !!(canvas.model && canvas.model.vision);  // a pipeline
+  if (clean && whole) {
     // the served design *is* the whole pipeline (prompt -> tokenizer -> model
     // -> logits, tokenizer -> de-tokenizer): land it as it came — the model
     // keeps its own boundaries — with the model box where this box was
@@ -6939,8 +7087,31 @@ function bxPaneFill(pane, n) {                 // one pane, filled by its kind �
   else if (n.kind === "train") bxTrainFill(pane, n);  // this, so none can drift
   else if (n.kind === "input") bxInputFill(pane, n);
   else if (n.kind === "output") bxOutputFill(pane, n);
+  else if (n.kind === "vision") bxVisionFill(pane, n);
   else bxAgentFill(pane, n);
   bxPaneErr(pane, n);
+}
+function bxVisionFill(pane, n) {               // the tower's facts, in its window
+  pane.innerHTML = "";
+  bxBehaveInside(pane);
+  const head = mk("div", { class: "bxlogrow" });
+  head.appendChild(mk("b", { text: n.name || "vision tower" }));
+  pane.appendChild(head);
+  const rows = [
+    ["projector", n.projector || "?"],
+    ["image", (n.image_size || "?") + " px \u00b7 " + (n.patch || 16) + " px patches"],
+    ["blocks", n.blocks == null ? "?" : String(n.blocks) + " \u00b7 " + (n.heads || "?") + " heads"],
+    ["output", n.proj_dim == null ? "?" : n.proj_dim + " wide"],
+    ["weights", (n.dtype || "?") + (n.params ? " \u00b7 " + bxBig(n.params) + " params" : "")],
+    ["file", bxClip(String(n.file || "?").split("/").pop(), 40)],
+  ];
+  for (const [k, v] of rows) {
+    const row = mk("div", { class: "bxlogrow" });
+    row.appendChild(mk("span", { class: "bxbhint", text: k + ": " + v }));
+    pane.appendChild(row);
+  }
+  pane.appendChild(mk("div", { class: "bxbhint",
+    text: "an mmproj vision tower \u2014 wire an image input into it" }));
 }
 function bxAgentSync() {                       // every pane follows the state, live
   const root = bxHost() && bxHost().querySelector ? bxHost().querySelector(".bxsvg") : null;
@@ -7113,6 +7284,12 @@ function bxGGUFForm(boxId) {                     // pick a model, load it into t
   const sel = mk("select", { class: "bxsel" });
   lab.appendChild(sel);
   wrap.appendChild(lab);
+  const vlab = mk("label", { text: "vision (mmproj)" });
+  const vsel = mk("select", { class: "bxsel" });
+  vlab.appendChild(vsel);
+  wrap.appendChild(vlab);
+  const vnote = mk("div", { class: "panehint", text: "no vision encoder picked" });
+  wrap.appendChild(vnote);
   const note = mk("div", { class: "panehint", text: "reading the model list\u2026" });
   wrap.appendChild(note);
   const rlab = mk("label", { text: "or a repo" });
@@ -7144,6 +7321,27 @@ function bxGGUFForm(boxId) {                     // pick a model, load it into t
       const ggufs = (d.models || []).filter(x => x.kind === "gguf");
       for (const g of ggufs) sel.appendChild(mk("option", { value: g.path, text: g.name }));
       note.textContent = ggufs.length + " local GGUF" + (ggufs.length === 1 ? "" : "s");
+      vsel.innerHTML = "";
+      vsel.appendChild(mk("option", { value: "", text: "no vision encoder" }));
+      for (const m of (d.models || []).filter(x => x.kind === "mmproj"))
+        vsel.appendChild(mk("option", { value: m.path, text: m.name }));
+      vsel.addEventListener("change", () => {
+        vnote.textContent = vsel.value ? "the vision tower rides along"
+                                       : "no vision encoder picked";
+      });
+      sel.addEventListener("change", () => {   // the mmproj whose name fits
+        const toks = String(sel.value || "").split("/").pop().toLowerCase()
+          .replace(/\.gguf$/, "").split(/[^a-z0-9]+/).filter(t => t.length > 1);
+        let best = "", score = 0;
+        for (const m of (bxModels || []).filter(x => x.kind === "mmproj")) {
+          const name = String(m.name || "").toLowerCase();
+          const s = toks.reduce((n, t) => n + (name.indexOf(t) >= 0 ? 1 : 0), 0);
+          if (s > score) { best = m.path; score = s; }
+        }
+        vsel.value = best;
+        vnote.textContent = best ? "the vision tower rides along"
+                                 : "no vision encoder picked";
+      });
       bxMenuPlace();
     }).catch(() => { note.textContent = "the model list is not available"; });
   } else {
@@ -7191,7 +7389,8 @@ function bxGGUFForm(boxId) {                     // pick a model, load it into t
     if (canvas) return apply();
     if (!sel.value) return;
     srcFile = sel.value;                       // a local GGUF: the box remembers it
-    load({ model: sel.value }, String(sel.value).split("/").pop());
+    load({ model: sel.value, mmproj: vsel.value || undefined },
+         String(sel.value).split("/").pop());
   });
   rgo.addEventListener("click", () => {
     const repo = String(repoIn.value || "").trim();

@@ -1378,8 +1378,8 @@ check("the input box edits its data right on the canvas", () => {
   const fill = () => { const d = document.createElement("div"); __t.bxInputFill(d, i); return d; };
   const sel = fill().querySelectorAll(".bxsel")[0];
   ok(sel && sel.value === "values", "the box shows the datatype: " + (sel && sel.value));
-  eql(sel.children.map(o => o.textContent), ["values", "text", "python", "random"],
-      "…values, text, python or random");
+  eql(sel.children.map(o => o.textContent), ["values", "text", "python", "random", "image"],
+      "…values, text, python, random or an image");
   const vals = fill().querySelectorAll(".bxbin")[0];
   eql(vals.value, "4 5 6", "…with the data it carries, editable in place");
   vals.value = "7 8";
@@ -1397,6 +1397,24 @@ check("the input box edits its data right on the canvas", () => {
   txt.value = "hello";
   txt.dispatchEvent({ type: "change" });
   eql(__t.bxJSONNodeFrom(__t.bxJSONNode(i)).text, "hello", "…and it travels with the design");
+  // the image mode: a picker, the geometry the run sends, a preview once picked
+  const s3 = fill().querySelectorAll(".bxsel")[0];
+  s3.value = "image";
+  s3.dispatchEvent({ type: "change" });
+  eql(i.input_mode, "image", "switching to image lands on the box");
+  eql(__t.bxShape(i), "image", "…and the card says image");
+  eql(fill().querySelectorAll(".bxbin").length, 4,
+      "…with size, patch, mean and std — the geometry the run sends");
+  const chips = fill().querySelectorAll(".chip").map(c => String(c.textContent));
+  ok(chips.some(t => t.indexOf("image") >= 0), "…and a way to pick the picture");
+  i.image = "blob:abc123.png";
+  i.image_size = 768;
+  i.patch_size = 16;
+  const img = fill().querySelectorAll(".bxinputimg")[0];
+  ok(img && String(img.src).indexOf("abc123.png") >= 0,
+     "…the picture shows in the box once picked");
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(i)).image, "blob:abc123.png",
+      "…and the blob travels with the design");
   // the size and the open editor travel too
   __t.bxInputExpand(i);
   eql([i.box.w, i.box.h], [420, 280], "the editor expands to the bigger size");
@@ -3709,6 +3727,36 @@ check("the dataset table: csv rows, columns, dtypes — and the cells edit", () 
   const thumbs = pane2.querySelectorAll(".bxthumb");
   eql(thumbs.length, 1, "a blob cell renders a thumbnail");
   ok(String(thumbs[0].src).indexOf(id) >= 0, "…served by its id");
+});
+
+check("a vision tower and its image input survive the design round trip", () => {
+  const tow = { id: "vision", kind: "vision", name: "Qwen vision", x: 40, y: 40,
+                file: "models/mmproj/mmproj-x.gguf", projector: "qwen3vl_merger",
+                d_model: 1152, heads: 16, blocks: 27, patch: 16, merge: 2,
+                image_size: 768, proj_dim: 5120, eps: 1e-6,
+                params: 460730096, wbytes: 927587264, dtype: "f16",
+                din: 768, dout: 5120, place: "gpu" };
+  const img = { id: "image", kind: "input", name: "image", x: 0, y: 40,
+                input_mode: "image", image: "blob:abc.png", image_size: 768,
+                patch_size: 16, image_mean: "0.5 0.5 0.5", image_std: "0.5 0.5 0.5",
+                dout: 768 };
+  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(tow));
+  eql([back.kind, back.projector, back.d_model, back.blocks, back.proj_dim,
+       back.patch, back.image_size, back.eps, back.file, back.dtype, back.place,
+       back.din, back.dout],
+      ["vision", "qwen3vl_merger", 1152, 27, 5120, 16, 768, 1e-6,
+       "models/mmproj/mmproj-x.gguf", "f16", "gpu", 768, 5120],
+      "…the tower's geometry, file and placement");
+  const bi = __t.bxJSONNodeFrom(__t.bxJSONNode(img));
+  eql([bi.kind, bi.input_mode, bi.image, bi.image_size, bi.patch_size,
+       bi.image_mean, bi.image_std, bi.dout],
+      ["input", "image", "blob:abc.png", 768, 16, "0.5 0.5 0.5", "0.5 0.5 0.5", 768],
+      "…and the image input's picture and geometry");
+  const d = document.createElement("div");
+  __t.bxPaneFill(d, tow);
+  const rows = d.querySelectorAll(".bxbhint").map(x => String(x.textContent)).join(" ");
+  ok(rows.indexOf("qwen3vl_merger") >= 0 && rows.indexOf("5120") >= 0,
+     "…and the box's window says what it is: " + rows.slice(0, 60));
 });
 
 check("the Train box: the hub of the training — data, columns, signal, parameters", () => {

@@ -337,17 +337,25 @@
       values ride with the design: the run hands them to the backend, and the
       output shows exactly what arrives. Its own window holds the editor — a
       <b>data</b> dropdown (<code>values</code> / <code>text</code> /
-      <code>python</code> / <code>random</code>) and the data itself, typed right
-      on the canvas (a <code>values</code> list resizes the box to fit its numbers).
+      <code>python</code> / <code>random</code> / <code>image</code>) and the data
+      itself, typed right on the canvas (a <code>values</code> list resizes the box
+      to fit its numbers). In <code>image</code> mode you pick a picture from your
+      machine: it lands in the project's media store (the same <code>blob:</code>
+      store the dataset sheet uses), the box shows its preview, and a run decodes
+      it to pixels and sends them with the design.
       The window also carries the <b>▶ run the design</b> button — the run starts
       where the data is — with the run's verdict line under it.
       Double-click the box to grow or shrink the editor.</p>
       <p class="bfields"><b>Fields:</b> width <code>dout</code>; mode
       <code>input_mode</code> — <code>values</code> (the numbers it carries),
       <code>text</code> (type a prompt), <code>python</code>
-      (a small expression for the values), or <code>random</code>; the values,
-      text or code
-      itself; <code>input_rows</code> for batches.</p>
+      (a small expression for the values), <code>random</code>, or
+      <code>image</code> (a picture, resized to the model's own geometry);
+      the values, text, code or the <code>blob:</code> reference itself;
+      <code>input_rows</code> for batches; for images the geometry the tower
+      reads: <code>image_size</code>, <code>patch_size</code>,
+      <code>image_mean</code> and <code>image_std</code> (set for you when a
+      vision tower is loaded).</p>
     </div>
   </div>
 
@@ -694,6 +702,36 @@
     <li>Double-click the GGUF box to look inside; click boxes to see the numbers
         that flowed through them.</li>
   </ol>
+
+  <h2>Run a vision model (GGUF + mmproj)</h2>
+  <p>
+    A multimodal model ships as <b>two</b> files: the text model's
+    <code>.gguf</code>, and an <code>mmproj-*.gguf</code> — the vision encoder
+    (the tower that turns an image into embeddings the text model can read).
+    nnstudio loads both: the tower becomes a <span class="pill">vision tower</span>
+    box with its own weights bound to the mmproj file, wired from an
+    <span class="pill">input</span> box set to <code>image</code> mode.
+  </p>
+  <ol>
+    <li><span class="pill grey">Palette ▾</span> → containers → <b>GGUF box</b>.</li>
+    <li>Right-click it → <b>Load GGUF …</b>: pick the model, and pick the
+        <b>vision (mmproj)</b> file (the form preselects the mmproj whose name
+        matches the model). Load it — the design lands with the text model
+        <i>and</i> the vision tower: the image input → the tower → an
+        <b>image embeds</b> output, beside the model's own tokens → logits.</li>
+    <li>In the image input's window, <b>pick an image</b> (it is stored in the
+        project's media store and shown right there), then press
+        <b>▶ run the design</b>. The tower runs on the backend and the
+        <b>image embeds</b> output shows the embeddings it produced
+        (one vector per 2×2 patch group).</li>
+    <li>The tower box's window shows what it is: projector type, image and patch
+        size, blocks, output width and the file it reads. <span class="dim">Merging
+        those embeddings into the text model's token stream is the next step —
+        for now the tower runs on its own, and its output is inspectable.</span></li>
+  </ol>
+  <p class="dim">Today the loader understands the <code>qwen3vl_merger</code>
+  projector family (fused qkv, vision M-RoPE, 2×2 patch merge). An mmproj with
+  another projector type is refused by name, so nothing loads half-working.</p>
 
   <h2>Train a network on your own data</h2>
   <ol>

@@ -29,6 +29,7 @@ nothing here knows where it runs.
 """
 import json
 import math
+import base64
 import csv
 import io
 import os
@@ -801,6 +802,8 @@ class Box(nn.Module):
                                gguf_file=node.get("file") or gguf_file,   # the file reads through
                                device=want, on_box=on_box, native=self.native,
                                train=train, store=store)
+        elif self.kind == "vision":
+            self.tower = VisionTower(node, train=train, device=want)
         if self.kind != "custom":
             self.to(want)                       # its device, right as it is built: a
                                                 # gpu-bound weight never stages on the cpu
@@ -941,6 +944,10 @@ class Box(nn.Module):
             if src is None:
                 src = self.node.get("text") or ""   # its own prompt, when no wire
             out = hf_next_token(self.node, src, self.device)
+        elif k == "vision":
+            if not xs:
+                raise CanvasError(self.name, "an input dot is not wired")
+            out = self.tower(xs[0])
         else:
             raise CanvasError(self.name, "unknown box kind '%s'" % k)
         self.last = out
@@ -1979,6 +1986,225 @@ def hf_next_token(node, src, device):
     return tok.decode([nxt])
 
 
+# ---------------------------------------------------------------- vision
+# A multimodal model's vision half, run as one box: the mmproj file's tower,
+# ported from llama.cpp's clip_graph_qwen3vl. The box reads patches (rows
+# k = x + grid_w*y) and answers with the merged embeddings [n/4, proj_dim].
+_VISION_PROJECTORS = ("qwen3vl_merger",)
+
+
+class VisionTower(nn.Module):
+    """The qwen3vl tower: patch embeds (two summed convs), learned positions
+    (bilinear-resized), vision blocks (fused qkv, vision M-RoPE, GELU ffn),
+    a post norm and the 2x2 patch merger. Tensor names are the file's own."""
+
+    def __init__(self, node, train=False, device="cpu"):
+        super().__init__()
+        name = node.get("name") or "vision tower"
+        self.name = name
+        self.file = str(node.get("file") or "")
+        proj = str(node.get("projector") or "")
+        if proj not in _VISION_PROJECTORS:
+            raise CanvasError(name, "its projector type '%s' is not supported yet "
+                                    "(%s is)" % (proj or "?", ", ".join(_VISION_PROJECTORS)))
+        self.d_model = int(node.get("d_model") or 0)
+        self.heads = int(node.get("heads") or 0)
+        self.blocks = int(node.get("blocks") or 0)
+        self.patch = int(node.get("patch") or 16)
+        self.merge = int(node.get("merge") or 2)
+        self.image_size = int(node.get("image_size") or 0)
+        self.proj_dim = int(node.get("proj_dim") or 0)
+        self.eps = float(node.get("eps") or 1e-6)
+        if not (self.file and self.d_model and self.heads and self.blocks):
+            raise CanvasError(name, "its mmproj is not set \u2014 load the GGUF again")
+        grad = bool(train) and not bool(node.get("frozen"))
+        self._pos_cache = {}
+
+        def param(tensor_name, want=torch.float16, flat=False):
+            t = load_weight_tensor(self.file, tensor_name, want)
+            if flat:                                 # a conv kernel, read as a linear
+                t = t.reshape(self.d_model, -1)
+            return nn.Parameter(t.to(device), requires_grad=grad)
+
+        self.w0 = param("v.patch_embd.weight", flat=True)
+        self.w1 = param("v.patch_embd.weight.1", flat=True)
+        self.b0 = param("v.patch_embd.bias", torch.float32)
+        self.pos = param("v.position_embd.weight", torch.float32)
+        self.blk = nn.ModuleList()
+        for i in range(self.blocks):
+            b = "v.blk.%d." % i
+            m = nn.Module()
+            m.qkv = param(b + "attn_qkv.weight")
+            m.qkv_b = param(b + "attn_qkv.bias", torch.float32)
+            m.out = param(b + "attn_out.weight")
+            m.out_b = param(b + "attn_out.bias", torch.float32)
+            m.up = param(b + "ffn_up.weight")
+            m.up_b = param(b + "ffn_up.bias", torch.float32)
+            m.down = param(b + "ffn_down.weight")
+            m.down_b = param(b + "ffn_down.bias", torch.float32)
+            m.ln1_w = param(b + "ln1.weight", torch.float32)
+            m.ln1_b = param(b + "ln1.bias", torch.float32)
+            m.ln2_w = param(b + "ln2.weight", torch.float32)
+            m.ln2_b = param(b + "ln2.bias", torch.float32)
+            self.blk.append(m)
+        self.post_w = param("v.post_ln.weight", torch.float32)
+        self.post_b = param("v.post_ln.bias", torch.float32)
+        self.mm0 = param("mm.0.weight")
+        self.mm0_b = param("mm.0.bias", torch.float32)
+        self.mm2 = param("mm.2.weight")
+        self.mm2_b = param("mm.2.bias", torch.float32)
+
+    def _side(self, n):
+        side = int(math.isqrt(n))
+        if side <= 0 or side * side != n:
+            raise CanvasError(self.name, "its %d patches do not make a square grid" % n)
+        return side
+
+    def _order(self, x, side):
+        """rows k = x + side*y -> the merger's order (2x2 groups, wx fastest)"""
+        m = self.merge
+        g = x.reshape(side // m, m, side // m, m, x.shape[-1])   # [gy, wy, gx, wx, c]
+        return g.permute(0, 2, 1, 3, 4).reshape(-1, x.shape[-1])
+
+    def _positions(self, side, device):
+        key = ("pos", side, str(device))
+        hit = self._pos_cache.get(key)
+        if hit is not None:
+            return hit
+        m = self.merge
+        ys, xs = [], []
+        for gy in range(side // m):
+            for gx in range(side // m):
+                for wy in range(m):
+                    for wx in range(m):
+                        ys.append(m * gy + wy)
+                        xs.append(m * gx + wx)
+        out = (torch.tensor(ys, dtype=torch.float32, device=device),
+               torch.tensor(xs, dtype=torch.float32, device=device))
+        self._pos_cache[key] = out
+        return out
+
+    def _position_embedding(self, side, device):
+        key = ("emb", side, str(device))
+        hit = self._pos_cache.get(key)
+        if hit is not None:
+            return hit
+        n_side = int(round(math.sqrt(self.pos.shape[0])))       # the table's grid
+        tab = self.pos.reshape(n_side, n_side, self.d_model)    # [y, x, c]
+        t = tab.permute(2, 0, 1)[None].to(torch.float32)        # [1, c, y, x]
+        t = F.interpolate(t, size=(side, side), mode="bilinear", align_corners=True)
+        t = t[0].permute(1, 2, 0).reshape(-1, self.d_model)     # rows k = x + side*y
+        out = self._order(t, side)
+        self._pos_cache[key] = out
+        return out
+
+    def _mrope(self, x, pos_y, pos_x):
+        """vision M-RoPE: pairs (e, e+half) rotated; the first section by the
+        patch's y, the second by its x (freq base 10000, plain rope)."""
+        half = (self.d_model // self.heads) // 2
+        sect = half // 2
+        e = torch.arange(half, dtype=torch.float32, device=x.device)
+        k = torch.where(e < sect, e, e - sect)
+        theta = torch.where((e < sect)[None, :], pos_y[:, None], pos_x[:, None])
+        theta = theta * (10000.0 ** (-2.0 * k / half))[None, :]
+        c, s = torch.cos(theta)[None], torch.sin(theta)[None]
+        x1, x2 = x[..., :half], x[..., half:]
+        return torch.cat([x1 * c - x2 * s, x1 * s + x2 * c], dim=-1)
+
+    def forward(self, patches):
+        if not torch.is_tensor(patches) or not patches.is_floating_point():
+            raise CanvasError(self.name, "it needs an image's patches \u2014 "
+                                         "wire an image input")
+        x = patches.to(torch.float32)
+        n = int(x.shape[0])
+        side = self._side(n)
+        d = self.d_model
+        x = (x @ self.w0.to(torch.float32).T + x @ self.w1.to(torch.float32).T
+             + self.b0.to(torch.float32))
+        x = self._order(x, side)
+        x = x + self._position_embedding(side, x.device)
+        pos_y, pos_x = self._positions(side, x.device)
+        heads, dh = self.heads, d // self.heads
+        for b in self.blk:
+            h = F.layer_norm(x, (d,), b.ln1_w.to(torch.float32),
+                             b.ln1_b.to(torch.float32), self.eps)
+            qkv = h @ b.qkv.to(torch.float32).T + b.qkv_b.to(torch.float32)
+            q, k, v = qkv.split(d, dim=-1)
+            q = q.reshape(n, heads, dh).permute(1, 0, 2)
+            k = k.reshape(n, heads, dh).permute(1, 0, 2)
+            v = v.reshape(n, heads, dh).permute(1, 0, 2)
+            q = self._mrope(q, pos_y, pos_x)
+            k = self._mrope(k, pos_y, pos_x)
+            att = F.softmax(q @ k.transpose(-1, -2) * (1.0 / math.sqrt(dh)), dim=-1)
+            o = (att @ v).permute(1, 0, 2).reshape(n, d)
+            x = x + (o @ b.out.to(torch.float32).T + b.out_b.to(torch.float32))
+            h = F.layer_norm(x, (d,), b.ln2_w.to(torch.float32),
+                             b.ln2_b.to(torch.float32), self.eps)
+            h = h @ b.up.to(torch.float32).T + b.up_b.to(torch.float32)
+            h = F.gelu(h, approximate="tanh")
+            x = x + (h @ b.down.to(torch.float32).T + b.down_b.to(torch.float32))
+        x = F.layer_norm(x, (d,), self.post_w.to(torch.float32),
+                         self.post_b.to(torch.float32), self.eps)
+        m = self.merge * self.merge
+        emb = x.reshape(-1, m * d)
+        emb = emb @ self.mm0.to(torch.float32).T + self.mm0_b.to(torch.float32)
+        emb = F.gelu(emb, approximate="tanh")
+        emb = emb @ self.mm2.to(torch.float32).T + self.mm2_b.to(torch.float32)
+        return emb
+
+
+def _image_vec(value, default=0.5):
+    """A per-channel mean/std from a node field: one value or three."""
+    if value is None or str(value).strip() == "":
+        return torch.tensor([float(default)] * 3)
+    parts = [float(v) for v in str(value).replace(",", " ").split() if v.strip()]
+    if len(parts) == 1:
+        parts = parts * 3
+    if len(parts) != 3:
+        raise CanvasError("input", "its image mean/std must be 1 or 3 numbers")
+    return torch.tensor(parts)
+
+
+def image_patches(node, spec):
+    """The pixels the browser sent ({w, h, rgb: base64}) -> patch rows
+    [n, 3*patch*patch], normalized, rows k = x + grid_w*y — what a vision
+    tower reads. Resized to the box's own size when the pixels come in
+    at another one."""
+    name = node.get("name") or "input"
+    if not isinstance(spec, dict):
+        raise CanvasError(name, "its image must ride with the run \u2014 pick one "
+                                "in the box")
+    try:
+        w, h = int(spec.get("w") or 0), int(spec.get("h") or 0)
+    except (TypeError, ValueError):
+        raise CanvasError(name, "its image's size is not a number")
+    raw = str(spec.get("rgb") or "")
+    if w <= 0 or h <= 0 or not raw:
+        raise CanvasError(name, "no image was sent \u2014 pick one in the box")
+    try:
+        buf = base64.b64decode(raw)
+    except Exception:  # noqa: BLE001
+        raise CanvasError(name, "its image's bytes are not valid base64")
+    if len(buf) != w * h * 3:
+        raise CanvasError(name, "its image has %d bytes, expected %d"
+                          % (len(buf), w * h * 3))
+    x = torch.frombuffer(bytearray(buf), dtype=torch.uint8).float() / 255.0
+    x = x.reshape(h, w, 3)                      # [y, x, c]
+    size = int(node.get("image_size") or 0)
+    if size and (w != size or h != size):
+        x = F.interpolate(x.permute(2, 0, 1)[None], size=(size, size),
+                          mode="bilinear", antialias=True)[0].permute(1, 2, 0)
+        w = h = size
+    x = (x - _image_vec(node.get("image_mean"))) / _image_vec(node.get("image_std"), 1.0)
+    p = int(node.get("patch_size") or 16)
+    if p <= 0 or w % p or h % p:
+        raise CanvasError(name, "its %dx%d image does not split into %d-pixel "
+                                "patches" % (w, h, p))
+    npx, npy = w // p, h // p
+    x = x.permute(2, 0, 1).reshape(3, npy, p, npx, p)       # [c, y, kh, x, kw]
+    return x.permute(1, 3, 0, 2, 4).reshape(npx * npy, 3 * p * p)
+
+
 # ---------------------------------------------------------------- run
 def build_input(node, seed=0):
     """One input box's own matrix: python code that produces it (an expression,
@@ -2030,6 +2256,15 @@ def build_feeds(canvas, feeds=None, seed=0):
         if node.get("kind") != "input":
             continue
         mode = node.get("input_mode")
+        if mode == "image":
+            if nid in out:
+                if isinstance(out[nid], dict):       # the pixels rode with the run
+                    out[nid] = image_patches(node, out[nid])
+            elif node.get("image"):
+                raise CanvasError(node.get("name") or "input",
+                                  "its image must ride with the run \u2014 the "
+                                  "backend cannot read the blob")
+            continue
         if mode in ("python", "random") and nid not in out:
             out[nid] = build_input(node, seed=seed)
         elif mode == "text" and nid not in out and str(node.get("text") or ""):

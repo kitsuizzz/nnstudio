@@ -315,3 +315,76 @@ assert W["m.gguf::blk.0.ffn_gate.weight"]["shape"] == [8, 16], W["m.gguf::blk.0.
 assert W["m.gguf::blk.0.ffn_gate.weight"].get("bytes"), "the registry carries metadata: %r" % W["m.gguf::blk.0.ffn_gate.weight"]
 refs = [n["t"] for n in all_docs(reg) for n in n["nodes"] if n.get("t")]
 assert refs and all(x.startswith("m.gguf::") for x in refs), "bindings carry the namespace: %r" % refs[:3]
+
+# ---- an mmproj's vision tower: the cluster the loader adds -------------------
+import tempfile                                                  # noqa: E402
+import numpy as np                                               # noqa: E402
+from nn_engine import _vision_cluster, clip_meta_and_tensors     # noqa: E402
+
+
+def _write_mmproj(path, projector="qwen3vl_merger"):
+    from gguf import GGUFWriter
+    w = GGUFWriter(path, "clip")
+    w.add_string("general.name", "fixture vision")
+    w.add_string("clip.projector_type", projector)
+    w.add_uint32("clip.vision.embedding_length", 8)
+    w.add_uint32("clip.vision.block_count", 2)
+    w.add_uint32("clip.vision.attention.head_count", 2)
+    w.add_uint32("clip.vision.image_size", 32)
+    w.add_uint32("clip.vision.patch_size", 16)
+    w.add_uint32("clip.vision.projection_dim", 12)
+    w.add_uint32("clip.vision.spatial_merge_size", 2)
+    w.add_float32("clip.vision.attention.layer_norm_epsilon", 1e-6)
+    w.add_array("clip.vision.image_mean", [0.5, 0.5, 0.5])
+    w.add_array("clip.vision.image_std", [0.5, 0.5, 0.5])
+    w.add_tensor("v.patch_embd.weight", np.zeros((16, 16, 3, 8), dtype=np.float16))
+    w.add_tensor("mm.0.weight", np.zeros((32, 32), dtype=np.float16))
+    w.write_header_to_file()
+    w.write_kv_data_to_file()
+    w.write_tensors_to_file()
+    w.close()
+
+
+with tempfile.TemporaryDirectory() as td:
+    mp = os.path.join(td, "mmproj-fixture-F16.gguf")
+    _write_mmproj(mp)
+    meta, tensors = clip_meta_and_tensors(mp)
+    assert meta["projector"] == "qwen3vl_merger", meta
+    assert (meta["d_model"], meta["blocks"], meta["proj_dim"]) == (8, 2, 12), meta
+    assert meta["image_mean"] == [0.5, 0.5, 0.5] and meta["merge"] == 2, meta
+    base = build_canvas({"arch": "t", "blocks": 0, "d_model": 8, "heads": 2,
+                         "file": "t.gguf"}, [])
+    canvas = _vision_cluster(base, mp)
+    by_kind = {}
+    for node in canvas["nodes"]:
+        by_kind.setdefault(node["kind"], []).append(node)
+    img = [x for x in canvas["nodes"] if x.get("input_mode") == "image"][0]
+    assert img["kind"] == "input", img
+    assert (img["image_size"], img["patch_size"], img["dout"]) == (32, 16, 768), img
+    assert img["image_mean"] == "0.5 0.5 0.5", img
+    tow = by_kind["vision"][0]
+    assert tow["file"] == mp and tow["projector"] == "qwen3vl_merger", tow
+    assert (tow["d_model"], tow["blocks"], tow["proj_dim"]) == (8, 2, 12), tow
+    assert tow["params"] == sum(t[2]["params"] for t in tensors), tow
+    assert tow["wbytes"] == sum(t[2]["bytes"] for t in tensors), tow
+    assert tow["dtype"] == "f16", tow
+    emb = [x for x in canvas["nodes"]
+           if x["kind"] == "output" and x["name"] == "image embeds"]
+    assert emb and emb[0]["din"] == 12, emb
+    wired = {(e["from"], e["to"]) for e in canvas["edges"]}
+    assert (img["id"], tow["id"]) in wired, wired
+    assert (tow["id"], emb[0]["id"]) in wired, wired
+    assert canvas["model"]["vision"]["projector"] == "qwen3vl_merger", canvas["model"]
+    reg2 = canvas.get("weights") or {}
+    key = "%s::v.patch_embd.weight" % mp
+    assert key in reg2 and reg2[key]["dtype"] == "f16", list(reg2)[:3]
+    # an unsupported projector refuses, naming the type it cannot run
+    mp2 = os.path.join(td, "mmproj-other.gguf")
+    _write_mmproj(mp2, projector="gemma4uv")
+    try:
+        _vision_cluster(base, mp2)
+        raise AssertionError("an unsupported projector must refuse")
+    except ValueError as e:
+        assert "gemma4uv" in str(e), e
+
+print("gguf_canvas: the vision tower cluster rides along")

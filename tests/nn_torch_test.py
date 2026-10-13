@@ -2031,6 +2031,59 @@ def rl_setup_errors():
 check("rl setup: the reward is the signal — no reward, no target, a wired loss",
       rl_setup_errors)
 
+# ------------------------------------------------- the image input -------------
+print("nn_torch: the image input's pixels")
+
+
+def image_patches_convert():
+    import base64
+    # a 32x32 image: left half red, right half blue; patch 16 -> a 2x2 grid
+    px = bytearray()
+    for _y in range(32):
+        for x in range(32):
+            px += bytes((255, 0, 0)) if x < 16 else bytes((0, 0, 255))
+    node = n("input", "img", input_mode="image", image_size=32, patch_size=16,
+             image_mean="0.5 0.5 0.5", image_std="0.5 0.5 0.5")
+    p = T.image_patches(node, {"w": 32, "h": 32,
+                               "rgb": base64.b64encode(bytes(px)).decode()})
+    assert tuple(p.shape) == (4, 3 * 16 * 16), p.shape
+    # rows k = x + 2y -> (0,0), (1,0), (0,1), (1,1): red is x=0, blue is x=1
+    for row in (0, 2):
+        assert abs(float(p[row, 0]) - 1.0) < 1e-5, (row, float(p[row, 0]))
+        assert abs(float(p[row, 512]) + 1.0) < 1e-5, (row, float(p[row, 512]))
+    for row in (1, 3):
+        assert abs(float(p[row, 0]) + 1.0) < 1e-5, (row, float(p[row, 0]))
+        assert abs(float(p[row, 512]) - 1.0) < 1e-5, (row, float(p[row, 512]))
+    # the run's own conversion: a dict feed becomes the tensor
+    c = canvas([node, n("output", "out", din=3 * 16 * 16)], [edge("img", "out")])
+    feeds = T.build_feeds(c, {"img": {"w": 32, "h": 32,
+                                      "rgb": base64.b64encode(bytes(px)).decode()}})
+    assert torch.is_tensor(feeds["img"]) and tuple(feeds["img"].shape) == (4, 768), feeds["img"]
+    # a node that carries only a blob ref refuses, with the reason
+    c2 = canvas([n("input", "img2", input_mode="image", image="blob:abc.png"),
+                 n("output", "out", din=3)], [edge("img2", "out")])
+    try:
+        T.build_feeds(c2, {})
+        raise AssertionError("a blob-only image must refuse")
+    except T.CanvasError as e:
+        assert "ride with the run" in str(e), e
+
+
+check("image inputs: pixels become normalized patches, rows k = x + grid_w*y",
+      image_patches_convert)
+
+
+def vision_refuses_unknown_projectors():
+    try:
+        T.VisionTower({"kind": "vision", "name": "tower", "file": "x.gguf",
+                       "projector": "gemma4uv", "d_model": 8, "heads": 2, "blocks": 1})
+        raise AssertionError("an unknown projector must refuse")
+    except T.CanvasError as e:
+        assert "gemma4uv" in str(e), e
+
+
+check("a vision tower names the projector it cannot run", vision_refuses_unknown_projectors)
+
 if FAILED:
     print("nn_torch_test: %d failure(s): %s" % (len(FAILED), ", ".join(FAILED)))
     sys.exit(1)

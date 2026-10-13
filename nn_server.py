@@ -164,24 +164,30 @@ def gpu_info():
 
 
 def list_models():
-    """Local GGUFs, in the shape the UI's GGUF form reads."""
+    """Local GGUFs and vision encoders (mmproj), in the shape the UI reads."""
     out = []
-    try:
-        names = sorted(os.listdir(MODELS_DIR))
-    except OSError:
-        names = []
-    for name in names:
-        if not name.lower().endswith(".gguf"):
-            continue                      # vision encoders etc. are no canvas
-        path = os.path.join(MODELS_DIR, name)
-        if not os.path.isfile(path):
-            continue
+
+    def scan(folder, prefix, force):
         try:
-            size = os.path.getsize(path)
+            names = sorted(os.listdir(folder))
         except OSError:
-            size = 0
-        out.append({"kind": "gguf", "name": name, "path": "models/" + name,
-                    "size_mb": round(size / 2 ** 20)})
+            return
+        for name in names:
+            if not name.lower().endswith(".gguf"):
+                continue
+            path = os.path.join(folder, name)
+            if not os.path.isfile(path):
+                continue
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = 0
+            kind = "mmproj" if (force or "mmproj" in name.lower()) else "gguf"
+            out.append({"kind": kind, "name": name, "path": prefix + name,
+                        "size_mb": round(size / 2 ** 20)})
+
+    scan(MODELS_DIR, "models/", False)
+    scan(os.path.join(MODELS_DIR, "mmproj"), "models/mmproj/", True)
     return out
 
 
@@ -851,11 +857,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/gguf/canvas":
             model = str(data.get("model") or "").strip()
             repo = str(data.get("repo") or "").strip()
+            mmproj = str(data.get("mmproj") or "").strip()
             if not model and not repo:
                 self._json({"ok": False, "error": "model or repo is required"}, 400)
                 return
             try:
-                out = nn_engine.hf_canvas(repo) if repo else nn_engine.gguf_canvas(model)
+                out = (nn_engine.hf_canvas(repo) if repo
+                       else nn_engine.gguf_canvas(model, mmproj=mmproj or None))
                 self._json(out)                              # headers only, no weights
             except Exception as e:  # noqa: BLE001 — the form shows the message
                 self._json({"ok": False, "error": str(e)}, 400)

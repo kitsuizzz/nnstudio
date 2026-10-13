@@ -37,12 +37,21 @@ def _is_mmproj_path(path: str) -> bool:
 
 def _resolve_model(model: str) -> str:
     """Keep old flat model paths working after the move into models/: when the
-    given path is missing but models/<basename> exists, use that."""
+    given path is missing but models/<basename> exists, use that. A relative
+    path resolves against the repo wherever the app was started from."""
     model = (model or "").strip()
-    if not is_gguf(model) or os.path.isfile(model) or _is_mmproj_path(model):
+    if not is_gguf(model):
         return model
-    candidate = os.path.join(ENGINE_DIR, "models", os.path.basename(model))
-    return candidate if os.path.isfile(candidate) else model
+    if os.path.isfile(model):
+        return model
+    cand = os.path.join(ENGINE_DIR, model)          # 'models/mmproj/x.gguf'
+    if os.path.isfile(cand):
+        return cand
+    if not _is_mmproj_path(model):                  # legacy flat paths
+        cand = os.path.join(ENGINE_DIR, "models", os.path.basename(model))
+        if os.path.isfile(cand):
+            return cand
+    return model
 
 
 
@@ -145,6 +154,75 @@ def gguf_meta_and_tensors(path):
         "eps": fnum("attention.layer_norm_rms_epsilon") or fnum("attention.layer_norm_epsilon"),
         "experts": num("expert_count"),
         "topk": num("expert_used_count"),
+    }
+    tensors = []
+    for t in reader.tensors:
+        dims = [int(d) for d in t.shape]
+        params = 1
+        for d in dims:
+            params *= d
+        try:
+            nbytes = int(t.n_bytes)
+        except Exception:  # noqa: BLE001 — older gguf-py: ask the data view
+            nbytes = int(getattr(t.data, "nbytes", 0))
+        tensors.append((t.name, dims, {
+            "dtype": _GGML_TYPES.get(int(t.tensor_type), "?"),
+            "params": params, "bytes": nbytes}))
+    return meta, tensors
+
+
+def clip_meta_and_tensors(path):
+    """An mmproj's (vision encoder) clip hyperparameters and tensor list,
+    header only — the same shape `gguf_meta_and_tensors` answers."""
+    from gguf import GGUFReader
+    reader = GGUFReader(path)
+
+    def kv(*suffixes):
+        for key, field in reader.fields.items():
+            if any(key.endswith(s) for s in suffixes):
+                return _gguf_scalar(field)
+        return None
+
+    def num(*suffixes):
+        try:
+            v = kv(*suffixes)
+            return int(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def fnum(*suffixes):
+        try:
+            v = kv(*suffixes)
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def vec(*suffixes):
+        v = kv(*suffixes)
+        if v is None:
+            return None
+        if isinstance(v, (list, tuple)) or hasattr(v, "__len__"):
+            try:
+                return [float(x) for x in v]
+            except (TypeError, ValueError):
+                return None
+        return [float(v)]
+
+    meta = {
+        "arch": str(kv("general.architecture") or "clip"),
+        "name": str(kv("general.name") or "").strip() or None,
+        "projector": str(kv("projector_type") or "").strip().lower() or None,
+        "d_model": num("vision.embedding_length"),
+        "heads": num("vision.attention.head_count"),
+        "blocks": num("vision.block_count"),
+        "ffn": num("vision.feed_forward_length"),
+        "image_size": num("vision.image_size"),
+        "patch_size": num("vision.patch_size"),
+        "proj_dim": num("vision.projection_dim"),
+        "merge": num("vision.spatial_merge_size") or 2,
+        "eps": fnum("vision.attention.layer_norm_epsilon"),
+        "image_mean": vec("vision.image_mean"),
+        "image_std": vec("vision.image_std"),
     }
     tensors = []
     for t in reader.tensors:
@@ -946,8 +1024,80 @@ def build_canvas(meta, tensors):
             "nodes": top["nodes"], "edges": top["edges"], "summary": summary}
 
 
-def gguf_canvas(model):
-    """Build a canvas design from a GGUF file (header + tensor list only)."""
+_VISION_PROJECTORS = ("qwen3vl_merger",)
+
+
+def _vision_cluster(canvas, mmproj):
+    """Add an mmproj's vision tower to a text canvas: an image input, the
+    tower box (the engine runs the whole tower) and an embeddings output —
+    the merge into the text model's token stream is the next step. The
+    tower's tensors join the canvas' weight registry, namespaced by file."""
+    path = _resolve_model(mmproj)
+    if not path or not os.path.isfile(path):
+        raise ValueError("mmproj file not found: %s" % (mmproj,))
+    meta, tensors = clip_meta_and_tensors(path)
+    proj = str(meta.get("projector") or "")
+    if proj not in _VISION_PROJECTORS:
+        raise ValueError("%s: the projector type '%s' is not supported yet (%s is)"
+                         % (os.path.basename(path), proj or "?",
+                            ", ".join(_VISION_PROJECTORS)))
+    d_model = int(meta.get("d_model") or 0)
+    heads = int(meta.get("heads") or 0)
+    blocks = int(meta.get("blocks") or 0)
+    patch = int(meta.get("patch_size") or 16)
+    size = int(meta.get("image_size") or 0)
+    proj_dim = int(meta.get("proj_dim") or 0)
+    merge = int(meta.get("merge") or 2)
+    if not (d_model and heads and blocks and size and proj_dim):
+        raise ValueError("%s: the mmproj's vision hyperparameters are incomplete"
+                         % os.path.basename(path))
+    if size % patch:
+        raise ValueError("%s: image size %d is not a multiple of patch size %d"
+                         % (os.path.basename(path), size, patch))
+    mean = meta.get("image_mean") or [0.5, 0.5, 0.5]
+    std = meta.get("image_std") or [0.5, 0.5, 0.5]
+    nodes = canvas.setdefault("nodes", [])
+    edges = canvas.setdefault("edges", [])
+    y0 = max([int(n.get("y") or 0) for n in nodes] + [0]) + 400
+    tower = {"id": "vision", "kind": "vision", "name": "%s vision" % (meta.get("name") or "vision"),
+             "x": 320, "y": y0, "file": path, "projector": proj,
+             "d_model": d_model, "heads": heads, "blocks": blocks,
+             "patch": patch, "merge": merge, "image_size": size,
+             "proj_dim": proj_dim, "eps": meta.get("eps") or 1e-6}
+    image = {"id": "image", "kind": "input", "name": "image", "input_mode": "image",
+             "x": 0, "y": y0, "dout": 3 * patch * patch,
+             "image_size": size, "patch_size": patch,
+             "image_mean": " ".join("%g" % v for v in mean),
+             "image_std": " ".join("%g" % v for v in std)}
+    sink = {"id": "image embeds", "kind": "output", "name": "image embeds",
+            "x": 640, "y": y0, "din": proj_dim}
+    nodes += [image, tower, sink]
+    edges += [{"from": "image", "to": "vision", "fromPort": 0, "toPort": 0},
+              {"from": "vision", "to": "image embeds", "fromPort": 0, "toPort": 0}]
+    # the tower's own weights: stamped on the box (the estimate reads them)
+    # and registered by namespace, so the app can show what the file holds
+    tower["params"] = sum(i.get("params", 0) for _, _, i in tensors)
+    tower["wbytes"] = sum(i.get("bytes", 0) for _, _, i in tensors)
+    kinds = {i.get("dtype") for _, _, i in tensors}
+    tower["dtype"] = kinds.pop() if len(kinds) == 1 else "mixed"
+    weights = canvas.setdefault("weights", {})
+    for tname, dims, info in tensors:
+        weights["%s::%s" % (path, tname)] = {
+            "tensor": tname, "shape": [int(d) for d in dims],
+            "dtype": info.get("dtype"), "params": info.get("params"),
+            "bytes": info.get("bytes")}
+    canvas.setdefault("model", {})["vision"] = {
+        "file": path, "projector": proj, "name": meta.get("name"),
+        "image_size": size, "patch_size": patch, "projection_dim": proj_dim,
+        "blocks": blocks}
+    _snap_layout(canvas)
+    return canvas
+
+
+def gguf_canvas(model, mmproj=None):
+    """Build a canvas design from a GGUF file (header + tensor list only).
+    With an `mmproj`, the file's vision tower rides along: an image input,
+    the tower box and an embeddings output beside the text model."""
     path = _resolve_model(model)
     if not path or not os.path.isfile(path):
         raise ValueError("GGUF file not found: %s" % (model,))
@@ -958,6 +1108,8 @@ def gguf_canvas(model):
     meta["file"] = path           # the namespace every binding reads from
     canvas = build_canvas(meta, tensors)
     canvas["name"] = os.path.basename(path)
+    if mmproj:
+        _vision_cluster(canvas, mmproj)
     return {"ok": True, "canvas": canvas, "summary": canvas.pop("summary")}
 
 
