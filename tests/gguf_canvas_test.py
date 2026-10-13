@@ -360,11 +360,12 @@ with tempfile.TemporaryDirectory() as td:
         by_kind.setdefault(node["kind"], []).append(node)
     img = [x for x in canvas["nodes"] if x.get("input_mode") == "image"][0]
     assert img["kind"] == "input", img
-    assert (img["image_size"], img["patch_size"], img["dout"]) == (32, 16, 768), img
-    assert img["image_mean"] == "0.5 0.5 0.5", img
+    assert (img["image_size"], img["dout"]) == (32, 3), img      # a picture arrives
     tow = by_kind["vision"][0]
     assert tow["file"] == mp and tow["projector"] == "qwen3vl_merger", tow
     assert (tow["d_model"], tow["blocks"], tow["proj_dim"]) == (8, 2, 12), tow
+    assert (tow["din"], tow["dout"]) == (3, 12), tow
+    assert tow["image_mean"] == "0.5 0.5 0.5" and tow["image_std"] == "0.5 0.5 0.5", tow
     assert tow["params"] == sum(t[2]["params"] for t in tensors), tow
     assert tow["wbytes"] == sum(t[2]["bytes"] for t in tensors), tow
     assert tow["dtype"] == "f16", tow

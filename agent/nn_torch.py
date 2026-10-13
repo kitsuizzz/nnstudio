@@ -559,6 +559,43 @@ def tensor_stats(t, peek=8):
         }
 
 
+def image_story(canvas, collected):
+    """Which of the run's values are pictures: {id(tensor): {w, h, blob, name}},
+    keyed by the tensor the run itself produced — a wire that passed an image
+    on unchanged hands over the same object, so an output box can show the
+    picture it received. Image inputs are matched by their path, nested levels
+    included."""
+    out = {}
+
+    def walk(nodes, prefix):
+        for n in (nodes or []):
+            nid = n.get("id") or ""
+            path = prefix + nid
+            if n.get("kind") == "custom":
+                walk((n.get("inner") or {}).get("nodes"), path + "/")
+                continue
+            if n.get("kind") != "input" or n.get("input_mode") != "image":
+                continue
+            v = (collected or {}).get(path)
+            if not torch.is_tensor(v) or v.dim() != 3 or int(v.shape[-1]) != 3:
+                continue
+            out[id(v)] = {"w": int(v.shape[1]), "h": int(v.shape[0]),
+                          "blob": n.get("image") or "",
+                          "name": n.get("name") or "image"}
+
+    walk((canvas or {}).get("nodes"), "")
+    return out
+
+
+def _stats_with_image(v, story):
+    """One value's stats, with the picture's story attached when it is one."""
+    st = tensor_stats(v)
+    meta = story.get(id(v)) if story else None
+    if st is not None and meta:
+        st["image"] = meta
+    return st
+
+
 # ---------------------------------------------------------------- boxes
 # What a box's own weights live in: its declared dtype when torch knows it,
 # anything quantised (dequantised at load) in f16, else the compile default.
@@ -2015,6 +2052,8 @@ class VisionTower(nn.Module):
         self.image_size = int(node.get("image_size") or 0)
         self.proj_dim = int(node.get("proj_dim") or 0)
         self.eps = float(node.get("eps") or 1e-6)
+        self.image_mean = _image_vec(node.get("image_mean"))
+        self.image_std = _image_vec(node.get("image_std"), 1.0)
         if not (self.file and self.d_model and self.heads and self.blocks):
             raise CanvasError(name, "its mmproj is not set \u2014 load the GGUF again")
         grad = bool(train) and not bool(node.get("frozen"))
@@ -2111,10 +2150,35 @@ class VisionTower(nn.Module):
         x1, x2 = x[..., :half], x[..., half:]
         return torch.cat([x1 * c - x2 * s, x1 * s + x2 * c], dim=-1)
 
+    def _from_image(self, img):
+        """[h, w, 3] in 0..1 -> the normalized patch rows the tower reads:
+        resized to its own image size when it must be, mean/std applied,
+        rows k = x + grid_w*y."""
+        size = self.image_size
+        h, w = int(img.shape[0]), int(img.shape[1])
+        x = img.to(torch.float32)
+        if size and (w != size or h != size):
+            x = F.interpolate(x.permute(2, 0, 1)[None], size=(size, size),
+                              mode="bilinear", antialias=True)[0].permute(1, 2, 0)
+            h = w = size
+        x = (x - self.image_mean.to(x.device)) / self.image_std.to(x.device)
+        p = self.patch
+        if p <= 0 or w % p or h % p:
+            raise CanvasError(self.name, "its %dx%d image does not split into "
+                                         "%d-pixel patches" % (w, h, p))
+        npx, npy = w // p, h // p
+        x = x.permute(2, 0, 1).reshape(3, npy, p, npx, p)   # [c, y, kh, x, kw]
+        return x.permute(1, 3, 0, 2, 4).reshape(npx * npy, 3 * p * p)
+
     def forward(self, patches):
         if not torch.is_tensor(patches) or not patches.is_floating_point():
             raise CanvasError(self.name, "it needs an image's patches \u2014 "
                                          "wire an image input")
+        if patches.dim() == 3 and int(patches.shape[-1]) == 3:
+            patches = self._from_image(patches)          # the picture itself
+        elif patches.dim() != 2:
+            raise CanvasError(self.name, "it needs an image [h, w, 3] or its "
+                                         "patch rows [n, 3*patch*patch]")
         x = patches.to(torch.float32)
         n = int(x.shape[0])
         side = self._side(n)
@@ -2165,11 +2229,11 @@ def _image_vec(value, default=0.5):
     return torch.tensor(parts)
 
 
-def image_patches(node, spec):
-    """The pixels the browser sent ({w, h, rgb: base64}) -> patch rows
-    [n, 3*patch*patch], normalized, rows k = x + grid_w*y — what a vision
-    tower reads. Resized to the box's own size when the pixels come in
-    at another one."""
+def image_tensor(node, spec):
+    """The pixels the browser sent ({w, h, rgb: base64}) -> the image as data:
+    [h, w, 3] in 0..1, RGB, resized to the box's own size when the pixels
+    come in at another one. This is what travels the wires — an output box
+    shows it, a vision tower normalizes and patchifies it itself."""
     name = node.get("name") or "input"
     if not isinstance(spec, dict):
         raise CanvasError(name, "its image must ride with the run \u2014 pick one "
@@ -2194,15 +2258,7 @@ def image_patches(node, spec):
     if size and (w != size or h != size):
         x = F.interpolate(x.permute(2, 0, 1)[None], size=(size, size),
                           mode="bilinear", antialias=True)[0].permute(1, 2, 0)
-        w = h = size
-    x = (x - _image_vec(node.get("image_mean"))) / _image_vec(node.get("image_std"), 1.0)
-    p = int(node.get("patch_size") or 16)
-    if p <= 0 or w % p or h % p:
-        raise CanvasError(name, "its %dx%d image does not split into %d-pixel "
-                                "patches" % (w, h, p))
-    npx, npy = w // p, h // p
-    x = x.permute(2, 0, 1).reshape(3, npy, p, npx, p)       # [c, y, kh, x, kw]
-    return x.permute(1, 3, 0, 2, 4).reshape(npx * npy, 3 * p * p)
+    return x
 
 
 # ---------------------------------------------------------------- run
@@ -2259,7 +2315,7 @@ def build_feeds(canvas, feeds=None, seed=0):
         if mode == "image":
             if nid in out:
                 if isinstance(out[nid], dict):       # the pixels rode with the run
-                    out[nid] = image_patches(node, out[nid])
+                    out[nid] = image_tensor(node, out[nid])
             elif node.get("image"):
                 raise CanvasError(node.get("name") or "input",
                                   "its image must ride with the run \u2014 the "
@@ -2481,9 +2537,11 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
     else:
         with torch.no_grad():
             vals = passes()
+    collected = graph.collect()
+    story = image_story(canvas, collected)
     values = {}
-    for path, v in graph.collect().items():
-        st = tensor_stats(v)
+    for path, v in collected.items():
+        st = _stats_with_image(v, story)
         if st is not None:
             values[path] = st
     texts = {}
@@ -2497,7 +2555,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
         "generated": generated,
         "texts": texts,
         "outputs": [{"id": n["id"], "name": n.get("name"),
-                     "stats": tensor_stats(vals.get(n["id"]))}
+                     "stats": _stats_with_image(vals.get(n["id"]), story)}
                     for n in canvas.get("nodes", []) if n.get("kind") == "output"],
         "ms": int((time.time() - t0) * 1000),
     }

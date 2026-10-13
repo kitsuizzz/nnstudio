@@ -342,7 +342,10 @@
       to fit its numbers). In <code>image</code> mode you pick a picture from your
       machine: it lands in the project's media store (the same <code>blob:</code>
       store the dataset sheet uses), the box shows its preview, and a run decodes
-      it to pixels and sends them with the design.
+      it to pixels and sends them with the design. The <b>picture itself travels
+      the wires</b> (<code>h × w × 3</code>, 0..1): an <span class="pill">output</span>
+      box it reaches shows the image, and a vision tower does its own resizing,
+      normalization and patch cutting.
       The window also carries the <b>▶ run the design</b> button — the run starts
       where the data is — with the run's verdict line under it.
       Double-click the box to grow or shrink the editor.</p>
@@ -352,10 +355,9 @@
       (a small expression for the values), <code>random</code>, or
       <code>image</code> (a picture, resized to the model's own geometry);
       the values, text, code or the <code>blob:</code> reference itself;
-      <code>input_rows</code> for batches; for images the geometry the tower
-      reads: <code>image_size</code>, <code>patch_size</code>,
-      <code>image_mean</code> and <code>image_std</code> (set for you when a
-      vision tower is loaded).</p>
+      <code>input_rows</code> for batches; for images the side the pixels are
+      sent at (<code>image_size</code>), set for you when a vision tower is
+      loaded.</p>
     </div>
   </div>
 
@@ -724,6 +726,10 @@
         <b>▶ run the design</b>. The tower runs on the backend and the
         <b>image embeds</b> output shows the embeddings it produced
         (one vector per 2×2 patch group).</li>
+    <li>To see the picture itself, wire the image input into an
+        <span class="pill">output</span> box: the run hands the image over as
+        data, and that box's window <b>displays it</b> (with its size and
+        pixel statistics under it).</li>
     <li>The tower box's window shows what it is: projector type, image and patch
         size, blocks, output width and the file it reads. <span class="dim">Merging
         those embeddings into the text model's token stream is the next step —

@@ -2035,30 +2035,29 @@ check("rl setup: the reward is the signal — no reward, no target, a wired loss
 print("nn_torch: the image input's pixels")
 
 
-def image_patches_convert():
+def image_tensor_convert():
     import base64
-    # a 32x32 image: left half red, right half blue; patch 16 -> a 2x2 grid
+    # a 32x32 image: left half red, right half blue
     px = bytearray()
     for _y in range(32):
         for x in range(32):
             px += bytes((255, 0, 0)) if x < 16 else bytes((0, 0, 255))
-    node = n("input", "img", input_mode="image", image_size=32, patch_size=16,
-             image_mean="0.5 0.5 0.5", image_std="0.5 0.5 0.5")
-    p = T.image_patches(node, {"w": 32, "h": 32,
-                               "rgb": base64.b64encode(bytes(px)).decode()})
-    assert tuple(p.shape) == (4, 3 * 16 * 16), p.shape
-    # rows k = x + 2y -> (0,0), (1,0), (0,1), (1,1): red is x=0, blue is x=1
-    for row in (0, 2):
-        assert abs(float(p[row, 0]) - 1.0) < 1e-5, (row, float(p[row, 0]))
-        assert abs(float(p[row, 512]) + 1.0) < 1e-5, (row, float(p[row, 512]))
-    for row in (1, 3):
-        assert abs(float(p[row, 0]) + 1.0) < 1e-5, (row, float(p[row, 0]))
-        assert abs(float(p[row, 512]) - 1.0) < 1e-5, (row, float(p[row, 512]))
-    # the run's own conversion: a dict feed becomes the tensor
-    c = canvas([node, n("output", "out", din=3 * 16 * 16)], [edge("img", "out")])
+    node = n("input", "img", input_mode="image", image_size=32)
+    img = T.image_tensor(node, {"w": 32, "h": 32,
+                                "rgb": base64.b64encode(bytes(px)).decode()})
+    assert tuple(img.shape) == (32, 32, 3), img.shape          # the picture itself
+    assert abs(float(img[0, 0, 0]) - 1.0) < 1e-6, float(img[0, 0, 0])
+    assert abs(float(img[0, 0, 2])) < 1e-6, float(img[0, 0, 2])
+    assert abs(float(img[0, 31, 2]) - 1.0) < 1e-6, float(img[0, 31, 2])
+    # the run's own conversion: a dict feed becomes the picture
+    c = canvas([node, n("output", "out", din=3)], [edge("img", "out")])
     feeds = T.build_feeds(c, {"img": {"w": 32, "h": 32,
                                       "rgb": base64.b64encode(bytes(px)).decode()}})
-    assert torch.is_tensor(feeds["img"]) and tuple(feeds["img"].shape) == (4, 768), feeds["img"]
+    assert torch.is_tensor(feeds["img"]) and tuple(feeds["img"].shape) == (32, 32, 3)
+    # a picture at another size is resized to the box's own
+    small = T.image_tensor(node, {"w": 8, "h": 8,
+                                  "rgb": base64.b64encode(bytes([255, 0, 0]) * 64).decode()})
+    assert tuple(small.shape) == (32, 32, 3), small.shape
     # a node that carries only a blob ref refuses, with the reason
     c2 = canvas([n("input", "img2", input_mode="image", image="blob:abc.png"),
                  n("output", "out", din=3)], [edge("img2", "out")])
@@ -2069,8 +2068,88 @@ def image_patches_convert():
         assert "ride with the run" in str(e), e
 
 
-check("image inputs: pixels become normalized patches, rows k = x + grid_w*y",
-      image_patches_convert)
+check("image inputs: the picture itself travels (h x w x 3, 0..1)",
+      image_tensor_convert)
+
+
+def image_reaches_an_output_box():
+    import base64
+    node = n("input", "img", input_mode="image", image_size=8, image="blob:pic.png")
+    c = canvas([node, n("output", "out", din=3)], [edge("img", "out")])
+    px = bytes([10, 20, 30]) * 64
+    res = T.run_graph(T.compile_canvas(c), c, {"img": {"w": 8, "h": 8,
+                     "rgb": base64.b64encode(px).decode()}})
+    st = (res.get("values") or {}).get("out") or {}
+    assert st.get("image"), "the output's value carries the picture: %r" % list(st)
+    assert st["image"]["w"] == 8 and st["image"]["h"] == 8, st["image"]
+    assert st["image"]["blob"] == "blob:pic.png", st["image"]
+    outs = (res.get("outputs") or [{}])[0].get("stats") or {}
+    assert outs.get("image"), "…and the output's own stats say so too"
+    # a plain tensor through the same wire is not marked as a picture
+    c2 = canvas([n("input", "v", values="1 2", dout=2),
+                 n("output", "out", din=2)], [edge("v", "out")])
+    r2 = T.run_graph(T.compile_canvas(c2), c2, {"v": [1.0, 2.0]})
+    assert not ((r2.get("values") or {}).get("out") or {}).get("image"), "no image there"
+
+
+check("an image arrives at the output box marked as a picture", image_reaches_an_output_box)
+
+
+def _write_tiny_mmproj(path):
+    """A one-block qwen3vl tower, small enough to run in a test."""
+    from gguf import GGUFWriter
+    rng = np.random.default_rng(7)
+    w = GGUFWriter(path, "clip")
+    w.add_string("clip.projector_type", "qwen3vl_merger")
+    # shapes are the logical (numpy) ones the loader hands torch: [out, in]
+    # for a linear, [n_pos, d] for the position table, [d, c, kh, kw] for a conv
+    tens = {
+        "v.patch_embd.weight": (8, 3, 16, 16),
+        "v.patch_embd.weight.1": (8, 3, 16, 16),
+        "v.patch_embd.bias": (8,),
+        "v.position_embd.weight": (4, 8),
+        "v.blk.0.attn_qkv.weight": (24, 8), "v.blk.0.attn_qkv.bias": (24,),
+        "v.blk.0.attn_out.weight": (8, 8), "v.blk.0.attn_out.bias": (8,),
+        "v.blk.0.ffn_up.weight": (16, 8), "v.blk.0.ffn_up.bias": (16,),
+        "v.blk.0.ffn_down.weight": (8, 16), "v.blk.0.ffn_down.bias": (8,),
+        "v.blk.0.ln1.weight": (8,), "v.blk.0.ln1.bias": (8,),
+        "v.blk.0.ln2.weight": (8,), "v.blk.0.ln2.bias": (8,),
+        "v.post_ln.weight": (8,), "v.post_ln.bias": (8,),
+        "mm.0.weight": (32, 32), "mm.0.bias": (32,),
+        "mm.2.weight": (12, 32), "mm.2.bias": (12,),
+    }
+    for name, shape in tens.items():
+        w.add_tensor(name, rng.standard_normal(shape).astype(np.float32) * 0.2)
+    w.write_header_to_file()
+    w.write_kv_data_to_file()
+    w.write_tensors_to_file()
+    w.close()
+
+
+def vision_takes_a_picture():
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "mm.gguf")
+        _write_tiny_mmproj(path)
+        node = {"kind": "vision", "name": "tower", "file": path,
+                "projector": "qwen3vl_merger", "d_model": 8, "heads": 2, "blocks": 1,
+                "patch": 16, "merge": 2, "image_size": 32, "proj_dim": 12, "eps": 1e-6,
+                "image_mean": "0.5 0.5 0.5", "image_std": "0.5 0.5 0.5"}
+        tow = T.VisionTower(node, device="cpu")
+        img = torch.rand(32, 32, 3, generator=torch.Generator().manual_seed(3))
+        a = tow(img)                                 # the picture itself
+        assert tuple(a.shape) == (1, 12), a.shape    # 4 patches -> 1 merged group
+        # the same picture, normalized and patchified the way the tower does
+        norm = (img - 0.5) / 0.5
+        pat = norm.permute(2, 0, 1).reshape(3, 2, 16, 2, 16).permute(1, 3, 0, 2, 4)
+        b = tow(pat.reshape(4, 768))                 # pre-cut patch rows still work
+        assert torch.allclose(a, b, atol=1e-5), float((a - b).abs().max())
+        # an image at another size is resized to the tower's own on the way in
+        small = tow(torch.rand(8, 8, 3, generator=torch.Generator().manual_seed(4)))
+        assert tuple(small.shape) == (1, 12), small.shape
+
+
+check("a vision tower takes the picture itself, and its patch rows",
+      vision_takes_a_picture)
 
 
 def vision_refuses_unknown_projectors():

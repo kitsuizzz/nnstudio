@@ -1063,12 +1063,13 @@ def _vision_cluster(canvas, mmproj):
              "x": 320, "y": y0, "file": path, "projector": proj,
              "d_model": d_model, "heads": heads, "blocks": blocks,
              "patch": patch, "merge": merge, "image_size": size,
-             "proj_dim": proj_dim, "eps": meta.get("eps") or 1e-6}
-    image = {"id": "image", "kind": "input", "name": "image", "input_mode": "image",
-             "x": 0, "y": y0, "dout": 3 * patch * patch,
-             "image_size": size, "patch_size": patch,
+             "proj_dim": proj_dim, "eps": meta.get("eps") or 1e-6,
              "image_mean": " ".join("%g" % v for v in mean),
-             "image_std": " ".join("%g" % v for v in std)}
+             "image_std": " ".join("%g" % v for v in std),
+             "din": 3, "dout": proj_dim}
+    image = {"id": "image", "kind": "input", "name": "image", "input_mode": "image",
+             "x": 0, "y": y0, "dout": 3,           # a picture arrives: h x w x 3
+             "image_size": size}
     sink = {"id": "image embeds", "kind": "output", "name": "image embeds",
             "x": 640, "y": y0, "din": proj_dim}
     nodes += [image, tower, sink]

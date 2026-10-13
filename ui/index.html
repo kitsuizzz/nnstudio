@@ -820,6 +820,8 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
                       border-radius: 8px; font: 12px var(--mono); }
 .bxinputimg { display: block; max-width: 100%; margin: 6px 0;
               border-radius: 8px; border: 1px solid var(--panel-brd); }
+.bxoutimg { display: block; max-width: 100%; margin: 6px 0;
+            border-radius: 8px; border: 1px solid var(--panel-brd); }
 .bxinputbody input[type="text"] {
   flex: 1 1 auto; min-width: 0; width: auto; padding: 4px 8px;
   border-radius: 8px; font: 12px var(--mono);
@@ -1267,7 +1269,10 @@ function bxShape(n) {
   }
   if (n.kind === "input") return n.input_mode === "text" ? "text"
                                : n.input_mode === "image" ? "image" : bxDim(n.dout);
-  if (n.kind === "output") return bxDim(n.din);
+  if (n.kind === "output") {                             // an image that arrived
+    const st = bxNodeState(n);
+    return (st && st.image) ? "image" : bxDim(n.din);
+  }
   if (n.kind === "sample")
     return n.temperature != null ? "t " + n.temperature : "greedy";
   if (n.kind === "dataset") {
@@ -3791,11 +3796,8 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
         .then(r => r.json())
         .then(d => {
           if (!d || !d.ok || !d.id) throw new Error((d && d.error) || "upload failed");
-          const p = Number(n.patch_size) || 16;
           save({ input_mode: "image", image: "blob:" + d.id,
-                 image_size: Number(n.image_size) || 768, patch_size: p,
-                 image_mean: n.image_mean || "0.5 0.5 0.5",
-                 image_std: n.image_std || "0.5 0.5 0.5", dout: 3 * p * p });
+                 image_size: Number(n.image_size) || 768, dout: 3 });
         })
         .catch(e => { pick.textContent = String((e && e.message) || e); });
     });
@@ -3809,15 +3811,8 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
       body.appendChild(off);
     }
     field("size", n.image_size == null ? "768" : n.image_size,
-          "768 \u2014 the side the model reads",
+          "768 \u2014 the side the pixels are sent at",
           (v) => save({ input_mode: "image", image_size: v }));
-    field("patch", n.patch_size == null ? "16" : n.patch_size,
-          "16 \u2014 the patch side",
-          (v) => save({ input_mode: "image", patch_size: v }));
-    field("mean", n.image_mean || "0.5 0.5 0.5", "0.5 0.5 0.5",
-          (v) => save({ input_mode: "image", image_mean: v }));
-    field("std", n.image_std || "0.5 0.5 0.5", "0.5 0.5 0.5",
-          (v) => save({ input_mode: "image", image_std: v }));
   }
   sel.addEventListener("change", () => save({ input_mode: sel.value }));
   // the run action lives here now: where the data is, the way to run it
@@ -3856,6 +3851,25 @@ function bxOutputFill(pane, n) {               // the output's window: whatever 
   }
   if (st.text != null) {
     body.appendChild(mk("div", { class: "bxdata", text: "\u201c" + st.text + "\u201d" }));
+    return;
+  }
+  if (st.image) {                              // a picture arrived: show the picture
+    const bid = String(st.image.blob || "").replace(/^blob:/, "");
+    if (bid) {
+      body.appendChild(mk("img", { class: "bxoutimg",
+                                   src: "/api/blob?id=" + encodeURIComponent(bid) }));
+    } else {
+      body.appendChild(mk("div", { class: "panehint",
+        text: "an image arrived (" + (st.image.w || "?") + "\u00d7"
+              + (st.image.h || "?") + ")" }));
+    }
+    const ib = [];
+    if (st.image.w && st.image.h) ib.push(st.image.w + "\u00d7" + st.image.h + " px");
+    if (st.mean != null) ib.push("\u03bc " + bxNumText(st.mean));
+    if (st.min != null && st.max != null)
+      ib.push("min " + bxNumText(st.min) + " \u00b7 max " + bxNumText(st.max));
+    if (ib.length)
+      body.appendChild(mk("div", { class: "panehint", text: ib.join(" \u00b7 ") }));
     return;
   }
   const sh = (st.shape || []).map(Number);
@@ -4380,6 +4394,8 @@ function bxJSONNode(n) {
                      "image_size", "proj_dim"])
       if (n[k] != null) o[k] = n[k];
     if (n.eps != null) o.eps = n.eps;
+    if (n.image_mean != null) o.image_mean = n.image_mean;
+    if (n.image_std != null) o.image_std = n.image_std;
   }
   if (n.t) o.t = n.t;
   if (n.file) o.file = n.file;
@@ -4750,6 +4766,8 @@ function bxJSONNodeFrom(o) {
       if (v) n[k] = v;
     }
     if (o.eps != null && isFinite(Number(o.eps))) n.eps = Number(o.eps);
+    if (o.image_mean != null) n.image_mean = String(o.image_mean).slice(0, 80);
+    if (o.image_std != null) n.image_std = String(o.image_std).slice(0, 80);
   }
   else {
     const inner = o.inner == null ? { nodes: [], edges: [] } : bxJSONDocFrom(o.inner, "nested");
@@ -5124,6 +5142,8 @@ function bxNodeState(n) {                      // what the last run left on this
 function bxStateText(st) {                     // the data a box carries, as content
   if (!st) return null;
   if (st.text != null) return "\u201c" + bxClip(st.text, 22) + "\u201d";
+  if (st.image)                                // a picture, not numbers
+    return "image " + (st.image.w || "?") + "\u00d7" + (st.image.h || "?");
   const peek = st.peek || [];
   const sh = (st.shape || []).map(Number);
   if (peek.length) {
@@ -7102,6 +7122,8 @@ function bxVisionFill(pane, n) {               // the tower's facts, in its wind
   const rows = [
     ["projector", n.projector || "?"],
     ["image", (n.image_size || "?") + " px \u00b7 " + (n.patch || 16) + " px patches"],
+    ["norm", (n.image_mean || "0.5 0.5 0.5") + " \u00b7 \u03c3 "
+             + (n.image_std || "0.5 0.5 0.5")],
     ["blocks", n.blocks == null ? "?" : String(n.blocks) + " \u00b7 " + (n.heads || "?") + " heads"],
     ["output", n.proj_dim == null ? "?" : n.proj_dim + " wide"],
     ["weights", (n.dtype || "?") + (n.params ? " \u00b7 " + bxBig(n.params) + " params" : "")],

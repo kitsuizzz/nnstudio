@@ -217,7 +217,7 @@ globalThis.__t = {
   bxTasksFetch, bxTaskLogFetch, bxTasksApply, bxLogApply, bxLogState,
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
-  bxRunFeeds, bxInputFill, bxInputExpand, bxOutputExpand, bxPaneFill,
+  bxRunFeeds, bxInputFill, bxInputExpand, bxOutputFill, bxOutputExpand, bxPaneFill,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
   bxTableRead, bxTableWrite, bxTableType, bxTableSetCell, bxTableRenameCol,
   bxTableInsertCol, bxTableDeleteCol, bxTableAddRow, bxTableDeleteRow,
@@ -1355,6 +1355,28 @@ check("loading a repo fires nothing \u2014 and removing a box stops nothing", ()
   __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
 });
 
+check("an output box shows a picture that travelled to it", () => {
+  const o = __t.bxAdd("output", 300, 0, { din: 3 });
+  __t.bxRunValues = { [o.id]: { shape: [768, 768, 3], mean: 0.5, min: 0, max: 1,
+                                peek: [0.5, 0.5, 0.5],
+                                image: { w: 768, h: 768, blob: "blob:abc.png",
+                                         name: "image" } } };
+  __t.bxRender();
+  const d = document.createElement("div");
+  __t.bxOutputFill(d, o);
+  const img = d.querySelectorAll(".bxoutimg")[0];
+  ok(img && String(img.src).indexOf("abc.png") >= 0,
+     "…the window shows the picture that arrived");
+  eql(__t.bxShape(o), "image", "…and the card says image");
+  eql(__t.bxStateText(__t.bxRunValues[o.id]), "image 768\u00d7768",
+      "…and the value reads as a picture");
+  const bits = d.querySelectorAll(".panehint").map(x => String(x.textContent)).join(" ");
+  ok(bits.indexOf("768\u00d7768") >= 0, "…with its size: " + bits.slice(0, 60));
+  __t.bxRunValues = {};
+  __t.bxRender();
+  __t.bxRemove(o.id);
+});
+
 check("a vision canvas lands whole: image input, tower and embeds", () => {
   const box = __t.bxAdd("custom", 320, 0, {});
   __t.BX.nodes.slice().forEach(x => { if (x !== box) __t.bxRemove(x.id); });
@@ -1445,8 +1467,8 @@ check("the input box edits its data right on the canvas", () => {
   s3.dispatchEvent({ type: "change" });
   eql(i.input_mode, "image", "switching to image lands on the box");
   eql(__t.bxShape(i), "image", "…and the card says image");
-  eql(fill().querySelectorAll(".bxbin").length, 4,
-      "…with size, patch, mean and std — the geometry the run sends");
+  eql(fill().querySelectorAll(".bxbin").length, 1,
+      "…with the side the pixels are sent at");
   const chips = fill().querySelectorAll(".chip").map(c => String(c.textContent));
   ok(chips.some(t => t.indexOf("image") >= 0), "…and a way to pick the picture");
   i.image = "blob:abc123.png";

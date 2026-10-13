@@ -55,11 +55,14 @@ Weights stay f16 at rest (the box's estimate is the file's own bytes); the
 forward computes in f32. The tower honors `place` (gpu/system) like any other
 weight box.
 
-An image input box feeds it: the picture is resized to `image_size` (the
-browser does it while picking, the engine re-does it for API clients),
-normalized with the file's `image_mean`/`image_std`, and cut into
-`patch_size × patch_size` patches (rows `k = x + grid_w·y`). A run sends the
-raw pixels (RGB8, base64) with the design — the backend never reads the
+An image input box emits the **picture itself** (`[h, w, 3]`, 0..1) — it
+travels the wires like any value, so an output box it reaches shows the
+image — and the tower does its own preprocessing: resized to `image_size`
+(the browser already sends at that side; the engine re-does it for API
+clients), normalized with the file's `image_mean`/`image_std`, and cut into
+`patch × patch` patches (rows `k = x + grid_w·y`). Pre-cut patch rows are
+still accepted on the tower's input for API clients. A run sends the raw
+pixels (RGB8, base64) with the design — the backend never reads the
 browser's blob store.
 
 ## Per platform
