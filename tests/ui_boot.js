@@ -819,6 +819,21 @@ check("the Import menu: one pop-up, one file, no box spawned", () => {
                             x.file === "models/test-model.gguf"),
      "…redo lands it again");
   __t.bxUndoStep();                            // leave the canvas as it was found
+
+  // an encoder's served cluster lands the same way: one box, its tower inside
+  const enc = __t.bxGGUFImportApply({ name: "vision.gguf",
+    nodes: [{ id: "image", kind: "input", input_mode: "image", dout: 3, name: "image" },
+            { id: "vision", kind: "vision", name: "tower", din: 3, dout: 12 },
+            { id: "image embeds", kind: "output", name: "image embeds", din: 12 }],
+    edges: [{ from: "image", to: "vision" },
+            { from: "vision", to: "image embeds" }] }, "models/mmproj-x.gguf");
+  ok(enc && enc.kind === "custom" && enc.inner.nodes.length === 3 &&
+     enc.inner.edges.length === 2,
+     "an encoder's cluster lands as one nested box with the tower inside");
+  eql([enc.file, __t.bxPortDefs(enc, "in").length, __t.bxPortDefs(enc, "out").length],
+      ["models/mmproj-x.gguf", 1, 1],
+      "…with its file and the image-in / embeds-out ports");
+  __t.bxRemove(enc.id);
   // a whole model loads at the top level only
   const box = __t.bxAdd("custom", 0, 0, {});
   __t.bxEnter(box.id);

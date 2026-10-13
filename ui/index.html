@@ -7534,23 +7534,38 @@ function bxRunFix() {                          // true: the run must wait
 // Only local .gguf models are offered — a single text model, no mmproj, no
 // repo. Nothing lands before the file is chosen: the model is structured into
 // a fresh nested box at the middle of the view, as one undo step.
-function bxGGUFImportApply(canvas, file) {     // a served model -> one nested box
-  if (!canvas) return null;
+function bxGGUFImportApply(canvas, file) {     // a served structure -> one nested box
+  const nodes = (canvas && canvas.nodes) || [];
+  if (!nodes.length) return null;
+  const src = nodes.find(n => n.kind === "custom" && n.inner);
+  let inner, name = (canvas && canvas.name) || "";
+  if (src) {                                   // a model: the box it came in holds
+    inner = JSON.parse(JSON.stringify(src.inner));        // the whole structure
+    name = src.name || name;
+  } else {                                     // an encoder: the tower and its ports
+    inner = { type: "nested", version: 1,      // are the structure
+              nodes: JSON.parse(JSON.stringify(nodes)),
+              edges: JSON.parse(JSON.stringify((canvas && canvas.edges) || [])) };
+  }
   const c = bxHost();
   const r = (c && c.getBoundingClientRect) ? c.getBoundingClientRect()
                                            : { left: 0, top: 0, width: 600, height: 400 };
   const p = bxPoint({ clientX: (r.left || 0) + (r.width || 600) / 2,
                       clientY: (r.top || 0) + (r.height || 400) / 2 });
-  bxUndoLock++;                                // the box and its model: one undo step
-  const made = bxAdd("custom", p.x, p.y, {});
-  const ok = made && bxGGUFLoad(made.id, canvas, file);
+  bxUndoLock++;                                // the box and its inside: one undo step
+  const made = bxAdd("custom", p.x, p.y, name ? { name: name } : {});
+  if (!made) { bxUndoLock--; return null; }
+  if (canvas.weights) BX.weights = canvas.weights;       // its tensor registry
+  if (canvas.model) BX.model = Object.assign({}, BX.model, canvas.model);
+  made.inner = inner;
+  if (file) made.file = bxClip(String(file), 300);       // where its tensors read from
+  bxSelectBoxes([made.id]);
+  bxSettleSizes();
+  bxRender();
+  bxRenderPalette();
   bxUndoLock--;
-  if (!ok) {                                   // a model that cannot land leaves no box
-    if (made) { bxUndoLock++; bxRemove(made.id); bxUndoLock--; }
-    return null;
-  }
   bxCommit();
-  return bxNode(made.id) || BX.nodes.find(n => n.kind === "custom") || null;
+  return made;
 }
 function bxGGUFImport() {
   const m = $("bxmenu");
@@ -7563,8 +7578,7 @@ function bxGGUFImport() {
   lab.appendChild(sel);
   wrap.appendChild(lab);
   wrap.appendChild(mk("div", { class: "panehint",
-    text: "the file is structured into boxes on the canvas \u2014 a model as one "
-        + "nested box, a vision encoder as its tower" }));
+    text: "the file lands as one nested box with its structure inside" }));
   const note = mk("div", { class: "panehint", text: "reading the model list\u2026" });
   wrap.appendChild(note);
   const row = mk("div", { class: "row" });
@@ -7601,16 +7615,8 @@ function bxGGUFImport() {
     }).then(r => r.json().then(d => {
       if (!r.ok || !d.canvas) throw new Error(d.error || "the model could not be read");
       if (!bxGGUFImportApply(d.canvas, path))
-        throw new Error("the model's canvas could not land here");
+        throw new Error("the file's structure could not land here");
       bxMarkAudit(d.canvas.model && d.canvas.model.audit);
-      const why = d.summary && d.summary.vision_note;
-      if (why) {                               // the encoder beside it was refused:
-        note.textContent = why + " \u2014 the model loaded without it";
-        go.hidden = true;                      // the pop-up stays with the reason
-        cancel.textContent = "close";
-        place();
-        return;
-      }
       bxMenuClose();
     })).catch(e => {
       note.textContent = String((e && e.message) || e);

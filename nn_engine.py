@@ -56,9 +56,8 @@ def _resolve_model(model: str) -> str:
 
 # ------------------------------------------------- local models and their kinds
 # The local side draws no line between a model and its vision encoder: every
-# .gguf is classified by its own header, wherever it sits. Put a model and its
-# mmproj in the same folder and each is recognized for what it is — and the
-# loader pairs them on its own (the folder first, then the name).
+# .gguf is classified by its own header, wherever it sits. Put both in the same
+# folder and each is recognized for what it is — neither loads the other.
 MODELS_DIR = os.path.join(ENGINE_DIR, "models")
 _GGUF_KINDS = {}                    # path -> ((size, mtime), kind)
 
@@ -109,32 +108,6 @@ def local_models(root=None):
             out.append({"kind": gguf_kind(path), "name": name, "path": rel,
                         "file": path, "size_mb": round(size / 2 ** 20)})
     return out
-
-
-def _name_tokens(path):
-    base = os.path.basename(str(path or ""))
-    if base.lower().endswith(".gguf"):
-        base = base[:-5]
-    return [t for t in re.split(r"[^a-z0-9]+", base.lower()) if len(t) > 1]
-
-
-def find_mmproj(model, mmprojs):
-    """The vision encoder that belongs to a model: the one in the model's own
-    folder when there is a single one, else the best name match (a shared
-    token). None when nothing fits — a text model stays a text model."""
-    model = str(model or "")
-    mmprojs = [m for m in (mmprojs or []) if m]
-    same = [m for m in mmprojs if os.path.dirname(m) == os.path.dirname(model)]
-    if len(same) == 1:
-        return same[0]
-    toks = _name_tokens(model)
-    best, score = None, 0
-    for m in (same or mmprojs):
-        name = os.path.basename(m).lower()
-        s = sum(1 for t in toks if t in name)
-        if s > score:
-            best, score = m, s
-    return best if score > 0 else None
 
 
 # ---------------------------------------------------------------- GGUF -> canvas
@@ -1199,24 +1172,9 @@ def gguf_canvas(model, mmproj=None):
     meta["file"] = path           # the namespace every binding reads from
     canvas = build_canvas(meta, tensors)
     canvas["name"] = os.path.basename(path)
-    paired = None
-    if not mmproj:                       # its own vision encoder, if one sits by it
-        paired = find_mmproj(path, [m["file"] for m in local_models()
-                                    if m["kind"] == "mmproj"])
-        mmproj = paired
-    refused = None
-    if mmproj:
-        try:
-            _vision_cluster(canvas, mmproj)
-        except ValueError as e:          # the encoder found beside it cannot run:
-            if paired is None:
-                raise                    # the caller asked for that encoder by name
-            refused = str(e)             # the text model still loads, with the why
-    summary = dict(canvas.pop("summary") or {})
-    if refused:
-        summary["vision_note"] = refused
-        canvas.setdefault("model", {})["vision_note"] = refused
-    return {"ok": True, "canvas": canvas, "summary": summary}
+    if mmproj:                           # an encoder only when it is asked for
+        _vision_cluster(canvas, mmproj)
+    return {"ok": True, "canvas": canvas, "summary": canvas.pop("summary")}
 
 
 # ---------------------------------------------------------------- HF -> canvas

@@ -391,7 +391,7 @@ with tempfile.TemporaryDirectory() as td:
 print("gguf_canvas: the vision tower cluster rides along")
 
 # ---- the same folder holds both kinds: each .gguf is recognized on its own --
-from nn_engine import find_mmproj, gguf_canvas, gguf_kind, local_models  # noqa: E402
+from nn_engine import gguf_canvas, gguf_kind, local_models              # noqa: E402
 
 
 def _write_tiny_model(path):
@@ -423,12 +423,10 @@ with tempfile.TemporaryDirectory() as td:
                      "mmproj-tiny-model-F16.gguf": "mmproj",
                      "mmproj-nothing-F16.gguf": "mmproj"}, kinds
     assert gguf_kind(mate) == "mmproj", "the header decides, not the folder or the name"
-    # the pairing: the one beside it, then the best name match
-    assert find_mmproj(model, [mate]) == mate, "the encoder in the same folder"
-    assert find_mmproj(model, [mate, far]) == mate, "…wins over one further off"
-    assert find_mmproj(model, [far]) == far, "a name match across folders"
-    assert find_mmproj(model, [blah]) is None, "nothing shared: no pairing"
-    assert find_mmproj(model, []) is None, "no encoder, no tower"
+    # neither loads the other: a model is itself, an encoder is itself
+    built_model = gguf_canvas(model)
+    assert not [n for n in built_model["canvas"]["nodes"] if n["kind"] == "vision"], \
+        "a model never drags an encoder in"
     # an mmproj loads like any GGUF: its own structure, the tower and its ports
     built = gguf_canvas(mate)
     built_nodes = built["canvas"]["nodes"]
