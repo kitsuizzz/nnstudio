@@ -1355,6 +1355,48 @@ check("loading a repo fires nothing \u2014 and removing a box stops nothing", ()
   __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
 });
 
+check("a vision canvas lands whole: image input, tower and embeds", () => {
+  const box = __t.bxAdd("custom", 320, 0, {});
+  __t.BX.nodes.slice().forEach(x => { if (x !== box) __t.bxRemove(x.id); });
+  const served = { type: "canvas", version: 1,
+    model: { vision: { projector: "qwen3vl_merger", image_size: 768, patch_size: 16 } },
+    nodes: [
+      { id: "t", kind: "input", name: "tokens", x: 0, y: 0, dout: 1 },
+      { id: "m1", kind: "custom", name: "Qwen3.8-27B", x: 320, y: 0,
+        inner: { type: "nested", version: 1, nodes: [], edges: [] } },
+      { id: "o", kind: "output", name: "logits", x: 640, y: 0, din: 8 },
+      { id: "image", kind: "input", name: "image", x: 0, y: 400, dout: 768,
+        input_mode: "image", image: "blob:abc.png", image_size: 768, patch_size: 16,
+        image_mean: "0.5 0.5 0.5", image_std: "0.5 0.5 0.5" },
+      { id: "vision", kind: "vision", name: "Qwen3.8-27B vision", x: 320, y: 400,
+        file: "models/mmproj/mmproj-x.gguf", projector: "qwen3vl_merger",
+        d_model: 1152, heads: 16, blocks: 27, patch: 16, merge: 2,
+        image_size: 768, proj_dim: 5120, eps: 1e-6, din: 768, dout: 5120 },
+      { id: "image embeds", kind: "output", name: "image embeds", x: 640, y: 400,
+        din: 5120 },
+    ],
+    edges: [
+      { from: "t", to: "m1", fromPort: 0, toPort: 0 },
+      { from: "m1", to: "o", fromPort: 0, toPort: 0 },
+      { from: "image", to: "vision", fromPort: 0, toPort: 0 },
+      { from: "vision", to: "image embeds", fromPort: 0, toPort: 0 },
+    ] };
+  eql(__t.bxGGUFLoad(box.id, served, null, null), true, "the model loads");
+  const names = __t.BX.nodes.map(x => x.kind + ":" + x.name).join(", ");
+  ok(__t.BX.nodes.some(x => x.id === "image" && x.input_mode === "image"),
+     "…the image input lands on the canvas: " + names);
+  const tow = __t.BX.nodes.find(x => x.kind === "vision");
+  ok(tow, "…with the vision tower");
+  eql([tow.projector, tow.blocks, tow.file, tow.dout],
+      ["qwen3vl_merger", 27, "models/mmproj/mmproj-x.gguf", 5120],
+      "…which keeps its mmproj and geometry");
+  ok(__t.BX.nodes.some(x => x.id === "image embeds"), "…and the embeddings output");
+  const wired = __t.BX.edges.some(e => e.from === "image" && e.to === "vision") &&
+                __t.BX.edges.some(e => e.from === "vision" && e.to === "image embeds");
+  ok(wired, "…and the picture flows through the tower");
+  __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
+});
+
 check("the connection audit marks the boxes it blames", () => {
   const b = __t.bxAdd("custom", 0, 0, { inner: { type: "nested", version: 1,
     nodes: [{ id: "a1", kind: "layer", name: "dead fc", x: 0, y: 0, din: 1, dout: 1 }],

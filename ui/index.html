@@ -6629,6 +6629,8 @@ function bxGGUFLoad(boxId, canvas, file, repo) {   // put a built model inside a
   const textly = (canvas.nodes || []).some(n => n.kind === "tokenize" ||
                                                 n.kind === "detokenize");
   const whole = textly || !!(canvas.model && canvas.model.vision);  // a pipeline
+  if (canvas.model && canvas.model.vision && !clean)
+    return false;                              // the tower needs the whole page
   if (clean && whole) {
     // the served design *is* the whole pipeline (prompt -> tokenizer -> model
     // -> logits, tokenizer -> de-tokenizer): land it as it came — the model
@@ -7359,6 +7361,10 @@ function bxGGUFForm(boxId) {                     // pick a model, load it into t
     if (bxGGUFLoad(target.id, canvas, srcFile, lastBody && lastBody.repo)) {
       bxMarkAudit(canvas && canvas.model && canvas.model.audit);
       bxMenuClose();
+    } else if (canvas && canvas.model && canvas.model.vision) {
+      note.textContent = "the vision canvas needs a clean page \u2014 remove the "
+                       + "other boxes and wires first, then load again";
+      bxMenuPlace();
     }
   };
   const load = (body, label) => {              // one reader for both sources
