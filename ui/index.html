@@ -454,6 +454,7 @@
   .bxtip .who  { font: 10.5px var(--mono); color: var(--ink-faint); }
   .bxtip .what { font: 11.5px var(--mono); color: var(--ink); }
   .bxtip .shp  { font: 11px var(--mono); color: var(--ink-dim); }
+  .bxtip .row  { font: 11px var(--mono); color: var(--ink-dim); }
   .bxtip .note { font: 10.5px var(--mono); color: var(--ink-faint); }
   .bxmenu .mi { display: block; padding: 5px 9px; border-radius: 7px; cursor: pointer;
                 font: 12px var(--ink); font-family: inherit; color: var(--ink); }
@@ -1009,7 +1010,7 @@ let bxGuides = [], bxMarqueeRect = null;
 // A click selects (a drag never does), Delete removes the selection.
 let bxSel = null;
 let bxCopied = null, bxPasteAt = null, bxMouse = null;   // copy & paste
-let bxHotEdge = null, bxHotBadge = null, bxVisPaths = new Map();
+let bxHotEdge = null, bxHotBadge = null, bxHotBox = null, bxVisPaths = new Map();
 
 function bxId() { return "bx" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function bxNode(id) { return BX.nodes.find(n => n.id === id) || null; }
@@ -5156,14 +5157,7 @@ function bxWireKind(a, st) {                   // the data's kind, as a word
     if (sh.length <= 1 && /^[ui]\d+$/.test(dt)) return "ids";
     return sh.length <= 1 ? "vector" : "matrix";
   }
-  if (a) {                                     // before a run, the box still knows
-    if (a.kind === "input" && a.input_mode === "image") return "image";
-    if (a.kind === "input" && a.input_mode === "text") return "text";
-    if (a.kind === "tokenize") return "ids";
-    if (a.kind === "detokenize" || a.kind === "hf") return "text";
-    const p = bxPortDefs(a, "out")[0];         // its declared width: a vector
-    if (p && p.size != null) return p.size === 1 ? "number" : "vector";
-  }
+  if (a) return bxPortType(a, "out", 0).kind;  // before a run, its own dot knows
   return "matrix";
 }
 function bxWireShape(st) {                     // the shape, when there is one
@@ -5187,31 +5181,118 @@ function bxWireValue(edge) {                   // the source box's last value, a
   if (bxDataState[a.id] != null) return { node: a, st: bxDataState[a.id] };
   return { node: a, st: bxRunValues[(bxCurrentPath() || []).concat(a.id).join("/")] || null };
 }
-function bxTipShow(edge, ev) {
+function bxPortType(n, dir, i) {               // what a dot is built to carry
+  if (n.kind === "input" && dir === "out") {   // an input emits its own value
+    if (n.input_mode === "image") {
+      const s = n.image_size || null;
+      return { kind: "image",
+               shape: "[" + (s || "?") + "\u00d7" + (s || "?") + "\u00d73]" };
+    }
+    if (n.input_mode === "text") return { kind: "text", shape: null };
+  }
+  if (dir === "out") {                         // the kinds that carry text
+    if (n.kind === "tokenize") return { kind: "ids", shape: null };
+    if (n.kind === "detokenize" || n.kind === "hf") return { kind: "text", shape: null };
+  }
+  const p = bxPortDefs(n, dir)[i || 0];        // the declared width: a vector
+  const size = p && p.size != null ? p.size : null;
+  if (size == null) return { kind: "matrix", shape: null };
+  if (size === 1) return { kind: "number", shape: null };
+  return { kind: "vector", shape: "[" + size + "]" };
+}
+function bxTypeText(pt) {                      // "vector [5120]" / "image [768\u00d7768\u00d73]"
+  if (!pt) return null;
+  if (pt.kind === "text" || pt.kind === "ids") return pt.kind;
+  return pt.kind + (pt.shape ? " " + pt.shape : "");
+}
+function bxNodeValueAt(n, prefix) {            // the last run's value for this box
+  if (!prefix && bxDataState[n.id] != null) return bxDataState[n.id];
+  const path = (bxCurrentPath() || []).concat(prefix ? [prefix] : [], [n.id]).join("/");
+  return bxRunValues[path] || null;
+}
+function bxRunLine(st) {                       // how the last run's value reads
+  if (!st) return null;
+  const bits = [];
+  if (st.image) bits.push("image");
+  else if (st.text != null) bits.push("text");
+  const shp = bxWireShape(st);
+  if (shp) bits.push(shp);
+  if (st.dtype && !st.image && st.text == null) bits.push(bxDtypeShort(st.dtype));
+  return bits.length ? "last run " + bits.join(" \u00b7 ") : null;
+}
+function bxTipStart() {                        // a blank card, ready for lines
   const tip = $("bxtip");
-  if (!tip || !edge) return;
+  if (tip) tip.innerHTML = "";
+  return tip;
+}
+function bxTipAdd(tip, cls, text) {            // one line, when there is one
+  if (tip && text != null) tip.appendChild(mk("div", { class: cls, text: text }));
+}
+function bxTipDone(tip, ev) {                  // show it, by the cursor
+  if (!tip) return;
+  tip.hidden = false;
+  bxTipPlace(ev);
+}
+function bxTipShow(edge, ev) {                 // a wire: what data rides on it
+  const tip = bxTipStart();
   const a = bxNode(edge.from);
-  if (!a) { bxTipHide(); return; }
+  if (!tip || !a) { bxTipHide(); return; }
   const st = bxWireValue(edge).st;
   const kind = bxWireKind(a, st);
   const dt = st ? bxDtypeShort(st.dtype) : null;
   const numeric = kind === "matrix" || kind === "vector" || kind === "number";
   const outs = bxPortDefs(a, "out").length;
-  tip.innerHTML = "";
-  tip.appendChild(mk("div", { class: "who",
-    text: "from " + bxClip(a.name || bxKindLabel(a.kind), 26) +
-          (outs > 1 ? " \u00b7 out " + ((edge.fromPort || 0) + 1) : "") }));
-  tip.appendChild(mk("div", { class: "what",
-    text: kind + (numeric && dt ? " \u00b7 " + dt : "") }));
+  bxTipAdd(tip, "who", "from " + bxClip(a.name || bxKindLabel(a.kind), 26) +
+                       (outs > 1 ? " \u00b7 out " + ((edge.fromPort || 0) + 1) : ""));
+  bxTipAdd(tip, "what", kind + (numeric && dt ? " \u00b7 " + dt : ""));
   const shape = bxWireShape(st);
-  if (shape) tip.appendChild(mk("div", { class: "shp", text: shape }));
+  if (shape) bxTipAdd(tip, "shp", shape);
   else if (!st)
-    tip.appendChild(mk("div", { class: "note",
-      text: bxFlowSet.has(bxPathId(a.id)) ? "no value kept" : "not run yet" }));
-  tip.hidden = false;
-  bxTipPlace(ev);
+    bxTipAdd(tip, "note", bxFlowSet.has(bxPathId(a.id)) ? "no value kept" : "not run yet");
+  bxTipDone(tip, ev);
+}
+function bxTipNode(target, ev) {               // a box: its name, and what it carries
+  const tip = bxTipStart();
+  const n = bxNode(target && target.id);
+  if (!tip || !n) { bxTipHide(); return; }
+  if (target.part === "list") {                // a nested box: its own i/o boxes
+    bxTipAdd(tip, "who", "nested box");
+    bxTipAdd(tip, "what", n.name || bxKindLabel(n.kind));
+    const rows = [];
+    for (const k of bxBoundary(n, "in")) rows.push(["in", k, bxPortType(k, "out", 0)]);
+    for (const k of bxBoundary(n, "out")) rows.push(["out", k, bxPortType(k, "in", 0)]);
+    for (const r of rows.slice(0, 10))
+      bxTipAdd(tip, "row", r[0].padEnd(4) + bxClip(r[1].name || bxKindLabel(r[1].kind), 18) +
+                             (r[2] ? " \u00b7 " + bxTypeText(r[2]) : ""));
+    if (rows.length > 10)
+      bxTipAdd(tip, "note", "\u2026 and " + (rows.length - 10) + " more");
+    else if (!rows.length)
+      bxTipAdd(tip, "note", "no input or output boxes inside");
+  } else {
+    let box = n, prefix = null;                // the box itself, or one inner box
+    if (target.part === "port") {
+      box = bxBoundary(n, target.dir === "out" ? "out" : "in")[target.port || 0];
+      if (!box) { bxTipHide(); return; }
+      prefix = n.id;
+    }
+    const takes = box.kind === "output";       // an output takes, an input emits
+    const pt = bxPortType(box, takes ? "in" : "out", 0);
+    const dead = target.part === "port"
+      ? (bxBoxOff(n) || (target.dir === "out" && bxPortOff(n, "out", target.port || 0)))
+      : bxBoxOff(n);
+    bxTipAdd(tip, "who", bxKindLabel(box.kind));
+    bxTipAdd(tip, "what", box.name || bxKindLabel(box.kind));
+    bxTipAdd(tip, "shp", (takes ? "expects " : "emits ") + (bxTypeText(pt) || "?"));
+    bxTipAdd(tip, "note", bxRunLine(bxNodeValueAt(box, prefix)));
+    if (target.part === "port")
+      bxTipAdd(tip, "note", "port " + ((target.port || 0) + 1) + " of " +
+                            bxClip(n.name || bxKindLabel(n.kind), 20));
+    if (dead) bxTipAdd(tip, "note", "deactivated \u2014 no data");
+  }
+  bxTipDone(tip, ev);
 }
 function bxTipHide() {
+  bxHotBox = null;                             // the next hover starts the card fresh
   const tip = $("bxtip");
   if (tip) tip.hidden = true;
 }
@@ -5226,7 +5307,7 @@ function bxTipPlace(ev) {                      // by the cursor, inside the canv
   tip.style.top = Math.max(6, Math.min(y + 18,
     (r.height || 500) - (tip.offsetHeight || 64) - 6)) + "px";
 }
-// which wire the cursor is on (and the × that follows it)
+// which wire — or input/output box, or a nested box's dot — the cursor is on
 function bxHotMove(ev) {
   if (bxDrag || bxWire || bxBend) return;
   const t = ev.target;
@@ -5238,23 +5319,57 @@ function bxHotMove(ev) {
     ? bxFindEdge(hit.getAttribute("data-from"), hit.getAttribute("data-to"),
                  Number(hit.getAttribute("data-fp") || 0),
                  Number(hit.getAttribute("data-tp") || 0)) : null;
-  if (!edge) { if (bxHotEdge) bxHotSet(null); return; }
-  if (!bxHotEdge || bxEdgeKey(bxHotEdge) !== bxEdgeKey(edge)) bxHotSet(edge, ev);
-  else bxTipPlace(ev);                       // the card rides along the wire
+  if (edge) {
+    if (!bxHotEdge || bxEdgeKey(bxHotEdge) !== bxEdgeKey(edge)) bxHotSet(edge, ev);
+    else bxTipPlace(ev);                       // the card rides along the wire
+    return;
+  }
+  if (bxHotEdge) bxHotSet(null);               // off the wire: it lets go
+  const boxEl = t && t.closest ? t.closest(".dnode") : null;
+  const n = boxEl && boxEl.getAttribute ? bxNode(boxEl.getAttribute("data-id")) : null;
+  const target = n ? bxHoverTarget(n, t) : null;
+  if (!target) { if (bxHotBox) bxTipHide(); return; }
+  if (!bxHotBox || bxHotBox.key !== bxHotKey(target)) bxHotNode(target, ev);
+  else bxTipPlace(ev);                         // the card rides along the box
 }
-function bxHotSet(edge, ev) {
+function bxHoverTarget(n, t) {                 // which card a hovered box asks for
+  if (!n) return null;
+  if (t && t.closest && t.closest(".bxlogfo"))
+    return null;                               // a box's own window is editing space
+  if (n.kind === "input" || n.kind === "output") return { id: n.id, part: "box" };
+  if (n.kind !== "custom") return null;        // only an i/o box has a card
+  const dot = t && t.closest ? t.closest(".dport") : null;
+  const p = dot && dot.getAttribute ? dot.getAttribute("data-port") : null;
+  if (p == null) return { id: n.id, part: "list" };   // the body: the whole list
+  return { id: n.id, part: "port", port: Math.max(0, Number(p) || 0),
+           dir: String(dot.className).indexOf("out") >= 0 ? "out" : "in" };
+}
+function bxHotKey(target) {
+  return target.id + ">" + target.part + ">" + (target.dir || "") + ">" + (target.port || 0);
+}
+function bxHotUnlight() {                      // the wire's light and its × go away
   if (bxHotEdge) {
     const was = bxVisPaths.get(bxEdgeKey(bxHotEdge));
     if (was && was.classList) was.classList.remove("hot");
   }
   if (bxHotBadge && bxHotBadge.parentNode) bxHotBadge.parentNode.removeChild(bxHotBadge);
   bxHotBadge = null;
-  bxHotEdge = edge || null;
+  bxHotEdge = null;
+}
+function bxHotSet(edge, ev) {                  // a wire hover: light it, park the ×, card
+  bxHotUnlight();
+  bxHotBox = null;
   if (!edge) { bxTipHide(); return; }
+  bxHotEdge = edge;
   const vis = bxVisPaths.get(bxEdgeKey(edge));
   if (vis && vis.classList) vis.classList.add("hot");
   bxHotBadge = bxBadge(bxEdgeMid(edge), edge);      // the × sits mid-wire
   bxTipShow(edge, ev);                              // …and the data card by the cursor
+}
+function bxHotNode(target, ev) {               // a box hover: the card alone
+  bxHotUnlight();
+  bxHotBox = Object.assign({ key: bxHotKey(target) }, target);
+  bxTipNode(bxHotBox, ev);
 }
 // --------------------------------------------------------------- align assist
 // While a box is dragged it snaps to what is already on the canvas: left /
@@ -5596,9 +5711,11 @@ function bxCard(n) {
                                   "data-node": n.id, "data-port": i }));
     const hit = svg("circle", { cx: at.x, cy: at.y, r: 11, class: "dport hit " + dir,
                                 "data-node": n.id, "data-port": i });
-    hit.appendChild(svg("title", { text: dead
-      ? dir + " " + bxDim(size) + " \u2014 deactivated, no data"
-      : dir + " " + bxDim(size) + (dir === "out" ? " \u2014 drag to an input dot" : " \u2014 one wire") }));
+    // an i/o box's dots answer to the hover card instead of the browser's tip
+    if (n.kind !== "input" && n.kind !== "output" && n.kind !== "custom")
+      hit.appendChild(svg("title", { text: dead
+        ? dir + " " + bxDim(size) + " \u2014 deactivated, no data"
+        : dir + " " + bxDim(size) + (dir === "out" ? " \u2014 drag to an input dot" : " \u2014 one wire") }));
     g.appendChild(hit);
   };
   outs.forEach((p, i) => dot(bxPortPos(n, "out", i, outs.length), "out", i, p.size));

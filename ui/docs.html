@@ -215,8 +215,12 @@
     <li><b>Wire two boxes</b> — drag from a box's <b>right dot</b> (its output) to
         another box's <b>left dot</b> (its input). <b>Hover a wire</b> to read the
         data riding it — its <b>type</b> (matrix, vector, image, text, ids…), its
-        dtype and its <b>shape</b>, as the last run left them. Right-click a wire
-        to reshape or remove it.</li>
+        dtype and its <b>shape</b>, as the last run left them. The same hover on an
+        <span class="pill">input</span> or <span class="pill">output</span> box
+        names it and says what it emits or expects; a
+        <span class="pill">custom</span> box shows the input/output boxes its dots
+        stand for (hover one dot to read just that box). Right-click a wire to
+        reshape or remove it.</li>
     <li><b>Edit a box</b> — right-click it. Its menu renames it (the Train box
         excepted), changes its settings (the activation, the operation, the embedding…),
         and offers <b>freeze</b> (keep its weights fixed) and <b>off</b> (skip it on runs).</li>

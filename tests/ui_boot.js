@@ -534,6 +534,105 @@ check("hovering a wire reads out the data on it: type, dtype, shape", () => {
   eql(tip.hidden, true, "…and the card goes when the wire is let go");
 });
 
+check("hovering an input box names it and the type it emits", () => {
+  const tip = getEl("bxtip");
+  const line = cls => {
+    const hit = tip.querySelectorAll("." + cls)[0];
+    return hit ? String(hit.textContent) : null;
+  };
+  __t.bxHotSet(null);
+  const i = __t.bxAdd("input", 0, 0, { dout: 5120 });
+  __t.bxHotMove({ target: __t.bxCard(i), clientX: 140, clientY: 90 });
+  eql(tip.hidden, false, "the card shows over the box");
+  eql(line("who"), "input", "…it names the kind");
+  eql(line("what"), i.name, "…and the box's name");
+  eql(line("shp"), "emits vector [5120]", "…and the type it will emit");
+  eql(line("note"), null, "no run value yet: " + line("note"));
+  // the run's own shape rides under the expectation
+  __t.bxRunValues = { [i.id]: { shape: [4, 5120], dtype: "f32", mean: 1, peek: [1] } };
+  __t.bxHotSet(null);
+  __t.bxHotMove({ target: __t.bxCard(i), clientX: 140, clientY: 90 });
+  eql(line("note"), "last run [4×5120] · f32",
+      "…with the last run's own shape: " + line("note"));
+  // the box's own window is editing space: no card there
+  const fo = __t.bxCard(i).querySelectorAll(".bxlogfo")[0];
+  __t.bxHotSet(null);
+  __t.bxHotMove({ target: fo, clientX: 140, clientY: 90 });
+  eql(tip.hidden, true, "…and the card stays out of the box's own window");
+  __t.bxRunValues = {};
+  __t.bxHotSet(null);
+  __t.bxRemove(i.id);
+  // an image input knows the picture's shape
+  const im = __t.bxAdd("input", 0, 0, { input_mode: "image", dout: 3 });
+  im.image_size = 512;                       // set by the editor, not at add time
+  __t.bxHotMove({ target: __t.bxCard(im), clientX: 140, clientY: 90 });
+  eql(line("shp"), "emits image [512×512×3]",
+      "an image input emits its picture: " + line("shp"));
+  __t.bxHotSet(null);
+  __t.bxRemove(im.id);
+});
+
+check("hovering an output box says what it expects", () => {
+  const tip = getEl("bxtip");
+  const line = cls => {
+    const hit = tip.querySelectorAll("." + cls)[0];
+    return hit ? String(hit.textContent) : null;
+  };
+  __t.bxHotSet(null);
+  const o = __t.bxAdd("output", 0, 0, { din: 128 });
+  __t.bxHotMove({ target: __t.bxCard(o), clientX: 140, clientY: 90 });
+  eql(line("who"), "output", "the card names the kind");
+  eql(line("what"), o.name, "…and the box's name");
+  eql(line("shp"), "expects vector [128]", "…and what it takes");
+  __t.bxRunValues = { [o.id]: { shape: [64, 64, 3], dtype: "f32",
+                                image: { w: 64, h: 64, blob: "" } } };
+  __t.bxHotSet(null);
+  __t.bxHotMove({ target: __t.bxCard(o), clientX: 140, clientY: 90 });
+  eql(line("note"), "last run image · [64×64×3]",
+      "…a picture that arrived: " + line("note"));
+  __t.bxRunValues = {};
+  __t.bxHotSet(null);
+  __t.bxRemove(o.id);
+});
+
+check("a nested box's dots and body read as its own i/o boxes", () => {
+  const tip = getEl("bxtip");
+  const line = cls => {
+    const hit = tip.querySelectorAll("." + cls)[0];
+    return hit ? String(hit.textContent) : null;
+  };
+  __t.bxHotSet(null);
+  const c = __t.bxAdd("custom", 400, 0, { name: "Inner-Model" });
+  c.inner = { type: "nested", version: 1,
+    nodes: [
+      { id: "k1", kind: "input", name: "tokens", x: 0, y: 0, dout: 12 },
+      { id: "k2", kind: "output", name: "head", x: 320, y: 0, din: 128 }],
+    edges: [{ from: "k1", to: "k2" }] };
+  const g = __t.bxCard(c);
+  const dot = g.querySelectorAll(".dport").find(d => String(d.className).indexOf(" in") >= 0);
+  ok(dot, "the nested card has an in dot");
+  __t.bxHotMove({ target: dot, clientX: 120, clientY: 80 });
+  eql(line("who"), "input", "a dot reads as the inner input box");
+  eql(line("what"), "tokens", "…its name");
+  eql(line("shp"), "emits vector [12]", "…and what it emits");
+  eql(line("note"), "port 1 of Inner-Model", "…and which dot it is");
+  __t.bxHotSet(null);
+  __t.bxHotMove({ target: g, clientX: 120, clientY: 80 });
+  eql(line("who"), "nested box", "the body lists its dots");
+  eql(line("what"), "Inner-Model", "…under the box's name");
+  eql(tip.querySelectorAll(".row").map(r => String(r.textContent)),
+      ["in  tokens · vector [12]", "out head · vector [128]"],
+      "…one row per dot, the inner boxes' own metadata");
+  const outDot = g.querySelectorAll(".dport").find(d => String(d.className).indexOf(" out") >= 0);
+  __t.bxHotSet(null);
+  __t.bxHotMove({ target: outDot, clientX: 120, clientY: 80 });
+  eql(line("who"), "output", "an out dot reads as the inner output box");
+  eql(line("shp"), "expects vector [128]", "…and what it takes");
+  eql(line("note"), "port 1 of Inner-Model", "…port 1 of the nested box");
+  __t.bxHotSet(null);
+  __t.bxRemove(c.id);
+});
+
 check("a wire can be shaped: bend it, snap it straight, reset it", () => {
   const a = __t.BX.nodes.find(n => n.kind === "input");
   const l = __t.BX.nodes.find(n => n.kind === "layer");
