@@ -5144,7 +5144,6 @@ function bxBadge(p, edge) {
   const g = svg("g", { class: "bxdel", transform: "translate(" + p.x + " " + p.y + ")" });
   g.appendChild(svg("circle", { cx: 0, cy: 0, r: 9 }));
   g.appendChild(svgText(0, 4, "×", "bxdelx"));
-  g.appendChild(svg("title", { text: "delete this wire" }));
   g.addEventListener("mousedown", (ev) => { ev.stopPropagation(); ev.preventDefault(); });
   g.addEventListener("click", (ev) => {
     if (ev.stopPropagation) ev.stopPropagation();
@@ -5266,6 +5265,9 @@ function bxTipShow(edge, ev) {                 // a wire: what data rides on it
   if (shape) bxTipAdd(tip, "shp", shape);
   else if (!st)
     bxTipAdd(tip, "note", bxFlowSet.has(bxPathId(a.id)) ? "no value kept" : "not run yet");
+  const wstate = bxWireState(edge);            // what the size check found
+  if (wstate === "bad") bxTipAdd(tip, "note", "size mismatch: " + bxEdgeMismatch(edge));
+  else if (wstate === "unknown") bxTipAdd(tip, "note", "its sizes are still unknown");
   bxTipDone(tip, ev);
 }
 function bxTipNode(target, ev) {               // a box: its name, and what it carries
@@ -5528,101 +5530,6 @@ function bxCard(n) {
                             (bxRunErr && bxRunErr.ids && bxRunErr.ids.has(n.id) ? " runerr" : "") +
                             (bxAudit && bxAudit.ids && bxAudit.ids.has(n.id) ? " audit" : ""),
                        "data-id": n.id });
-  // one tooltip with every reason: the first title child is the one shown
-  const notes = [];
-  if (n.kind === "script") notes.push("python script \u2014 runs on the backend CPU "
-                                      + "(input prep / output post-processing)");
-  if (n.kind === "input" && n.input_mode === "matrix")
-    notes.push("matrix input: the numbers it carries \u2014 one row per line");
-  else if (n.kind === "input" && n.input_mode === "text")
-    notes.push("text input: a string \u2014 wire it into a tokenizer");
-  else if (n.kind === "input" && n.input_mode === "image")
-    notes.push("image input: " + (n.image ? "the picture rides with the run"
-                                          : "pick an image in the box"));
-  {
-    const st = bxDataState[n.id];              // what the last run left here
-    if (st) {
-      const bits = [];
-      if ((st.shape || []).length) bits.push("shape [" + st.shape.join("\u00d7") + "]");
-      if (st.mean != null) bits.push("\u03bc " + bxNumText(st.mean));
-      notes.push("data: " + (bxStateText(st) || "?")
-                 + (bits.length ? " \u2014 " + bits.join(" \u00b7 ") : ""));
-    }
-    if (bxRunErr && bxRunErr.ids && bxRunErr.ids.has(n.id))
-      notes.push(bxRunErr.here === n.id
-                 ? "the run failed here \u2014 " + bxRunErr.msg
-                 : "the run failed inside this box \u2014 " + bxRunErr.msg);
-  }
-  if (n.kind === "tokenize" || n.kind === "detokenize") {
-    if (n.repo)
-      notes.push("huggingface tokenizer: " + n.repo
-                 + (n.tokens != null ? " \u00b7 " + n.tokens + " tokens" : ""));
-    else if (n.kind === "tokenize")
-      notes.push("text \u2192 token ids \u2014 a character vocabulary of "
-                 + String(n.vocab || "").length + " (chars outside it are skipped)");
-    else
-      notes.push("token ids \u2192 text \u2014 a character vocabulary of "
-                 + String(n.vocab || "").length);
-    if (n.kind === "detokenize")
-      notes.push("its output is the text \u2014 it shows on the card after a run");
-  }
-  if (n.kind === "hf") {
-    notes.push(n.repo
-      ? "huggingface model: " + n.repo + " \u2014 text in, the next token's text out"
-      : "no huggingface repo set \u2014 right-click \u2192 set the model \u2026");
-    notes.push("the backend loads it on the first run (it downloads once)"
-               + (n.temperature ? " \u00b7 sampled at t " + n.temperature : " \u00b7 greedy"));
-  }
-  if (n.kind === "custom" && n.gguf && BX.model && BX.model.fidelity)
-    notes.push(BX.model.arc ? "exact \u2014 researched and kept in the hf_arc database"
-      : BX.model.fidelity === "exact"
-        ? "exact \u2014 built from the " + (BX.model.spec || "?") + " spec, conformance-verified"
-        : "approximate \u2014 no verified spec for this family yet");
-  if (n.kind === "agent")
-    notes.push("an agent box runs and watches an agent's task \u2014 double-click it "
-               + "for the list and its live log");
-  if (bxAudit && bxAudit.notes && bxAudit.notes[n.id])
-    bxAudit.notes[n.id].forEach(t => notes.push("connection: " + t));
-  if (n.kind === "sample")
-    notes.push("logits \u2192 one id: the last position's distribution is sampled "
-               + "(temperature " + (n.temperature != null ? n.temperature : 0)
-               + ", seed " + (n.sample_seed != null ? n.sample_seed : 1)
-               + "; 0 is greedy)");
-  if (n.t) {
-    const ns = bxWeightNs(n);
-    const w = ns ? (BX.weights || {})[ns] : null;
-    const sh = bxSharedCount(n);
-    notes.push((n.file ? "weights from " + String(n.file).split("/").pop()
-                       : "GGUF tensor")
-               + (w ? " (" + w.dtype + " \u00b7 " + bxGB(w.bytes || 0) + ")"
-                    : (n.dtype ? " (" + n.dtype + ")" : ""))
-               + ": " + n.t
-               + (sh > 1 ? " (shared \u00d7" + sh + " \u2014 loaded once)"
-                  : (n.shared ? " (shared weight \u2014 counted once)" : "")));
-    if (w && w.shape)
-      notes.push("registry: " + w.shape.join(" \u00d7 ")
-                 + (w.params ? " \u00b7 " + bxBig(w.params) + " params" : ""));
-    else if (Object.keys(BX.weights || {}).length)
-      notes.push("\u26a0 not in the model's weight registry \u2014 its binding cannot load");
-  }
-  if (n.kind === "custom" && !n.file) {
-    if (bxMissingFiles(n, null) > 0)
-      notes.push("no model file bound \u2014 load its GGUF again (Palette \u2192 gguf)");
-    else if (n.gguf)
-      notes.push("empty \u2014 pick a GGUF model from the palette");
-  }
-  if (off) notes.push(n.off ? "deactivated \u2014 no data flows in"
-                 : bxInnerOutOff(n) ? "inactive \u2014 an output inside it is deactivated"
-                 : "inactive \u2014 a box above it is deactivated");
-  if (frozen) notes.push("frozen \u2014 its weights stay during training");
-  if (n.place === "system") notes.push("loads on the system ram \u2014 offloaded from the gpu");
-  else if (n.place === "gpu") notes.push("loads on the gpu");
-  if (err) notes.push(bxBoxErrorText(n) || "this box is in error");
-  if (warned) notes.push("fed by a deactivated box \u2014 its output carries no data");
-  notes.push(bxKindLabel(n.kind) + " \u00b7 " + n.name + " \u00b7 " + bxShape(n) +
-    (n.kind === "custom" ? " \u2014 double-click to go inside" : "") +
-    " \u2014 drag to move \u00b7 right-click for the menu");
-  g.appendChild(svg("title", { text: notes.join(" \u00b7 ") }));
   const ins = bxPortDefs(n, "in"), outs = bxPortDefs(n, "out");
   // an input dot whose feed is a deactivated output starves: amber ring
   const starved = new Set();
@@ -5723,11 +5630,6 @@ function bxCard(n) {
                                   "data-node": n.id, "data-port": i }));
     const hit = svg("circle", { cx: at.x, cy: at.y, r: 11, class: "dport hit " + dir,
                                 "data-node": n.id, "data-port": i });
-    // an i/o box's dots answer to the hover card instead of the browser's tip
-    if (n.kind !== "input" && n.kind !== "output" && n.kind !== "custom")
-      hit.appendChild(svg("title", { text: dead
-        ? dir + " " + bxDim(size) + " \u2014 deactivated, no data"
-        : dir + " " + bxDim(size) + (dir === "out" ? " \u2014 drag to an input dot" : " \u2014 one wire") }));
     g.appendChild(hit);
   };
   outs.forEach((p, i) => dot(bxPortPos(n, "out", i, outs.length), "out", i, p.size));
@@ -5783,10 +5685,6 @@ function bxRender() {
                     "data-from": e.from, "data-to": e.to,
                     "data-fp": e.fromPort || 0, "data-tp": e.toPort || 0 };
     const vis = svg("path", attrs);
-    vis.appendChild(svg("title", { text: state === "bad"
-      ? "size mismatch: " + bxEdgeMismatch(e)
-      : (state === "unknown" ? "both sizes are still unknown — configure one of them"
-                             : "sizes match") }));
     bxVisPaths.set(bxEdgeKey(e), vis);
     root.appendChild(vis);
     const hitAttrs = {};

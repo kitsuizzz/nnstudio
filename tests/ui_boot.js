@@ -633,6 +633,32 @@ check("a nested box's dots and body read as its own i/o boxes", () => {
   __t.bxRemove(c.id);
 });
 
+check("no browser tooltips are left on the canvas", () => {
+  const i = __t.bxAdd("input", 0, 0, { dout: 4 });
+  const l = __t.bxAdd("layer", 200, 0, { din: 4, dout: 4 });
+  const o = __t.bxAdd("output", 400, 0, { din: 4 });
+  __t.bxConnect(i.id, l.id);
+  __t.bxConnect(l.id, o.id);
+  __t.bxRender();
+  const titles = (root) => {
+    const out = [];
+    (function walk(e) {
+      for (const c of e.children || []) {
+        if (String(c.id) === "<title>") out.push(c);
+        walk(c);
+      }
+    })(root);
+    return out;
+  };
+  eql(titles(getEl("bxcanvas")).length, 0,
+      "no <title> on a box, a dot or a wire after a render");
+  const e = __t.BX.edges.find(x => x.from === i.id && x.to === l.id);
+  __t.bxHotSet(e, { clientX: 120, clientY: 90 });
+  eql(titles(getEl("bxcanvas")).length, 0, "\u2026and the hover card adds none");
+  __t.bxHotSet(null);
+  [i, l, o].forEach(x => __t.bxRemove(x.id));   // only what this check added
+});
+
 check("a wire can be shaped: bend it, snap it straight, reset it", () => {
   const a = __t.BX.nodes.find(n => n.kind === "input");
   const l = __t.BX.nodes.find(n => n.kind === "layer");
