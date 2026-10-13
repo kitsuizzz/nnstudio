@@ -200,7 +200,8 @@ globalThis.__t = {
   bxMenuBuild, bxMenuClose, bxClip, bxShape, bxtExport, bxtImport, bxtForm, bxtRefresh,
   bxWeightsForm, bxWeightsApply, bxWeightsExportForm, bxWeightScore, bxTensorDims,
   bxTensorDtype, bxApplyManifest,
-  bxtFilesToggle, bxtFilesClose, bxtPaletteToggle, bxtImportToggle, bxImportGGUF, bxtVramToggle,
+  bxtFilesToggle, bxtFilesClose, bxtDropsClose, bxtPaletteToggle, bxtImportToggle, bxImportGGUF,
+  bxtVramToggle,
   bxtBackendToggle, bxtBackendPick, get BX_BACKEND() { return BX_BACKEND; },
   bxtRunToggle, bxtRunRefresh, bxtRunSync, bxtRunEnabled, bxtRunGo, bxtRunLoad, bxFlowVerify,
   bxtRunOffload,
@@ -798,6 +799,32 @@ check("the Import menu: one door to load a GGUF model", () => {
   __t.bxLeave();
   __t.bxtRefresh();
   __t.bxRemove(box.id);
+});
+
+check("a toolbar menu opens under its own button, not the strip's left", () => {
+  const strip = getEl("bxtools");
+  const files = getEl("bxtFiles"), imp = getEl("bxtImport"), men = getEl("bxtImportMenu");
+  const keep = { strip: strip.getBoundingClientRect, files: files.getBoundingClientRect,
+                 imp: imp.getBoundingClientRect, w: men.offsetWidth };
+  strip.getBoundingClientRect = () => ({ left: 0, top: 0, width: 900, height: 36 });
+  files.getBoundingClientRect = () => ({ left: 10, top: 0, width: 58, height: 26 });
+  imp.getBoundingClientRect = () => ({ left: 210, top: 0, width: 70, height: 26 });
+  men.offsetWidth = 180;
+  __t.bxtDropsClose();
+  __t.bxtImportToggle();
+  eql(men.style.left, "210px", "Import's menu lines up with Import");
+  __t.bxtDropsClose();
+  __t.bxtFilesToggle();
+  eql(getEl("bxtFilesMenu").style.left, "10px", "\u2026and Files' with Files");
+  __t.bxtDropsClose();
+  getEl("bxtVramMenu").style.left = "";
+  __t.bxtVramToggle();
+  eql(getEl("bxtVramMenu").style.left, "", "the right-anchored VRAM menu is left alone");
+  __t.bxtDropsClose();
+  strip.getBoundingClientRect = keep.strip;    // the stubs go back untouched
+  files.getBoundingClientRect = keep.files;
+  imp.getBoundingClientRect = keep.imp;
+  men.offsetWidth = keep.w;
 });
 
 check("a Palette card: a click drops it in the middle, a drag lands where you let go", () => {

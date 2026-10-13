@@ -6058,17 +6058,29 @@ function bxtDropsClose(keep) {
   }
 }
 function bxtFilesClose() { bxtDropsClose(); }
-function bxtToggle(id) {
+function bxtPlace(menuId, btnId) {             // under its own button, not the strip's left
+  if (!btnId) return;
+  const m = $(menuId), b = $(btnId), w = $("bxtools");
+  if (!m || !b || !w || !m.style) return;
+  if (m.classList && m.classList.contains("bxtdrop-r")) return;   // the right-anchored one
+  const br = b.getBoundingClientRect ? b.getBoundingClientRect() : null;
+  const wr = w.getBoundingClientRect ? w.getBoundingClientRect() : null;
+  if (!br || !wr) return;
+  const max = Math.max(6, (wr.width || 900) - (m.offsetWidth || 200) - 6);
+  m.style.left = Math.max(6, Math.min(Math.round((br.left || 0) - (wr.left || 0)), max)) + "px";
+}
+function bxtToggle(id, btnId) {
   const m = $(id);
   if (!m) return false;
   const open = !!m.hidden;                     // it was hidden: this opens it
   bxtDropsClose(id);
   m.hidden = !open;
+  if (open) bxtPlace(id, btnId);               // the strip's left edge is not an address
   return open;
 }
-function bxtFilesToggle() { return BX.up ? false : bxtToggle("bxtFilesMenu"); }
-function bxtPaletteToggle() { return bxtToggle("bxtPalMenu"); }
-function bxtImportToggle() { return BX.up ? false : bxtToggle("bxtImportMenu"); }
+function bxtFilesToggle() { return BX.up ? false : bxtToggle("bxtFilesMenu", "bxtFiles"); }
+function bxtPaletteToggle() { return bxtToggle("bxtPalMenu", "bxtPalette"); }
+function bxtImportToggle() { return BX.up ? false : bxtToggle("bxtImportMenu", "bxtImport"); }
 function bxImportGGUF() {                      // Import \u2192 a whole model, in the middle
   if (BX.up) return null;                      // a model loads at the top level only
   return bxDropPalette("gguf", null);          // lands the box, then opens the picker
@@ -6096,7 +6108,7 @@ function bxtBackendPick(mode) {
   bxtBackendRender();
 }
 function bxtBackendToggle() {
-  const open = bxtToggle("bxtBackendMenu");
+  const open = bxtToggle("bxtBackendMenu", "bxtBackend");
   if (open) bxtBackendRender();
   return open;
 }
@@ -8723,7 +8735,10 @@ function bxSeedBlank() {
   }, { passive: false });
   window.addEventListener("mousemove", bxMove);
   window.addEventListener("mouseup", bxUp);
-  window.addEventListener("resize", () => bxRender());
+  window.addEventListener("resize", () => {
+    bxRender();
+    bxtDropsClose();                           // a moved strip leaves its menus behind
+  });
   document.addEventListener("mousedown", (ev) => {
     const m = $("bxmenu");
     if (!m || m.hidden) return;
