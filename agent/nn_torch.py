@@ -533,8 +533,24 @@ def _stat(v):
     return round(v, 4) if math.isfinite(v) else None
 
 
+# torch's storage types, in the picker's own short names (ui/index.html)
+_DTYPE_SHORT = {
+    "float64": "f64", "float32": "f32", "bfloat16": "bf16", "float16": "f16",
+    "float8_e4m3fn": "f8_e4m3", "float8_e5m2": "f8_e5m2",
+    "int64": "i64", "int32": "i32", "int16": "i16", "int8": "i8",
+    "uint8": "u8", "bool": "bool",
+}
+
+
+def dtype_short(dt):
+    """A torch dtype in the app's short names: f32, i64 … (anything else as-is,
+    so a new torch type still reads)."""
+    s = str(dt).replace("torch.", "")
+    return _DTYPE_SHORT.get(s, s)
+
+
 def tensor_stats(t, peek=8):
-    """The little summary a card pill knows: shape, three numbers, a peek."""
+    """The little summary a card pill knows: shape, dtype, three numbers, a peek."""
     if t is None:
         return None
     if isinstance(t, dict):                     # a nested box's port values
@@ -543,14 +559,16 @@ def tensor_stats(t, peek=8):
             return None
     if not torch.is_tensor(t):
         return None                             # a de-tokenizer's text has no stats
+    dt = dtype_short(t.dtype)                   # the value's own type, before the cast
     with torch.no_grad():
         x = t.detach().float()
         flat = x.reshape(-1)
         if flat.numel() == 0:
-            return {"shape": list(x.shape), "mean": None, "min": None, "max": None,
-                    "scalar": None, "peek": []}
+            return {"shape": list(x.shape), "dtype": dt, "mean": None, "min": None,
+                    "max": None, "scalar": None, "peek": []}
         return {
             "shape": list(x.shape),
+            "dtype": dt,
             "mean": _stat(x.mean()),
             "min": _stat(x.min()),
             "max": _stat(x.max()),

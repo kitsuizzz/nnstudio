@@ -218,6 +218,7 @@ globalThis.__t = {
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
   bxRunFeeds, bxInputFill, bxInputExpand, bxOutputFill, bxOutputExpand, bxPaneFill,
+  bxHotSet, bxHotMove, bxTipHide,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
   bxTableRead, bxTableWrite, bxTableType, bxTableSetCell, bxTableRenameCol,
   bxTableInsertCol, bxTableDeleteCol, bxTableAddRow, bxTableDeleteRow,
@@ -492,6 +493,45 @@ check("the delete × sits in the middle of the wire", () => {
   eql(Math.round(m.y), 140, "on the wire's line (y + half a card)");
   const m2 = __t.bxWireMid({ x: 0, y: 100 }, { x: 168, y: 100 });
   ok(m2.x >= 160 && m2.x <= 200, "a very short wire still parks it sensibly: " + Math.round(m2.x));
+});
+
+check("hovering a wire reads out the data on it: type, dtype, shape", () => {
+  const a = __t.BX.nodes.find(n => n.kind === "input");
+  const e = __t.BX.edges[0];
+  const tip = getEl("bxtip");
+  const line = cls => {
+    const hit = tip.querySelectorAll("." + cls)[0];
+    return hit ? String(hit.textContent) : null;
+  };
+  const ev = { clientX: 200, clientY: 120 };
+  __t.bxHotSet(e, ev);
+  eql(tip.hidden, false, "the card shows while the wire is hot");
+  eql(line("who"), "from " + a.name, "…it names where the data comes from");
+  eql(line("what"), "vector", "…and its kind before a run: " + line("what"));
+  eql(line("note"), "not run yet", "…saying no value is there yet");
+  eql(tip.style.left, "216px", "…placed by the cursor (x): " + tip.style.left);
+  // after a run the card carries the type, the dtype and the shape
+  const path = a.id;
+  __t.bxRunValues = { [path]: { shape: [12], dtype: "i64", mean: 2, peek: [1, 2] } };
+  __t.bxHotSet(e, ev);
+  eql(line("what"), "ids", "an integer vector reads as ids: " + line("what"));
+  eql(line("shp"), "[12]", "…with its shape");
+  __t.bxRunValues = { [path]: { shape: [4, 8], dtype: "f32", mean: 0, peek: [0] } };
+  __t.bxHotSet(e, ev);
+  eql(line("what"), "matrix \u00b7 f32", "a matrix carries its dtype: " + line("what"));
+  eql(line("shp"), "[4\u00d78]", "…and its shape");
+  __t.bxRunValues = { [path]: { text: "the cat sat on the mat" } };
+  __t.bxHotSet(e, ev);
+  eql(line("what"), "text", "a string reads as text");
+  ok(String(line("shp")).indexOf("the cat sat") > 0, "…shown, not measured: " + line("shp"));
+  __t.bxRunValues = { [path]: { shape: [64, 64, 3], dtype: "f32",
+                                image: { w: 64, h: 64, blob: "" } } };
+  __t.bxHotSet(e, ev);
+  eql(line("what"), "image", "a picture reads as an image");
+  eql(line("shp"), "[64\u00d764\u00d73]", "…as an RGB matrix");
+  __t.bxRunValues = {};
+  __t.bxHotSet(null);
+  eql(tip.hidden, true, "…and the card goes when the wire is let go");
 });
 
 check("a wire can be shaped: bend it, snap it straight, reset it", () => {

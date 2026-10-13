@@ -446,6 +446,15 @@
             background: rgba(20,20,20,.98); border: 1px solid var(--panel-brd);
             border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.5); }
   .bxmenu[hidden] { display: none; }
+  .bxtip { position: absolute; z-index: 7; max-width: 260px; padding: 6px 9px;
+           background: rgba(20,20,20,.98); border: 1px solid var(--panel-brd);
+           border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.45);
+           pointer-events: none; }
+  .bxtip[hidden] { display: none; }
+  .bxtip .who  { font: 10.5px var(--mono); color: var(--ink-faint); }
+  .bxtip .what { font: 11.5px var(--mono); color: var(--ink); }
+  .bxtip .shp  { font: 11px var(--mono); color: var(--ink-dim); }
+  .bxtip .note { font: 10.5px var(--mono); color: var(--ink-faint); }
   .bxmenu .mi { display: block; padding: 5px 9px; border-radius: 7px; cursor: pointer;
                 font: 12px var(--ink); font-family: inherit; color: var(--ink); }
   .bxmenu .mi:hover { background: rgba(255,255,255,.07); }
@@ -936,6 +945,7 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
       <div class="bxwrap" id="bxwrap">
         <div class="flowsvg" id="bxcanvas"></div>
         <div class="bxmenu" id="bxmenu" hidden></div>
+        <div class="bxtip" id="bxtip" hidden></div>
       </div>
     </div>
   </section>
@@ -5129,6 +5139,93 @@ function bxBadge(p, edge) {
   root.appendChild(g);
   return g;
 }
+// ---- the wire's hover card: every connection carries data, and the last run
+// left a type and a shape for most of it. The card follows the cursor while a
+// wire is hot — the same hover that lights the wire and parks the × on it.
+function bxDtypeShort(dt) {
+  const s = String(dt == null ? "" : dt).replace(/^torch\./, "");
+  return s || null;
+}
+function bxWireKind(a, st) {                   // the data's kind, as a word
+  if (st && st.image) return "image";
+  if (st && st.text != null) return "text";
+  if (st) {
+    const sh = (st.shape || []).map(Number);
+    const dt = bxDtypeShort(st.dtype) || "";
+    if (sh.length <= 1 && st.scalar != null) return "number";
+    if (sh.length <= 1 && /^[ui]\d+$/.test(dt)) return "ids";
+    return sh.length <= 1 ? "vector" : "matrix";
+  }
+  if (a) {                                     // before a run, the box still knows
+    if (a.kind === "input" && a.input_mode === "image") return "image";
+    if (a.kind === "input" && a.input_mode === "text") return "text";
+    if (a.kind === "tokenize") return "ids";
+    if (a.kind === "detokenize" || a.kind === "hf") return "text";
+    const p = bxPortDefs(a, "out")[0];         // its declared width: a vector
+    if (p && p.size != null) return p.size === 1 ? "number" : "vector";
+  }
+  return "matrix";
+}
+function bxWireShape(st) {                     // the shape, when there is one
+  if (!st) return null;
+  if (st.text != null) return "\u201c" + bxClip(st.text, 36) + "\u201d";
+  const sh = (st.shape || []).map(Number);
+  if (st.scalar != null && sh.length <= 1) return bxNumText(st.scalar);
+  if (sh.length) return "[" + sh.join("\u00d7") + "]";
+  if (st.image)
+    return "[" + (st.image.h || "?") + "\u00d7" + (st.image.w || "?") + "\u00d73]";
+  return null;
+}
+function bxWireValue(edge) {                   // the source box's last value, any level
+  const a = bxNode(edge.from);
+  if (!a) return { node: null, st: null };
+  if (a.kind === "custom") {                   // a port is an output box inside
+    const k = bxBoundary(a, "out")[edge.fromPort || 0];
+    const path = k ? (bxCurrentPath() || []).concat(a.id, k.id).join("/") : null;
+    return { node: a, st: path ? (bxRunValues[path] || null) : null };
+  }
+  if (bxDataState[a.id] != null) return { node: a, st: bxDataState[a.id] };
+  return { node: a, st: bxRunValues[(bxCurrentPath() || []).concat(a.id).join("/")] || null };
+}
+function bxTipShow(edge, ev) {
+  const tip = $("bxtip");
+  if (!tip || !edge) return;
+  const a = bxNode(edge.from);
+  if (!a) { bxTipHide(); return; }
+  const st = bxWireValue(edge).st;
+  const kind = bxWireKind(a, st);
+  const dt = st ? bxDtypeShort(st.dtype) : null;
+  const numeric = kind === "matrix" || kind === "vector" || kind === "number";
+  const outs = bxPortDefs(a, "out").length;
+  tip.innerHTML = "";
+  tip.appendChild(mk("div", { class: "who",
+    text: "from " + bxClip(a.name || bxKindLabel(a.kind), 26) +
+          (outs > 1 ? " \u00b7 out " + ((edge.fromPort || 0) + 1) : "") }));
+  tip.appendChild(mk("div", { class: "what",
+    text: kind + (numeric && dt ? " \u00b7 " + dt : "") }));
+  const shape = bxWireShape(st);
+  if (shape) tip.appendChild(mk("div", { class: "shp", text: shape }));
+  else if (!st)
+    tip.appendChild(mk("div", { class: "note",
+      text: bxFlowSet.has(bxPathId(a.id)) ? "no value kept" : "not run yet" }));
+  tip.hidden = false;
+  bxTipPlace(ev);
+}
+function bxTipHide() {
+  const tip = $("bxtip");
+  if (tip) tip.hidden = true;
+}
+function bxTipPlace(ev) {                      // by the cursor, inside the canvas
+  const tip = $("bxtip"), w = $("bxwrap");
+  if (!tip || !w || tip.hidden || !ev) return;
+  const r = w.getBoundingClientRect
+    ? w.getBoundingClientRect() : { left: 0, top: 0, width: 900, height: 500 };
+  const x = (ev.clientX || 0) - (r.left || 0), y = (ev.clientY || 0) - (r.top || 0);
+  tip.style.left = Math.max(6, Math.min(x + 16,
+    (r.width || 900) - (tip.offsetWidth || 200) - 6)) + "px";
+  tip.style.top = Math.max(6, Math.min(y + 18,
+    (r.height || 500) - (tip.offsetHeight || 64) - 6)) + "px";
+}
 // which wire the cursor is on (and the × that follows it)
 function bxHotMove(ev) {
   if (bxDrag || bxWire || bxBend) return;
@@ -5142,9 +5239,10 @@ function bxHotMove(ev) {
                  Number(hit.getAttribute("data-fp") || 0),
                  Number(hit.getAttribute("data-tp") || 0)) : null;
   if (!edge) { if (bxHotEdge) bxHotSet(null); return; }
-  if (!bxHotEdge || bxHotEdge.from !== edge.from || bxHotEdge.to !== edge.to) bxHotSet(edge);
+  if (!bxHotEdge || bxEdgeKey(bxHotEdge) !== bxEdgeKey(edge)) bxHotSet(edge, ev);
+  else bxTipPlace(ev);                       // the card rides along the wire
 }
-function bxHotSet(edge) {
+function bxHotSet(edge, ev) {
   if (bxHotEdge) {
     const was = bxVisPaths.get(bxEdgeKey(bxHotEdge));
     if (was && was.classList) was.classList.remove("hot");
@@ -5152,10 +5250,11 @@ function bxHotSet(edge) {
   if (bxHotBadge && bxHotBadge.parentNode) bxHotBadge.parentNode.removeChild(bxHotBadge);
   bxHotBadge = null;
   bxHotEdge = edge || null;
-  if (!edge) return;
+  if (!edge) { bxTipHide(); return; }
   const vis = bxVisPaths.get(bxEdgeKey(edge));
   if (vis && vis.classList) vis.classList.add("hot");
   bxHotBadge = bxBadge(bxEdgeMid(edge), edge);      // the × sits mid-wire
+  bxTipShow(edge, ev);                              // …and the data card by the cursor
 }
 // --------------------------------------------------------------- align assist
 // While a box is dragged it snaps to what is already on the canvas: left /
@@ -5537,6 +5636,7 @@ function bxRender() {
   bxVisPaths = new Map();
   bxHotEdge = null;
   bxHotBadge = null;
+  bxTipHide();                             // a redraw takes the hover card with it
   bxErrBoxes = bxErrorSet({ nodes: BX.nodes, edges: BX.edges });
   bxWarnBoxes = bxWarnSet({ nodes: BX.nodes, edges: BX.edges });
   bxTrainTint = bxTrainTintInfo();              // the training signal's marks
@@ -5641,6 +5741,7 @@ function bxMenuClose() {
 function bxMenuAt_(x, y) { bxMenuAt = { x, y }; }
 function bxMenu(ev) {
   ev.preventDefault();
+  bxTipHide();
   const w = $("bxwrap"), m = $("bxmenu");
   if (!w || !m) return;
   const r = w.getBoundingClientRect ? w.getBoundingClientRect() : { left: 0, top: 0 };
@@ -8391,6 +8492,7 @@ function bxDblClick(ev) {
 }
 function bxDown(ev) {
   if (ev.button != null && ev.button !== 0) return;
+  bxTipHide();                             // a click puts the hover aids away
   if (bxMenuAt) { bxMenuClose(); return; }
   const t = ev.target;
   const nodeEl = t && t.closest ? t.closest(".dnode") : null;

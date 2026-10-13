@@ -2155,6 +2155,26 @@ check("a vision tower takes the picture itself, and its patch rows",
       vision_takes_a_picture)
 
 
+def stats_carry_dtype():
+    c = canvas([n("input", "ids", input_mode="python", input_code="torch.arange(4)"),
+                n("output", "out", din=4)], [edge("ids", "out")])
+    res = T.run_graph(T.compile_canvas(c), c, {})
+    st = (res.get("values") or {}).get("out") or {}
+    assert st.get("dtype") == "i64", st            # the value's own storage type
+    c2 = canvas([n("input", "f", input_mode="python", input_code="torch.ones(4) * 0.5"),
+                 n("output", "out2", din=4)], [edge("f", "out2")])
+    res2 = T.run_graph(T.compile_canvas(c2), c2, {})
+    st2 = (res2.get("values") or {}).get("out2") or {}
+    assert st2.get("dtype") == "f32", st2
+    c3 = canvas([n("input", "i", input_mode="python", input_code="torch.arange(6)"),
+                 n("output", "out3", din=6)], [edge("i", "out3")])
+    r3 = T.run_graph(T.compile_canvas(c3), c3, {})
+    assert (r3.get("values") or {}).get("out3", {}).get("shape") == [6], r3
+
+
+check("every value's stats carry its dtype (and the shape stays)", stats_carry_dtype)
+
+
 def image_matrix_determination():
     # a python-built [h, w, 3] matrix in 0..1: an output box determines it is
     # a picture and the backend sends a thumbnail it can draw
