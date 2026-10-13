@@ -7563,7 +7563,8 @@ function bxGGUFImport() {
   lab.appendChild(sel);
   wrap.appendChild(lab);
   wrap.appendChild(mk("div", { class: "panehint",
-    text: "the model lands as one nested box \u2014 double-click it to look inside" }));
+    text: "the file is structured into boxes on the canvas \u2014 a model as one "
+        + "nested box, a vision encoder as its tower" }));
   const note = mk("div", { class: "panehint", text: "reading the model list\u2026" });
   wrap.appendChild(note);
   const row = mk("div", { class: "row" });
@@ -7621,9 +7622,12 @@ function bxGGUFImport() {
   if (typeof fetch === "function") {
     fetch("/api/models").then(r => r.json()).then(d => {
       bxModels = (d && d.models) || [];
-      const ggufs = (bxModels || []).filter(x => x.kind === "gguf");
+      const ggufs = (bxModels || []).filter(x => x.kind === "gguf" || x.kind === "mmproj");
       sel.innerHTML = "";
-      for (const g of ggufs) sel.appendChild(mk("option", { value: g.path, text: g.name }));
+      for (const g of ggufs)                    // a model and a vision encoder alike:
+        sel.appendChild(mk("option", { value: g.path,          // each is a structure
+                                       text: g.name + (g.kind === "mmproj"
+                                                       ? " \u2014 vision encoder" : "") }));
       note.textContent = ggufs.length
         ? ggufs.length + " local GGUF" + (ggufs.length === 1 ? "" : "s")
         : "no GGUF file on the backend machine";

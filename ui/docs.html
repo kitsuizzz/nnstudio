@@ -209,12 +209,13 @@
         jobs: containers, data, compute, results, system.</li>
     <li><b>Bring a model in</b> — <span class="pill grey">Import ▾</span> →
         <b>GGUF model …</b> opens one pop-up with the machine's
-        <code>.gguf</code> files; picking one structures the model into a new
-        nested box in the middle of the view. No placeholder box is ever placed
-        — cancelling leaves the canvas untouched. Every local
-        <code>.gguf</code> is recognized by its own header, so a vision encoder
-        (<code>mmproj</code>) can sit right beside its model in one folder —
-        and it rides along on its own.</li>
+        <code>.gguf</code> files, each recognized by its own header: a text model
+        is structured into a new <b>nested box</b> in the middle of the view, a
+        vision encoder (<code>mmproj</code>, shown as such) into its tower with an
+        image input and an embeddings output. No placeholder box is ever placed
+        — cancelling leaves the canvas untouched. A model and its encoder can
+        share one folder: loading the model then rides the encoder along on its
+        own.</li>
     <li><b>Add training data</b> — the Palette's
         <span class="pill grey">Dataset ▾</span> category holds the
         <span class="pill">dataset</span> box. Right-click it any time to
@@ -719,11 +720,13 @@
         canvas before that; the model lands as a single <b>nested box</b>
         (structured exactly like the original implementation), in the middle of
         the view — or as the whole design when the canvas is bare.
-        <span class="dim">A vision encoder in the same folder (or one whose name
-        matches) rides along: the design lands with the image input and the
-        tower, and you pick a picture in that box before running. One that cannot
-        run (an unsupported projector) doesn't block the model — it loads
-        without it, and the pop-up says why.</span></li>
+        <span class="dim">The list shows every local <code>.gguf</code>: an
+        encoder loads on its own too (its tower, an image input and an embeddings
+        output). A vision encoder in the model's folder (or one whose name
+        matches) rides along with the model: the design lands with the image
+        input and the tower, and you pick a picture in that box before running.
+        One that cannot run (an unsupported projector) doesn't block the model
+        — it loads without it, and the pop-up says why.</span></li>
     <li><span class="pill grey">Backend ▾</span> → connect. Add an
         <span class="pill">input</span> box (or use the skeleton) and press its
         <b>▶ run the design</b>. (Give the tokenizer its prompt first:

@@ -1186,10 +1186,14 @@ def gguf_canvas(model, mmproj=None):
         raise ValueError("GGUF file not found: %s" % (model,))
     if not is_gguf(path):
         raise ValueError("not a GGUF model: %s" % (os.path.basename(path),))
-    if gguf_kind(path) == "mmproj":
-        raise ValueError("%s is a vision encoder (mmproj), not a text model "
-                         "\u2014 put it beside its model and load the model"
-                         % (os.path.basename(path),))
+    if gguf_kind(path) == "mmproj":              # a vision encoder is a GGUF too:
+        canvas = {"type": "canvas", "version": 1, "nodes": [], "edges": []}   # its
+        _vision_cluster(canvas, path)            # structure is the tower + its ports
+        canvas["name"] = os.path.basename(path)
+        summary = {"arch": "clip", "blocks": int((canvas.get("model") or {})
+                                                 .get("vision", {}).get("blocks") or 0),
+                   "boxes": len(canvas.get("nodes") or [])}
+        return {"ok": True, "canvas": canvas, "summary": summary}
     meta, tensors = gguf_meta_and_tensors(path)
     meta["v_tiled"] = True        # llama.cpp's converter stores V heads tiled
     meta["file"] = path           # the namespace every binding reads from

@@ -429,11 +429,17 @@ with tempfile.TemporaryDirectory() as td:
     assert find_mmproj(model, [far]) == far, "a name match across folders"
     assert find_mmproj(model, [blah]) is None, "nothing shared: no pairing"
     assert find_mmproj(model, []) is None, "no encoder, no tower"
-    # a vision encoder is never loaded as a text model
-    try:
-        gguf_canvas(mate)
-        raise AssertionError("an mmproj must not load as a model")
-    except ValueError as e:
-        assert "vision encoder" in str(e), e
+    # an mmproj loads like any GGUF: its own structure, the tower and its ports
+    built = gguf_canvas(mate)
+    built_nodes = built["canvas"]["nodes"]
+    assert sorted(n["kind"] for n in built_nodes) == ["input", "output", "vision"], \
+        built_nodes
+    tower = [n for n in built_nodes if n["kind"] == "vision"][0]
+    assert tower["file"] == mate and tower["projector"] == "qwen3vl_merger", tower
+    assert (tower["din"], tower["dout"]) == (3, 12), tower
+    assert built["summary"]["arch"] == "clip" and built["summary"]["boxes"] == 3, \
+        built["summary"]
+    wired2 = {(e["from"], e["to"]) for e in built["canvas"]["edges"]}
+    assert ("image", "vision") in wired2 and ("vision", "image embeds") in wired2, wired2
 
 print("gguf_canvas: a folder's .gguf files are recognized by their own headers")
