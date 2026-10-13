@@ -489,6 +489,8 @@
   .bxmenu .bf label { display: flex; align-items: center; justify-content: space-between;
                       gap: 8px; font-size: 11.5px; color: var(--ink-dim); }
   .bxmenu .bf input { width: 92px; }
+  .bxmenu .bf.bximp { min-width: 340px; }
+  .bxmenu .bf.bximp select { flex: 1 1 auto; min-width: 0; }
   .bxmenu .bf .row { display: flex; gap: 6px; justify-content: flex-end; }
   .bxmenu .bf textarea.bxjson { width: 340px; max-width: 48vw; height: 168px; max-height: 42vh; resize: vertical;
                                 background: rgba(22,22,22,.9); color: var(--ink);
@@ -1651,33 +1653,17 @@ function bxAddTemplate(tpl, x, y, name) {
   bxCommit();
   return n;
 }
-function bxAddKind(kind, x, y, v) {              // the palette / Import path: a kind, or a template
-  if (kind === "gguf") return bxAddGGUF(x, y);
+function bxAddKind(kind, x, y, v) {              // the palette path: a kind, or a template
   if (BX_TEMPLATES[kind]) return bxAddTemplate(kind, x, y, v && v.name);
   return bxAdd(kind, x, y, v);
-}
-function bxAddGGUF(x, y) {                       // drop a GGUF node, then pick the model
-  const n = bxAdd("gguf", x, y, {});
-  bxSelectBoxes([n.id]);
-  const m = $("bxmenu");
-  if (m && m.hidden) {                         // not opened from a right-click menu
-    m.hidden = false;
-    const w = $("bxwrap");
-    const r = w && w.getBoundingClientRect ? w.getBoundingClientRect() : { width: 900 };
-    bxMenuAt_(Math.max(6, (r.width || 900) - 440), 30);
-  }
-  bxGGUFForm(n.id);
-  return n;
 }
 function bxAdd(kind, x, y, v) {
   v = v || {};
   if (kind === "train" && !bxTrainAllowed()) return null;   // one Run box, top level only
-  const gguf = kind === "gguf";                // a GGUF node *is* a nested box:
-  if (gguf) kind = "custom";                   // a model is loaded into it
   const sizeless = kind === "act" || kind === "script" || kind === "custom" ||
                    kind === "hf" || BX_UNSIZED.indexOf(kind) >= 0;
   const n = { id: bxId(), kind, x: bxSnapTo(x), y: bxSnapTo(y),
-              name: v.name || (gguf ? "GGUF" : bxDefaultName(kind)),
+              name: v.name || bxDefaultName(kind),
               din: kind === "input" || sizeless ? null : bxSize(v.din),
               dout: kind === "output" || sizeless ? null : bxSize(v.dout) };
   if (kind === "act") n.act = v.act || "silu";
@@ -1738,7 +1724,6 @@ function bxAdd(kind, x, y, v) {
   const bind = v.t == null ? "" : String(v.t).trim();
   if (bind) n.t = bxClip(bind, 200);
   if (kind === "custom") n.inner = { nodes: [], edges: [] };
-  if (gguf) n.gguf = true;
   BX.nodes.push(n);
   bxSettleSizes();                      // a new box may expose or take on a size
   bxRender();
@@ -4523,7 +4508,6 @@ function bxJSONNode(n) {
   }
   else if (n.kind === "custom") {
     o.inner = bxJSONDoc((n.inner && n.inner.nodes) || [], (n.inner && n.inner.edges) || [], "nested");
-    if (n.gguf) o.gguf = true;
     if (n.repo) o.repo = n.repo;         // the HF repo that filled it, if any
   }
   else if (n.kind === "vision") {        // the mmproj tower: its file + geometry
@@ -4920,7 +4904,6 @@ function bxJSONNodeFrom(o) {
     const inner = o.inner == null ? { nodes: [], edges: [] } : bxJSONDocFrom(o.inner, "nested");
     if (!inner) return null;                    // a canvas can never sit inside a nested box
     n.inner = { nodes: inner.nodes, edges: inner.edges };
-    if (o.gguf) n.gguf = true;
     if (typeof o.repo === "string" && o.repo.trim()) n.repo = bxClip(o.repo.trim(), 200);
   }
   if (typeof o.t === "string" && o.t.trim()) n.t = bxClip(o.t.trim(), 200);
@@ -5889,7 +5872,6 @@ function bxMenuBuild(mode, id, ev) {
       // inside: a nested box's own network (custom only)
       if (n.kind === "custom") {
         const inside = [];
-        if (n.gguf) inside.push(["Load GGUF …", () => bxGGUFForm(n.id)]);
         inside.push(["go inside", () => { bxMenuClose(); bxEnter(n.id); }]);
         inside.push(["export this nested box as JSON", () => bxJSONForm("export", n, null)]);
         inside.push(["import into this nested box …", () => bxJSONForm("import", n, null)]);
@@ -6081,10 +6063,6 @@ function bxtToggle(id, btnId) {
 function bxtFilesToggle() { return BX.up ? false : bxtToggle("bxtFilesMenu", "bxtFiles"); }
 function bxtPaletteToggle() { return bxtToggle("bxtPalMenu", "bxtPalette"); }
 function bxtImportToggle() { return BX.up ? false : bxtToggle("bxtImportMenu", "bxtImport"); }
-function bxImportGGUF() {                      // Import \u2192 a whole model, in the middle
-  if (BX.up) return null;                      // a model loads at the top level only
-  return bxDropPalette("gguf", null);          // lands the box, then opens the picker
-}
 function bxtVramToggle() {
   const open = bxtToggle("bxtVramMenu");
   if (open) bxRenderEstimate();                // the live vram line, fresh
@@ -6852,8 +6830,8 @@ function bxtInit() {
   const imenu = $("bxtImportMenu");
   if (imenu) {                                 // the one door to a whole model
     imenu.appendChild(item("GGUF model \u2026",
-      "load a .gguf from the backend machine \u2014 or build the canvas from a huggingface repo",
-      () => { bxtDropsClose(); bxImportGGUF(); }));
+      "pick one .gguf from the backend machine \u2014 it lands as a nested box",
+      () => { bxtDropsClose(); bxGGUFImport(); }));
   }
   const wire = (id, toggle) => {
     const btn = $(id);
@@ -6882,7 +6860,7 @@ function bxtInit() {
 }
 // load a whole model: read a local GGUF's header (through the server) and put
 // its structure on the canvas — the same overwrite rule as any canvas import
-function bxGGUFLoad(boxId, canvas, file, repo) {   // put a built model inside a GGUF box
+function bxGGUFLoad(boxId, canvas, file, repo) {   // put a built model inside a nested box
   const b = typeof boxId === "string" ? bxNode(boxId) : boxId;
   if (!b || b.kind !== "custom") return false;
   const src = canvas && (canvas.nodes || []).find(n => n.kind === "custom");
@@ -7528,8 +7506,8 @@ function bxRunFix() {                          // true: the run must wait
     }
     if (r.missing.length) {
       bxtRunMsg("\u201c" + r.missing.map(n => n.name || "model").join(", ")
-                + "\u201d has no model file bound \u2014 load its GGUF again "
-                + "(Palette \u2192 gguf)");
+                + "\u201d has no model file bound \u2014 bring the model in again "
+                + "(Import \u25be \u2192 GGUF model \u2026)");
       return true;
     }
     return false;
@@ -7548,143 +7526,114 @@ function bxRunFix() {                          // true: the run must wait
     });
     return true;
   }
-  bxtRunMsg("a model box has no file bound \u2014 load its GGUF again "
-            + "(Palette \u2192 gguf)");
+  bxtRunMsg("a model box has no file bound \u2014 bring the model in again "
+            + "(Import \u25be \u2192 GGUF model \u2026)");
   return true;
 }
-function bxGGUFForm(boxId) {                     // pick a model, load it into the box
+// Import → GGUF model: one pop-up, up front in the middle, one file in it.
+// Only local .gguf models are offered — a single text model, no mmproj, no
+// repo. Nothing lands before the file is chosen: the model is structured into
+// a fresh nested box at the middle of the view, as one undo step.
+function bxGGUFImportApply(canvas, file) {     // a served model -> one nested box
+  if (!canvas) return null;
+  const c = bxHost();
+  const r = (c && c.getBoundingClientRect) ? c.getBoundingClientRect()
+                                           : { left: 0, top: 0, width: 600, height: 400 };
+  const p = bxPoint({ clientX: (r.left || 0) + (r.width || 600) / 2,
+                      clientY: (r.top || 0) + (r.height || 400) / 2 });
+  bxUndoLock++;                                // the box and its model: one undo step
+  const made = bxAdd("custom", p.x, p.y, {});
+  const ok = made && bxGGUFLoad(made.id, canvas, file);
+  bxUndoLock--;
+  if (!ok) {                                   // a model that cannot land leaves no box
+    if (made) { bxUndoLock++; bxRemove(made.id); bxUndoLock--; }
+    return null;
+  }
+  bxCommit();
+  return bxNode(made.id) || BX.nodes.find(n => n.kind === "custom") || null;
+}
+function bxGGUFImport() {
   const m = $("bxmenu");
-  if (!m) return;
-  const target = boxId ? bxNode(boxId) : null;
-  if (!target || target.kind !== "custom") return;
+  if (!m) return false;
   m.innerHTML = "";
-  const wrap = mk("div", { class: "bf" });
-  const lab = mk("label", { text: "model" });
+  const wrap = mk("div", { class: "bf bximp" });
+  wrap.appendChild(mk("div", { class: "mhead", text: "load a GGUF model" }));
+  const lab = mk("label", { text: "file" });
   const sel = mk("select", { class: "bxsel" });
   lab.appendChild(sel);
   wrap.appendChild(lab);
-  const vlab = mk("label", { text: "vision (mmproj)" });
-  const vsel = mk("select", { class: "bxsel" });
-  vlab.appendChild(vsel);
-  wrap.appendChild(vlab);
-  const vnote = mk("div", { class: "panehint", text: "no vision encoder picked" });
-  wrap.appendChild(vnote);
+  wrap.appendChild(mk("div", { class: "panehint",
+    text: "the model lands as one nested box \u2014 double-click it to look inside" }));
   const note = mk("div", { class: "panehint", text: "reading the model list\u2026" });
   wrap.appendChild(note);
-  const rlab = mk("label", { text: "or a repo" });
-  const repoIn = mk("input", { class: "bxjson", type: "text",
-    placeholder: "huggingface repo \u2014 Qwen/Qwen2.5-0.5B" });
-  rlab.appendChild(repoIn);
-  wrap.appendChild(rlab);
-  const warn = mk("div", { class: "warnbx",
-    text: "loading replaces what is already inside this box" });
-  warn.hidden = true;
-  const filled = () => !!(target.inner && (target.inner.nodes.length || target.inner.edges.length));
-  let armed = false, canvas = null, srcFile = null, lastBody = null;
   const row = mk("div", { class: "row" });
   const cancel = mk("span", { class: "chip tiny", text: "cancel" });
   cancel.addEventListener("click", bxMenuClose);
   const go = mk("span", { class: "chip tiny", text: "load" });
-  const rgo = mk("span", { class: "chip tiny", text: "build canvas" });
   row.appendChild(cancel);
   row.appendChild(go);
-  row.appendChild(rgo);
-  wrap.appendChild(warn);
   wrap.appendChild(row);
   m.appendChild(wrap);
-  bxMenuPlace();
-  if (typeof fetch === "function") {
-    fetch("/api/models").then(r => r.json()).then(d => {
-      bxModels = (d && d.models) || [];
-      sel.innerHTML = "";
-      const ggufs = (d.models || []).filter(x => x.kind === "gguf");
-      for (const g of ggufs) sel.appendChild(mk("option", { value: g.path, text: g.name }));
-      note.textContent = ggufs.length + " local GGUF" + (ggufs.length === 1 ? "" : "s");
-      vsel.innerHTML = "";
-      vsel.appendChild(mk("option", { value: "", text: "no vision encoder" }));
-      for (const m of (d.models || []).filter(x => x.kind === "mmproj"))
-        vsel.appendChild(mk("option", { value: m.path, text: m.name }));
-      vsel.addEventListener("change", () => {
-        vnote.textContent = vsel.value ? "the vision tower rides along"
-                                       : "no vision encoder picked";
-      });
-      sel.addEventListener("change", () => {   // the mmproj whose name fits
-        const toks = String(sel.value || "").split("/").pop().toLowerCase()
-          .replace(/\.gguf$/, "").split(/[^a-z0-9]+/).filter(t => t.length > 1);
-        let best = "", score = 0;
-        for (const m of (bxModels || []).filter(x => x.kind === "mmproj")) {
-          const name = String(m.name || "").toLowerCase();
-          const s = toks.reduce((n, t) => n + (name.indexOf(t) >= 0 ? 1 : 0), 0);
-          if (s > score) { best = m.path; score = s; }
-        }
-        vsel.value = best;
-        vnote.textContent = best ? "the vision tower rides along"
-                                 : "no vision encoder picked";
-      });
-      bxMenuPlace();
-    }).catch(() => { note.textContent = "the model list is not available"; });
-  } else {
-    note.textContent = "the model list is not available";
-  }
-  const apply = () => {                        // read once, then land it in the box
-    if (filled() && !armed) {                  // over a used box: warn first
-      armed = true;
-      warn.hidden = false;
-      go.textContent = "overwrite";
-      rgo.textContent = "overwrite";
-      bxMenuPlace();
+  m.hidden = false;
+  const place = () => {                        // up front, in the middle of the canvas
+    const w = $("bxwrap");
+    const r = (w && w.getBoundingClientRect) ? w.getBoundingClientRect()
+                                             : { width: 900, height: 500 };
+    bxMenuAt_(Math.max(6, ((r.width || 900) - (m.offsetWidth || 340)) / 2),
+              Math.max(6, ((r.height || 500) - (m.offsetHeight || 170)) / 2));
+    bxMenuPlace();
+  };
+  const apply = () => {                        // the one file chosen
+    const path = String(sel.value || "");
+    if (!path) { note.textContent = "there is no GGUF file to load"; place(); return; }
+    if (typeof fetch !== "function") {
+      note.textContent = "the app cannot reach the server";
       return;
     }
-    if (bxGGUFLoad(target.id, canvas, srcFile, lastBody && lastBody.repo)) {
-      bxMarkAudit(canvas && canvas.model && canvas.model.audit);
-      bxMenuClose();
-    } else if (canvas && canvas.model && canvas.model.vision) {
-      note.textContent = "the vision canvas needs a clean page \u2014 remove the "
-                       + "other boxes and wires first, then load again";
-      bxMenuPlace();
-    }
-  };
-  const load = (body, label) => {              // one reader for both sources
-    if (typeof fetch !== "function") return;
-    lastBody = body;
-    note.textContent = "reading " + label + " \u2026";
-    bxMenuPlace();
+    go.textContent = "loading \u2026";
+    note.textContent = "reading " + path.split("/").pop() + " \u2026";
+    place();
     fetch("/api/gguf/canvas", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ model: path }),   // one file, nothing else
     }).then(r => r.json().then(d => {
-      if (!r.ok || !d.canvas) throw new Error(d.error || "no canvas");
-      canvas = d.canvas;
-      note.textContent = (d.summary ? d.summary.arch + " \u00b7 " + d.summary.blocks + " blocks \u00b7 " +
-                          d.summary.boxes + " boxes" +
-                          (d.summary.fidelity ? " \u00b7 " + d.summary.fidelity : "") +
-                          (d.summary.arc ? " \u00b7 database" : "")
-                          : "canvas ready");
-      bxMenuPlace();
-      apply();
-    })).catch((e) => {
+      if (!r.ok || !d.canvas) throw new Error(d.error || "the model could not be read");
+      if (!bxGGUFImportApply(d.canvas, path))
+        throw new Error("the model's canvas could not land here");
+      bxMarkAudit(d.canvas.model && d.canvas.model.audit);
+      const why = d.summary && d.summary.vision_note;
+      if (why) {                               // the encoder beside it was refused:
+        note.textContent = why + " \u2014 the model loaded without it";
+        go.hidden = true;                      // the pop-up stays with the reason
+        cancel.textContent = "close";
+        place();
+        return;
+      }
+      bxMenuClose();
+    })).catch(e => {
       note.textContent = String((e && e.message) || e);
-      bxMenuPlace();
+      go.textContent = "load";
+      place();
     });
   };
-  go.addEventListener("click", () => {
-    if (canvas) return apply();
-    if (!sel.value) return;
-    srcFile = sel.value;                       // a local GGUF: the box remembers it
-    load({ model: sel.value, mmproj: vsel.value || undefined },
-         String(sel.value).split("/").pop());
-  });
-  rgo.addEventListener("click", () => {
-    const repo = String(repoIn.value || "").trim();
-    if (!repo) {
-      note.textContent = "paste a huggingface repo first \u2014 every box reads its own shard";
-      bxMenuPlace();
-      return;
-    }
-    srcFile = null;                            // a repo canvas: files ride on the boxes
-    load({ repo }, repo);
-  });
+  go.addEventListener("click", apply);
+  if (typeof fetch === "function") {
+    fetch("/api/models").then(r => r.json()).then(d => {
+      bxModels = (d && d.models) || [];
+      const ggufs = (bxModels || []).filter(x => x.kind === "gguf");
+      sel.innerHTML = "";
+      for (const g of ggufs) sel.appendChild(mk("option", { value: g.path, text: g.name }));
+      note.textContent = ggufs.length
+        ? ggufs.length + " local GGUF" + (ggufs.length === 1 ? "" : "s")
+        : "no GGUF file on the backend machine";
+      place();
+    }).catch(() => { note.textContent = "the model list is not available"; place(); });
+  } else {
+    note.textContent = "the model list is not available";
+  }
+  place();
+  return true;
 }
 // ---- external weights: a file's metadata, a tensor, a block ----------------
 // The app asks the server what is inside a weight file (/api/weights/meta) —

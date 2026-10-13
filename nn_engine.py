@@ -54,6 +54,88 @@ def _resolve_model(model: str) -> str:
     return model
 
 
+# ------------------------------------------------- local models and their kinds
+# The local side draws no line between a model and its vision encoder: every
+# .gguf is classified by its own header, wherever it sits. Put a model and its
+# mmproj in the same folder and each is recognized for what it is — and the
+# loader pairs them on its own (the folder first, then the name).
+MODELS_DIR = os.path.join(ENGINE_DIR, "models")
+_GGUF_KINDS = {}                    # path -> ((size, mtime), kind)
+
+
+def gguf_kind(path):
+    """A local .gguf's own kind, read from its header: a vision encoder
+    (mmproj) or a text model. Neither the folder nor the file's name decides."""
+    try:
+        st = os.stat(path)
+        key = (int(st.st_size), int(st.st_mtime))
+    except OSError:
+        return "gguf"
+    hit = _GGUF_KINDS.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    kind = "gguf"
+    try:
+        from gguf import GGUFReader
+        fields = GGUFReader(path).fields or {}
+        if any(str(k).startswith("clip.") for k in fields):
+            kind = "mmproj"
+        else:
+            arch = fields.get("general.architecture")
+            if arch is not None and str(_gguf_scalar(arch)).lower() == "clip":
+                kind = "mmproj"
+    except Exception:  # noqa: BLE001 — an unreadable header is not a vision encoder
+        kind = "gguf"
+    _GGUF_KINDS[path] = (key, kind)
+    return kind
+
+
+def local_models(root=None):
+    """Every .gguf under models/ (subfolders included), each classified by its
+    own header. `path` stays relative to the repo — the shape the app posts back."""
+    root = root or MODELS_DIR
+    out = []
+    for base, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        for name in sorted(files):
+            if not name.lower().endswith(".gguf"):
+                continue
+            path = os.path.join(base, name)
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = 0
+            rel = os.path.relpath(path, os.path.dirname(root)).replace(os.sep, "/")
+            out.append({"kind": gguf_kind(path), "name": name, "path": rel,
+                        "file": path, "size_mb": round(size / 2 ** 20)})
+    return out
+
+
+def _name_tokens(path):
+    base = os.path.basename(str(path or ""))
+    if base.lower().endswith(".gguf"):
+        base = base[:-5]
+    return [t for t in re.split(r"[^a-z0-9]+", base.lower()) if len(t) > 1]
+
+
+def find_mmproj(model, mmprojs):
+    """The vision encoder that belongs to a model: the one in the model's own
+    folder when there is a single one, else the best name match (a shared
+    token). None when nothing fits — a text model stays a text model."""
+    model = str(model or "")
+    mmprojs = [m for m in (mmprojs or []) if m]
+    same = [m for m in mmprojs if os.path.dirname(m) == os.path.dirname(model)]
+    if len(same) == 1:
+        return same[0]
+    toks = _name_tokens(model)
+    best, score = None, 0
+    for m in (same or mmprojs):
+        name = os.path.basename(m).lower()
+        s = sum(1 for t in toks if t in name)
+        if s > score:
+            best, score = m, s
+    return best if score > 0 else None
+
 
 # ---------------------------------------------------------------- GGUF -> canvas
 # A Training canvas can be built straight from a GGUF: the block structure is
@@ -1104,14 +1186,33 @@ def gguf_canvas(model, mmproj=None):
         raise ValueError("GGUF file not found: %s" % (model,))
     if not is_gguf(path):
         raise ValueError("not a GGUF model: %s" % (os.path.basename(path),))
+    if gguf_kind(path) == "mmproj":
+        raise ValueError("%s is a vision encoder (mmproj), not a text model "
+                         "\u2014 put it beside its model and load the model"
+                         % (os.path.basename(path),))
     meta, tensors = gguf_meta_and_tensors(path)
     meta["v_tiled"] = True        # llama.cpp's converter stores V heads tiled
     meta["file"] = path           # the namespace every binding reads from
     canvas = build_canvas(meta, tensors)
     canvas["name"] = os.path.basename(path)
+    paired = None
+    if not mmproj:                       # its own vision encoder, if one sits by it
+        paired = find_mmproj(path, [m["file"] for m in local_models()
+                                    if m["kind"] == "mmproj"])
+        mmproj = paired
+    refused = None
     if mmproj:
-        _vision_cluster(canvas, mmproj)
-    return {"ok": True, "canvas": canvas, "summary": canvas.pop("summary")}
+        try:
+            _vision_cluster(canvas, mmproj)
+        except ValueError as e:          # the encoder found beside it cannot run:
+            if paired is None:
+                raise                    # the caller asked for that encoder by name
+            refused = str(e)             # the text model still loads, with the why
+    summary = dict(canvas.pop("summary") or {})
+    if refused:
+        summary["vision_note"] = refused
+        canvas.setdefault("model", {})["vision_note"] = refused
+    return {"ok": True, "canvas": canvas, "summary": summary}
 
 
 # ---------------------------------------------------------------- HF -> canvas

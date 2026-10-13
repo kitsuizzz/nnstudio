@@ -389,3 +389,51 @@ with tempfile.TemporaryDirectory() as td:
         assert "gemma4uv" in str(e), e
 
 print("gguf_canvas: the vision tower cluster rides along")
+
+# ---- the same folder holds both kinds: each .gguf is recognized on its own --
+from nn_engine import find_mmproj, gguf_canvas, gguf_kind, local_models  # noqa: E402
+
+
+def _write_tiny_model(path):
+    from gguf import GGUFWriter
+    w = GGUFWriter(path, "llama")
+    w.add_string("general.name", "fixture model")
+    w.add_uint32("llama.block_count", 2)
+    w.write_header_to_file()
+    w.write_kv_data_to_file()
+    w.write_tensors_to_file()
+    w.close()
+
+
+with tempfile.TemporaryDirectory() as td:
+    a, b = os.path.join(td, "a"), os.path.join(td, "b")
+    os.makedirs(a)
+    os.makedirs(b)
+    model = os.path.join(a, "tiny-model.gguf")
+    _write_tiny_model(model)
+    mate = os.path.join(a, "vision-F16.gguf")      # no "mmproj" in the name
+    _write_mmproj(mate)
+    far = os.path.join(b, "mmproj-tiny-model-F16.gguf")
+    _write_mmproj(far)
+    blah = os.path.join(b, "mmproj-nothing-F16.gguf")
+    _write_mmproj(blah)
+
+    kinds = {m["name"]: m["kind"] for m in local_models(td)}
+    assert kinds == {"tiny-model.gguf": "gguf", "vision-F16.gguf": "mmproj",
+                     "mmproj-tiny-model-F16.gguf": "mmproj",
+                     "mmproj-nothing-F16.gguf": "mmproj"}, kinds
+    assert gguf_kind(mate) == "mmproj", "the header decides, not the folder or the name"
+    # the pairing: the one beside it, then the best name match
+    assert find_mmproj(model, [mate]) == mate, "the encoder in the same folder"
+    assert find_mmproj(model, [mate, far]) == mate, "…wins over one further off"
+    assert find_mmproj(model, [far]) == far, "a name match across folders"
+    assert find_mmproj(model, [blah]) is None, "nothing shared: no pairing"
+    assert find_mmproj(model, []) is None, "no encoder, no tower"
+    # a vision encoder is never loaded as a text model
+    try:
+        gguf_canvas(mate)
+        raise AssertionError("an mmproj must not load as a model")
+    except ValueError as e:
+        assert "vision encoder" in str(e), e
+
+print("gguf_canvas: a folder's .gguf files are recognized by their own headers")

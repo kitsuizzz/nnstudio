@@ -172,8 +172,9 @@
   </p>
   <p>Three things make the app practical rather than toy:</p>
   <ul>
-    <li><b>Real models.</b> Point a GGUF box at a <code>.gguf</code> file (or an
-        <code>hf</code> box at a Hugging Face repo) and the app builds the whole
+    <li><b>Real models.</b> Load a <code>.gguf</code> from
+        <span class="pill grey">Import ▾</span> (or point an <code>hf</code>
+        box at a Hugging Face repo) and the app builds the whole
         network for you — hundreds of boxes, wired exactly like the model's original
         implementation. You can then look inside it, change it, or train on top of it.</li>
     <li><b>A real backend.</b> The heavy maths runs on a backend service (your GPU,
@@ -207,9 +208,13 @@
         category, and drag a card onto the canvas. Categories follow the boxes'
         jobs: containers, data, compute, results, system.</li>
     <li><b>Bring a model in</b> — <span class="pill grey">Import ▾</span> →
-        <b>GGUF model …</b> loads a whole <code>.gguf</code> (or builds the canvas
-        from a huggingface repo): the box lands in the middle of the view and the
-        picker opens.</li>
+        <b>GGUF model …</b> opens one pop-up with the machine's
+        <code>.gguf</code> files; picking one structures the model into a new
+        nested box in the middle of the view. No placeholder box is ever placed
+        — cancelling leaves the canvas untouched. Every local
+        <code>.gguf</code> is recognized by its own header, so a vision encoder
+        (<code>mmproj</code>) can sit right beside its model in one folder —
+        and it rides along on its own.</li>
     <li><b>Add training data</b> — the Palette's
         <span class="pill grey">Dataset ▾</span> category holds the
         <span class="pill">dataset</span> box. Right-click it any time to
@@ -533,13 +538,14 @@
     <div class="bdet">
       <p>A nested box: a whole network inside one box. Double-click to step in and
       edit its insides; from outside it behaves like a single box. This is how large
-      models stay legible — a 27-billion-parameter model is one GGUF box that you
-      can open into blocks, each block open into its attention and MLP.</p>
-      <p class="bfields"><b>Fields:</b> its <code>inner</code> network; when it was
-      built from a model file: <code>gguf</code> and the source <code>repo</code>.
-      A <b>GGUF box</b> (<span class="pill grey">Import ▾</span> →
-      <i>GGUF model …</i>) is a custom box that loads a whole <code>.gguf</code>
-      model — right-click → <i>Load GGUF …</i> re-loads or replaces it.</p>
+      models stay legible — a 27-billion-parameter model is one nested box that
+      you can open into blocks, each block open into its attention and MLP.</p>
+      <p class="bfields"><b>Fields:</b> its <code>inner</code> network; where its
+      weights read from (<code>file</code>, <code>t</code>), and the source
+      <code>repo</code> when it came from a huggingface canvas. A whole model
+      arrives through <span class="pill grey">Import ▾</span> →
+      <i>GGUF model …</i> — it lands as a new nested box; to change it,
+      delete the box and import again.</p>
     </div>
   </div>
 
@@ -707,56 +713,24 @@
 
   <h2>Run a GGUF model</h2>
   <ol>
-    <li><span class="pill grey">Import ▾</span> → <b>GGUF model …</b> — a whole
-        model comes in at the top level: pick your <code>.gguf</code> file and
-        load it. The box fills with the model's blocks, wired exactly like the
-        original implementation. <span class="dim">(Loading over a box that
-        already holds a model arms the overwrite — the second click
-        confirms.)</span></li>
+    <li><span class="pill grey">Import ▾</span> → <b>GGUF model …</b> — one
+        pop-up in the middle of the canvas, holding the machine's
+        <code>.gguf</code> files: pick one and load it. Nothing is placed on the
+        canvas before that; the model lands as a single <b>nested box</b>
+        (structured exactly like the original implementation), in the middle of
+        the view — or as the whole design when the canvas is bare.
+        <span class="dim">A vision encoder in the same folder (or one whose name
+        matches) rides along: the design lands with the image input and the
+        tower, and you pick a picture in that box before running. One that cannot
+        run (an unsupported projector) doesn't block the model — it loads
+        without it, and the pop-up says why.</span></li>
     <li><span class="pill grey">Backend ▾</span> → connect. Add an
         <span class="pill">input</span> box (or use the skeleton) and press its
         <b>▶ run the design</b>. (Give the tokenizer its prompt first:
         right-click it → <b>set the tokenizer …</b>.)</li>
-    <li>Double-click the GGUF box to look inside; click boxes to see the numbers
+    <li>Double-click the model box to look inside; click boxes to see the numbers
         that flowed through them.</li>
   </ol>
-
-  <h2>Run a vision model (GGUF + mmproj)</h2>
-  <p>
-    A multimodal model ships as <b>two</b> files: the text model's
-    <code>.gguf</code>, and an <code>mmproj-*.gguf</code> — the vision encoder
-    (the tower that turns an image into embeddings the text model can read).
-    nnstudio loads both: the tower becomes a <span class="pill">vision tower</span>
-    box with its own weights bound to the mmproj file, wired from an
-    <span class="pill">input</span> box set to <code>image</code> mode.
-  </p>
-  <ol>
-    <li><span class="pill grey">Import ▾</span> → <b>GGUF model …</b>: pick the
-        model, and pick the <b>vision (mmproj)</b> file (the form preselects the
-        mmproj whose name matches the model). Load it — the design lands with
-        the text model
-        <i>and</i> the vision tower: the image input → the tower → an
-        <b>image embeds</b> output, beside the model's own tokens → logits.</li>
-    <li>In the image input's window, <b>pick an image</b> (it is stored in the
-        project's media store and shown right there), then press
-        <b>▶ run the design</b>. The tower runs on the backend and the
-        <b>image embeds</b> output shows the embeddings it produced
-        (one vector per 2×2 patch group).</li>
-    <li>To see the picture itself, wire the image input into an
-        <span class="pill">output</span> box: the run hands the image over as
-        an RGB matrix, and that box's window <b>draws it</b> (with its size and
-        pixel statistics under it). Any output box does this — even a matrix
-        you feed in yourself (an <code>[h, w, 3]</code> matrix or a square
-        <code>[n, 3]</code> list in 0..1): when the values read as pixels,
-        the backend determines it is a picture and sends a thumbnail to draw.</li>
-    <li>The tower box's window shows what it is: projector type, image and patch
-        size, blocks, output width and the file it reads. <span class="dim">Merging
-        those embeddings into the text model's token stream is the next step —
-        for now the tower runs on its own, and its output is inspectable.</span></li>
-  </ol>
-  <p class="dim">Today the loader understands the <code>qwen3vl_merger</code>
-  projector family (fused qkv, vision M-RoPE, 2×2 patch merge). An mmproj with
-  another projector type is refused by name, so nothing loads half-working.</p>
 
   <h2>Train a network on your own data</h2>
   <ol>

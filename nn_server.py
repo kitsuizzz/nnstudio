@@ -164,31 +164,10 @@ def gpu_info():
 
 
 def list_models():
-    """Local GGUFs and vision encoders (mmproj), in the shape the UI reads."""
-    out = []
-
-    def scan(folder, prefix, force):
-        try:
-            names = sorted(os.listdir(folder))
-        except OSError:
-            return
-        for name in names:
-            if not name.lower().endswith(".gguf"):
-                continue
-            path = os.path.join(folder, name)
-            if not os.path.isfile(path):
-                continue
-            try:
-                size = os.path.getsize(path)
-            except OSError:
-                size = 0
-            kind = "mmproj" if (force or "mmproj" in name.lower()) else "gguf"
-            out.append({"kind": kind, "name": name, "path": prefix + name,
-                        "size_mb": round(size / 2 ** 20)})
-
-    scan(MODELS_DIR, "models/", False)
-    scan(os.path.join(MODELS_DIR, "mmproj"), "models/mmproj/", True)
-    return out
+    """Every local .gguf, in the shape the UI reads. The engine classifies each
+    one by its own header — a text model or a vision encoder (mmproj) — so the
+    folder and the file's name decide nothing."""
+    return nn_engine.local_models()
 
 
 # ---------------------------------------------------------------- the agents

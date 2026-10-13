@@ -189,7 +189,8 @@ globalThis.__t = {
   bxExportCanvas, bxExportNested, bxImportJSON, bxJSONRead, bxJSONDocFrom, bxJSONNodeFrom,
   bxJSONNode,
   bxWireState, BX_ACTS, BX_OPS, BX_OPAQUE, bxOpName, bxOpArity, bxDims, bxReshapeSize,
-  bxAddTemplate, bxAddKind, bxAddGGUF, bxGGUFForm, bxGGUFLoad, bxAttentionDoc, bxStateDoc,
+  bxAddTemplate, bxAddKind, bxGGUFImport, bxGGUFImportApply, bxGGUFLoad,
+  bxAttentionDoc, bxStateDoc,
   bxMoEDoc, bxTemplateName, bxErrorSet,
   bxMoveInto, bxDropTargetAt, bxHasInside, bxUndoStep, bxRedoStep, bxUndoDepth, bxCommit,
   bxSnapMove, bxSnapGrid, bxClampView, bxSeedBlank, bxNodeH,
@@ -200,8 +201,8 @@ globalThis.__t = {
   bxMenuBuild, bxMenuClose, bxClip, bxShape, bxtExport, bxtImport, bxtForm, bxtRefresh,
   bxWeightsForm, bxWeightsApply, bxWeightsExportForm, bxWeightScore, bxTensorDims,
   bxTensorDtype, bxApplyManifest,
-  bxtFilesToggle, bxtFilesClose, bxtDropsClose, bxtPaletteToggle, bxtImportToggle, bxImportGGUF,
-  bxtVramToggle,
+  bxtFilesToggle, bxtFilesClose, bxtDropsClose, bxtPaletteToggle, bxtImportToggle,
+  bxGGUFImport, bxGGUFImportApply, bxtVramToggle,
   bxtBackendToggle, bxtBackendPick, get BX_BACKEND() { return BX_BACKEND; },
   bxtRunToggle, bxtRunRefresh, bxtRunSync, bxtRunEnabled, bxtRunGo, bxtRunLoad, bxFlowVerify,
   bxtRunOffload,
@@ -769,7 +770,7 @@ check("no GGUF card in the Palette — a model comes in through Import", () => {
   __t.bxMenuClose();
 });
 
-check("the Import menu: one door to load a GGUF model", () => {
+check("the Import menu: one pop-up, one file, no box spawned", () => {
   ok(getEl("bxtImport"), "the toolbar has an Import button");
   eql(getEl("bxtImportMenu").children.map(c => c.textContent), ["GGUF model …"],
       "…offering a GGUF model");
@@ -778,17 +779,46 @@ check("the Import menu: one door to load a GGUF model", () => {
   __t.bxtImportToggle();
   eql(getEl("bxtImportMenu").hidden, true, "…and another closes it");
   const before = __t.BX.nodes.length;
-  __t.bxImportGGUF();                          // the item: land the box, open the picker
-  const made = __t.BX.nodes[__t.BX.nodes.length - 1];
-  eql([__t.BX.nodes.length - before, made.kind, made.gguf], [1, "custom", true],
-      "choosing it lands a GGUF box");
-  const form = getEl("bxmenu");
-  ok(!form.hidden && form.children[0] &&
-     String(form.children[0].children.map(c => c.textContent).join(" | "))
-       .indexOf("model") >= 0,
-     "…with the model picker open");
+  __t.bxGGUFImport();                          // the item: one pop-up, up front
+  const menu = getEl("bxmenu");
+  eql(__t.BX.nodes.length, before, "the pop-up spawns no box");
+  ok(!menu.hidden && menu.style.left === "130px" && menu.style.top === "115px",
+     "…it comes up in the middle of the canvas: " + menu.style.left + " × " + menu.style.top);
+  eql(menu.querySelectorAll(".bxsel").length, 1, "…with one model list");
+  const text = menu.children[0].children.map(c => c.textContent).join(" | ");
+  ok(text.indexOf("nested box") >= 0 && text.indexOf("mmproj") < 0 &&
+     text.indexOf("repo") < 0,
+     "…that says where the model lands — no mmproj, no repo: " + text);
   __t.bxMenuClose();
-  __t.bxRemove(made.id);
+  eql(__t.BX.nodes.length, before, "cancelling leaves the canvas exactly as it was");
+  // the file chosen: one model, nothing else, and it lands as a nested box
+  const realFetch = global.fetch;
+  let sent = null;
+  global.fetch = async (url, opts) => {
+    if (String(url) === "/api/gguf/canvas") sent = JSON.parse(opts.body);
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  __t.bxGGUFImport();
+  const form = getEl("bxmenu");
+  form.querySelectorAll(".bxsel")[0].value = "models/test-model.gguf";
+  form.querySelectorAll(".chip").find(c => String(c.textContent) === "load").click();
+  global.fetch = realFetch;
+  eql(sent, { model: "models/test-model.gguf" },
+      "the load posts the one file — no mmproj, no repo");
+  __t.bxMenuClose();
+  const n = __t.bxGGUFImportApply(GGUF_CANVAS, "models/test-model.gguf");
+  ok(n && n.kind === "custom" && n.file === "models/test-model.gguf",
+     "…and the served model lands as one nested box");
+  eql(__t.bxJSONNode(n).gguf, undefined, "…with no GGUF flag in its JSON");
+  __t.bxUndoStep();
+  ok(__t.BX.nodes.length === before &&
+     !__t.BX.nodes.some(x => x.file === "models/test-model.gguf"),
+     "…and one undo takes the whole import back");
+  __t.bxRedoStep();
+  ok(__t.BX.nodes.some(x => x.kind === "custom" &&
+                            x.file === "models/test-model.gguf"),
+     "…redo lands it again");
+  __t.bxUndoStep();                            // leave the canvas as it was found
   // a whole model loads at the top level only
   const box = __t.bxAdd("custom", 0, 0, {});
   __t.bxEnter(box.id);
@@ -3041,38 +3071,33 @@ check("a GGUF-built canvas loads: the model is one dedicated nested box", () => 
   [ "g1", "g2", "g3" ].forEach(id => __t.bxRemove(id));
 });
 
-check("the GGUF node: a nested box a model loads into", () => {
+check("a loaded model: a nested box with the model structured inside", () => {
   const modelBefore = __t.BX.model;
   __t.BX.model = { opt: "sgd", batch: 2 };           // the panel's own settings
-  const n = __t.bxAdd("gguf", 100, 100, {});
-  eql([n.kind, n.name, n.gguf], ["custom", "GGUF", true],
-    "a GGUF node is a nested box called GGUF");
-  eql(__t.bxShape(n), "0 in \u00b7 0 out", "empty until a model lands in it");
+  __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
+  const n = __t.bxAdd("custom", 100, 100, {});
+  eql(n.kind, "custom", "a plain nested box to load into");
+  eql(__t.bxShape(n), "0 in · 0 out", "empty until a model lands in it");
   __t.bxMenuBuild("box", n.id, {});
   const gmenu = getEl("bxmenu");
   eql(gmenu.children.map(c => c.textContent),
     ["this box", "inside", "flow", "remove this box"],
     "a nested box: its categories");
   openCat(gmenu, "inside");
-  eql(catItems(gmenu), ["Load GGUF …", "go inside", "export this nested box as JSON",
+  eql(catItems(gmenu), ["go inside", "export this nested box as JSON",
                         "import into this nested box …"],
-    "…inside holds the loader and its JSON");
+    "…and no loader in it — Import ▾ is the only door");
   __t.bxMenuClose();
-  const dropped = __t.bxDropPalette("gguf", { clientX: 300, clientY: 200 });
-  ok(dropped && dropped.gguf === true, "dropping the palette node makes one");
-  ok(!getEl("bxmenu").hidden, "…and the loader opens right on it");
-  __t.bxMenuClose();
-  __t.bxRemove(dropped.id);
   eql(__t.bxGGUFLoad(n.id, GGUF_CANVAS, "models/test-model.gguf"), true,
     "the model loads into the box, with the file it reads from");
-  eql(n.name, "Test-Model", "\u2026which takes the model's name");
-  eql(n.file, "models/test-model.gguf", "\u2026and remembers where its tensors live");
-  eql(__t.bxJSONNode(n).file, "models/test-model.gguf", "\u2026and the design carries it");
-  eql(__t.bxShape(n), "1 in \u00b7 1 out", "\u2026and wears the model's dots");
+  eql(n.name, "Test-Model", "…which takes the model's name");
+  eql(n.file, "models/test-model.gguf", "…and remembers where its tensors live");
+  eql(__t.bxJSONNode(n).file, "models/test-model.gguf", "…and the design carries it");
+  eql(__t.bxShape(n), "1 in · 1 out", "…and wears the model's dots");
   eql(__t.BX.nodes.map(x => x.kind), ["custom", "input", "output"],
     "alone on the canvas, the load brings the model's boundaries too");
-  eql(__t.BX.edges.length, 2, "\u2026wired in and out");
-  eql(__t.bxErrorSet().size, 0, "\u2026so the design is whole");
+  eql(__t.BX.edges.length, 2, "…wired in and out");
+  eql(__t.bxErrorSet().size, 0, "…so the design is whole");
   eql(__t.bxPortSizes(n, "out"), [128], "the vocab comes out");
   eql(__t.bxEstimate().params, 8192, "the estimate reads through it");
   eql([__t.BX.model.ctx, __t.BX.model.layers, __t.BX.model.opt, __t.BX.model.batch],
@@ -3080,26 +3105,26 @@ check("the GGUF node: a nested box a model loads into", () => {
   __t.bxUndoStep();
   eql([__t.BX.nodes.length, __t.BX.nodes.map(x => x.kind)], [1, ["custom"]],
     "one undo takes the whole load back");
-  eql([__t.bxNode(n.id).name, __t.bxShape(__t.bxNode(n.id))], ["GGUF", "0 in \u00b7 0 out"],
-    "\u2026the box goes back to empty GGUF");
+  eql([__t.bxNode(n.id).name, __t.bxShape(__t.bxNode(n.id))], ["nested 1", "0 in · 0 out"],
+    "…the box goes back to empty");
   __t.bxRedoStep();
   eql([__t.BX.nodes.length, __t.bxNode(n.id).name, __t.bxShape(__t.bxNode(n.id))],
-    [3, "Test-Model", "1 in \u00b7 1 out"], "\u2026and redo lands it again");
+    [3, "Test-Model", "1 in · 1 out"], "…and redo lands it again");
   eql(__t.bxGGUFLoad(n.id, GGUF_CANVAS2), true,
     "loading another model re-crops the boundaries");
   eql([__t.BX.nodes.length, __t.bxPortSizes(__t.bxNode(n.id), "out"), __t.BX.edges.length],
-    [4, [128, 128], 3], "\u2026the new dot arrives wired, the old ones stay");
-  eql(__t.bxErrorSet().size, 0, "\u2026still whole");
+    [4, [128, 128], 3], "…the new dot arrives wired, the old ones stay");
+  eql(__t.bxErrorSet().size, 0, "…still whole");
   eql(__t.bxGGUFLoad(n.id, GGUF_CANVAS), true, "and loading the first model back");
   eql([__t.BX.nodes.length, __t.bxPortSizes(__t.bxNode(n.id), "out")], [3, [128]],
-    "\u2026takes the extra boundary away, no duplicate stays");
+    "…takes the extra boundary away, no duplicate stays");
   const saved = JSON.parse(JSON.stringify(__t.bxExportCanvas()));
   const rec = saved.nodes.find(x => x.id === n.id);
-  eql([rec.kind, rec.gguf, rec.name], ["custom", true, "Test-Model"],
-    "the JSON remembers it is a GGUF node");
-  eql(__t.bxImportJSON(JSON.stringify(saved), {}).ok, true, "\u2026and it loads back");
-  eql([__t.bxNode(n.id).gguf, __t.bxShape(__t.bxNode(n.id))], [true, "1 in \u00b7 1 out"],
-    "\u2026still a loaded GGUF node");
+  eql([rec.kind, rec.gguf, rec.name], ["custom", undefined, "Test-Model"],
+    "the JSON is just the nested box and where it reads from — no GGUF flag");
+  eql(__t.bxImportJSON(JSON.stringify(saved), {}).ok, true, "…and it loads back");
+  eql([__t.bxNode(n.id).gguf, __t.bxShape(__t.bxNode(n.id))],
+    [undefined, "1 in · 1 out"], "…still the same loaded box");
   __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
   __t.BX.model = modelBefore;
 });
@@ -3107,7 +3132,7 @@ check("the GGUF node: a nested box a model loads into", () => {
 check("loading a model into the blank skeleton replaces it, wired", () => {
   __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
   __t.bxSeedBlank();                            // input wired straight into output
-  const n = __t.bxAdd("gguf", 400, 240, {});
+  const n = __t.bxAdd("custom", 400, 240, {});
   eql(__t.bxGGUFLoad(n.id, GGUF_CANVAS, "models/test-model.gguf"), true, "the model loads");
   eql(__t.BX.nodes.map(x => x.kind).sort(), ["custom", "input", "output"],
     "the skeleton goes, the model's own boundaries land");
@@ -3149,7 +3174,7 @@ check("a reshape's inferred dim keeps its sign through the UI", () => {
 
 check("a served text pipeline lands whole, prompt to de-tokenizer", () => {
   __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
-  const box = __t.bxAdd("gguf", 500, 300, {});
+  const box = __t.bxAdd("custom", 500, 300, {});
   const b0 = [box.x, box.y];
   const served = { type: "canvas", version: 1,
     nodes: [
@@ -3207,7 +3232,7 @@ check("a model box that lost its file binds back by name", () => {
 check("a run binds a model box that lost its file, then goes on", () => {
   __t.BX.nodes.slice().forEach(x => __t.bxRemove(x.id));
   const inp = __t.bxAdd("input", 0, 0, { dout: 1 });
-  const box = __t.bxAdd("gguf", 240, 0, {});
+  const box = __t.bxAdd("custom", 240, 0, {});
   const out = __t.bxAdd("output", 480, 0, { din: 128 });
   box.name = "Test-Model";
   box.file = null;
@@ -3973,7 +3998,7 @@ if (process.env.UI_BOOT_CANVAS) {
   check("the real canvas lands whole, the failing box intact", () => {
     const doc = JSON.parse(require("fs").readFileSync(process.env.UI_BOOT_CANVAS, "utf8"));
     for (const n of __t.BX.nodes.slice()) __t.bxRemove(n.id);
-    const box = __t.bxAdd("gguf", 0, 0, {});
+    const box = __t.bxAdd("custom", 0, 0, {});
     ok(__t.bxGGUFLoad(box.id, doc, null), "the repo load lands");
     ok(__t.BX.nodes.some(n => n.kind === "tokenize") &&
        __t.BX.nodes.some(n => n.kind === "detokenize"),
