@@ -510,7 +510,8 @@ check("hovering a wire reads out the data on it: type, dtype, shape", () => {
   eql(tip.hidden, false, "the card shows while the wire is hot");
   eql(line("who"), "from " + a.name, "…it names where the data comes from");
   eql(line("what"), "matrix", "…and its kind before a run: " + line("what"));
-  eql(line("note"), "not run yet", "…saying no value is there yet");
+  eql(line("shp"), "[5120]", "…and the shape the wiring declares");
+  eql(line("note"), null, "…so no run is needed for the shape");
   eql(tip.style.left, "216px", "…placed by the cursor (x): " + tip.style.left);
   // after a run the card carries the type, the dtype and the shape
   const path = a.id;
@@ -537,6 +538,28 @@ check("hovering a wire reads out the data on it: type, dtype, shape", () => {
   eql(line("what"), "image", "a picture reads as an image");
   eql(line("shp"), "[64\u00d764\u00d73]", "…as an RGB matrix");
   __t.bxRunValues = {};
+  // nothing declares this one: an opaque op, until a run fills the shape in
+  const op = __t.bxAdd("op", 0, 0, { op: "matmul" });
+  const l2 = __t.bxAdd("layer", 200, 0, { din: 8, dout: 8 });
+  __t.bxConnect(op.id, l2.id);
+  const e2 = __t.BX.edges.find(x => x.from === op.id && x.to === l2.id);
+  __t.bxHotSet(e2, ev);
+  eql(line("shp"), null, "an opaque op declares no shape…");
+  eql(line("note"), "not run yet", "…so it says so until a run: " + line("note"));
+  __t.bxRemove(op.id);
+  __t.bxRemove(l2.id);
+  // …while the wiring tracks the shape back: a layer's width here, and the same
+  // width read through a pass-through box on the way
+  const l3 = __t.bxAdd("layer", 0, 0, { din: 8, dout: 32 });
+  const ac = __t.bxAdd("act", 200, 0, { act: "silu" });
+  const l4 = __t.bxAdd("layer", 400, 0, { din: 32, dout: 4 });
+  __t.bxConnect(l3.id, ac.id);
+  __t.bxConnect(ac.id, l4.id);
+  __t.bxHotSet(__t.BX.edges.find(x => x.from === l3.id && x.to === ac.id), ev);
+  eql(line("shp"), "[32]", "a layer's width is declared…");
+  __t.bxHotSet(__t.BX.edges.find(x => x.from === ac.id && x.to === l4.id), ev);
+  eql(line("shp"), "[32]", "…and a pass-through reads it off its neighbour");
+  [l3, ac, l4].forEach(x => __t.bxRemove(x.id));
   __t.bxHotSet(null);
   eql(tip.hidden, true, "…and the card goes when the wire is let go");
 });

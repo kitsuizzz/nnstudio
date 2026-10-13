@@ -5194,6 +5194,8 @@ function bxPortType(n, dir, i) {               // what a dot is built to carry
     if (n.kind === "tokenize") return { kind: "ids", shape: null };
     if (n.kind === "detokenize" || n.kind === "hf") return { kind: "text", shape: null };
   }
+  if (dir === "out" && n.kind === "op" && bxOpName(n) === "reshape" && n.dims)
+    return { kind: "matrix", shape: "[" + bxDimsShow(n.dims) + "]" };
   const p = bxPortDefs(n, dir)[i || 0];        // the declared width, as a shape
   const size = p && p.size != null ? p.size : null;
   if (size == null) return { kind: "matrix", shape: null };
@@ -5240,13 +5242,14 @@ function bxTipShow(edge, ev) {                 // a wire: what data rides on it
   const kind = bxWireKind(a, st);
   const dt = st ? bxDtypeShort(st.dtype) : null;
   const numeric = kind === "matrix";           // the one numeric type
+  const declared = bxPortType(a, "out", edge.fromPort || 0);   // what the dots say
   const outs = bxPortDefs(a, "out").length;
   bxTipAdd(tip, "who", "from " + bxClip(a.name || bxKindLabel(a.kind), 26) +
                        (outs > 1 ? " \u00b7 out " + ((edge.fromPort || 0) + 1) : ""));
   bxTipAdd(tip, "what", kind + (numeric && dt ? " \u00b7 " + dt : ""));
-  const shape = bxWireShape(st);
-  if (shape) bxTipAdd(tip, "shp", shape);
-  else if (!st)
+  const shape = st ? bxWireShape(st) : (declared && declared.shape);
+  if (shape) bxTipAdd(tip, "shp", shape);      // tracked back through the wiring:
+  else if (!st)                                // no run needed for the shape
     bxTipAdd(tip, "note", bxFlowSet.has(bxPathId(a.id)) ? "no value kept" : "not run yet");
   const wstate = bxWireState(edge);            // what the size check found
   if (wstate === "bad") bxTipAdd(tip, "note", "size mismatch: " + bxEdgeMismatch(edge));
