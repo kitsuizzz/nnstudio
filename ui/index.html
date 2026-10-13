@@ -5179,6 +5179,9 @@ function bxWireValue(edge) {                   // the source box's last value, a
   return { node: a, st: bxRunValues[(bxCurrentPath() || []).concat(a.id).join("/")] || null };
 }
 function bxPortType(n, dir, i) {               // what a dot is built to carry
+  // A dot's shape is a per-sample one: the first axis of everything on the
+  // wires is the batch, and only a run knows its size — so design-time shapes
+  // read [\u00d7 ? \u00d7 width], values that actually exist read as they are.
   if (n.kind === "input" && dir === "out") {   // an input emits its own value
     if (n.input_mode === "image") {
       const s = n.image_size || null;
@@ -5186,20 +5189,22 @@ function bxPortType(n, dir, i) {               // what a dot is built to carry
                shape: "[" + (s || "?") + "\u00d7" + (s || "?") + "\u00d73]" };
     }
     if (n.input_mode === "text") return { kind: "text", shape: null };
-    const m = bxMatrixParse(n.values);         // a real matrix, rows above one
-    if (m && !m.bad && !m.ragged && m.r > 1)
-      return { kind: "matrix", shape: "[" + m.r + "\u00d7" + m.c + "]" };
+    const m = bxMatrixParse(n.values);         // the data itself: exact
+    if (m && !m.bad && !m.ragged)
+      return { kind: "matrix",
+               shape: m.r > 1 ? "[" + m.r + "\u00d7" + m.c + "]"
+                              : "[" + m.count + "]" };
   }
   if (dir === "out") {                         // the kinds that carry text
     if (n.kind === "tokenize") return { kind: "ids", shape: null };
     if (n.kind === "detokenize" || n.kind === "hf") return { kind: "text", shape: null };
   }
   if (dir === "out" && n.kind === "op" && bxOpName(n) === "reshape" && n.dims)
-    return { kind: "matrix", shape: "[" + bxDimsShow(n.dims) + "]" };
+    return { kind: "matrix", shape: "[? \u00d7 " + bxDimsShow(n.dims) + "]" };
   const p = bxPortDefs(n, dir)[i || 0];        // the declared width, as a shape
   const size = p && p.size != null ? p.size : null;
   if (size == null) return { kind: "matrix", shape: null };
-  return { kind: "matrix", shape: "[" + size + "]" };
+  return { kind: "matrix", shape: "[? \u00d7 " + size + "]" };
 }
 function bxTypeText(pt) {                      // "matrix [5120]" / "image [768\u00d7768\u00d73]"
   if (!pt) return null;

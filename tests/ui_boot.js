@@ -510,7 +510,7 @@ check("hovering a wire reads out the data on it: type, dtype, shape", () => {
   eql(tip.hidden, false, "the card shows while the wire is hot");
   eql(line("who"), "from " + a.name, "…it names where the data comes from");
   eql(line("what"), "matrix", "…and its kind before a run: " + line("what"));
-  eql(line("shp"), "[5120]", "…and the shape the wiring declares");
+  eql(line("shp"), "[? × 5120]", "…and the shape the wiring declares");
   eql(line("note"), null, "…so no run is needed for the shape");
   eql(tip.style.left, "216px", "…placed by the cursor (x): " + tip.style.left);
   // after a run the card carries the type, the dtype and the shape
@@ -556,10 +556,18 @@ check("hovering a wire reads out the data on it: type, dtype, shape", () => {
   __t.bxConnect(l3.id, ac.id);
   __t.bxConnect(ac.id, l4.id);
   __t.bxHotSet(__t.BX.edges.find(x => x.from === l3.id && x.to === ac.id), ev);
-  eql(line("shp"), "[32]", "a layer's width is declared…");
+  eql(line("shp"), "[? × 32]", "a layer's width is declared…");
   __t.bxHotSet(__t.BX.edges.find(x => x.from === ac.id && x.to === l4.id), ev);
-  eql(line("shp"), "[32]", "…and a pass-through reads it off its neighbour");
+  eql(line("shp"), "[? × 32]", "…and a pass-through reads it off its neighbour");
   [l3, ac, l4].forEach(x => __t.bxRemove(x.id));
+  // a shaped reshape knows its own dims — still behind the batch axis
+  const rs = __t.bxAdd("op", 0, 0, { op: "reshape", dims: "8x16" });
+  const l5 = __t.bxAdd("layer", 200, 0, { din: 128, dout: 4 });
+  __t.bxConnect(rs.id, l5.id);
+  __t.bxHotSet(__t.BX.edges.find(x => x.from === rs.id && x.to === l5.id), ev);
+  eql(line("shp"), "[? × 8×16]", "a shaped reshape declares its dims");
+  __t.bxRemove(rs.id);
+  __t.bxRemove(l5.id);
   __t.bxHotSet(null);
   eql(tip.hidden, true, "…and the card goes when the wire is let go");
 });
@@ -576,7 +584,7 @@ check("hovering an input box names it and the type it emits", () => {
   eql(tip.hidden, false, "the card shows over the box");
   eql(line("who"), "input", "…it names the kind");
   eql(line("what"), i.name, "…and the box's name");
-  eql(line("shp"), "emits matrix [5120]", "…and the type it will emit");
+  eql(line("shp"), "emits matrix [? × 5120]", "…and the type it will emit");
   eql(line("note"), null, "no run value yet: " + line("note"));
   // the run's own shape rides under the expectation
   __t.bxRunValues = { [i.id]: { shape: [4, 5120], dtype: "f32", mean: 1, peek: [1] } };
@@ -613,7 +621,7 @@ check("hovering an output box says what it expects", () => {
   __t.bxHotMove({ target: __t.bxCard(o), clientX: 140, clientY: 90 });
   eql(line("who"), "output", "the card names the kind");
   eql(line("what"), o.name, "…and the box's name");
-  eql(line("shp"), "expects matrix [128]", "…and what it takes");
+  eql(line("shp"), "expects matrix [? × 128]", "…and what it takes");
   __t.bxRunValues = { [o.id]: { shape: [64, 64, 3], dtype: "f32",
                                 image: { w: 64, h: 64, blob: "" } } };
   __t.bxHotSet(null);
@@ -644,20 +652,20 @@ check("a nested box's dots and body read as its own i/o boxes", () => {
   __t.bxHotMove({ target: dot, clientX: 120, clientY: 80 });
   eql(line("who"), "input", "a dot reads as the inner input box");
   eql(line("what"), "tokens", "…its name");
-  eql(line("shp"), "emits matrix [12]", "…and what it emits");
+  eql(line("shp"), "emits matrix [? × 12]", "…and what it emits");
   eql(line("note"), "port 1 of Inner-Model", "…and which dot it is");
   __t.bxHotSet(null);
   __t.bxHotMove({ target: g, clientX: 120, clientY: 80 });
   eql(line("who"), "nested box", "the body lists its dots");
   eql(line("what"), "Inner-Model", "…under the box's name");
   eql(tip.querySelectorAll(".row").map(r => String(r.textContent)),
-      ["in  tokens · matrix [12]", "out head · matrix [128]"],
+      ["in  tokens · matrix [? × 12]", "out head · matrix [? × 128]"],
       "…one row per dot, the inner boxes' own metadata");
   const outDot = g.querySelectorAll(".dport").find(d => String(d.className).indexOf(" out") >= 0);
   __t.bxHotSet(null);
   __t.bxHotMove({ target: outDot, clientX: 120, clientY: 80 });
   eql(line("who"), "output", "an out dot reads as the inner output box");
-  eql(line("shp"), "expects matrix [128]", "…and what it takes");
+  eql(line("shp"), "expects matrix [? × 128]", "…and what it takes");
   eql(line("note"), "port 1 of Inner-Model", "…port 1 of the nested box");
   __t.bxHotSet(null);
   __t.bxRemove(c.id);
@@ -1248,6 +1256,12 @@ check("the matrix input: numbers typed in the box, one row per line", () => {
     return e2 ? String(e2.textContent) : null;
   };
   eql(line("shp"), "emits matrix [2\u00d73]", "the hover card reads it as a matrix");
+  __t.bxConfigure(i.id, { input_mode: "matrix", values: "7 8 9", dout: 3 });
+  __t.bxHotSet(null);
+  __t.bxHotMove({ target: __t.bxCard(i), clientX: 120, clientY: 90 });
+  eql(line("shp"), "emits matrix [3]",
+      "a typed line is exact \u2014 the batch ? is only for declared shapes");
+  __t.bxConfigure(i.id, { input_mode: "matrix", values: "1 2 3\n4 5 6", dout: 3 });
   __t.bxHotSet(null);
   // the Run box reads the box's own data \u2014 a matrix is not a run field
   __t.BXRUN = { local: { connected: true,

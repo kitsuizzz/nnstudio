@@ -224,8 +224,10 @@
     <li><b>Wire two boxes</b> — drag from a box's <b>right dot</b> (its output) to
         another box's <b>left dot</b> (its input). <b>Hover a wire</b> to read the
         data riding it — its <b>type</b> (matrix, image, text, ids…), its
-        dtype and its <b>shape</b>: the shape the wiring declares, or the one the
-        last run actually left. The same hover on an
+        dtype and its <b>shape</b>. A shape the wiring declares reads
+        <code>[? × width]</code>: the first axis is the batch, and only a run
+        knows its size — what you type into an input box, and what a run
+        actually left, are exact. The same hover on an
         <span class="pill">input</span> or <span class="pill">output</span> box
         names it and says what it emits or expects; a
         <span class="pill">custom</span> box shows the input/output boxes its dots
