@@ -195,10 +195,10 @@
 <section class="card" id="canvas">
   <h1>The canvas: using it</h1>
   <p class="dim">
-    The toolbar strip above the canvas has four menus and the Train button:
+    The toolbar strip above the canvas has five menus and the Train button:
     <span class="pill grey">Files ▾</span> <span class="pill grey">Palette ▾</span>
-    <span class="pill grey">Backend ▾</span> <span class="pill grey">Train</span>
-    <span class="pill grey">VRAM ▾</span>
+    <span class="pill grey">Import ▾</span> <span class="pill grey">Backend ▾</span>
+    <span class="pill grey">Train</span> <span class="pill grey">VRAM ▾</span>
   </p>
 
   <h2>Moving around</h2>
@@ -206,6 +206,10 @@
     <li><b>Add a box</b> — open <span class="pill grey">Palette ▾</span>, expand a
         category, and drag a card onto the canvas. Categories follow the boxes'
         jobs: containers, data, compute, results, system.</li>
+    <li><b>Bring a model in</b> — <span class="pill grey">Import ▾</span> →
+        <b>GGUF model …</b> loads a whole <code>.gguf</code> (or builds the canvas
+        from a huggingface repo): the box lands in the middle of the view and the
+        picker opens.</li>
     <li><b>Add training data</b> — the Palette's
         <span class="pill grey">Dataset ▾</span> category holds the
         <span class="pill">dataset</span> box. Right-click it any time to
@@ -533,8 +537,9 @@
       can open into blocks, each block open into its attention and MLP.</p>
       <p class="bfields"><b>Fields:</b> its <code>inner</code> network; when it was
       built from a model file: <code>gguf</code> and the source <code>repo</code>.
-      A <b>GGUF box</b> (Palette ▾ → containers) is a custom box that loads a whole
-      <code>.gguf</code> model — right-click → <i>Load GGUF …</i>.</p>
+      A <b>GGUF box</b> (<span class="pill grey">Import ▾</span> →
+      <i>GGUF model …</i>) is a custom box that loads a whole <code>.gguf</code>
+      model — right-click → <i>Load GGUF …</i> re-loads or replaces it.</p>
     </div>
   </div>
 
@@ -702,12 +707,12 @@
 
   <h2>Run a GGUF model</h2>
   <ol>
-    <li><span class="pill grey">Palette ▾</span> → containers → <b>GGUF box</b>
-        (a whole model loads at the top level).</li>
-    <li>Right-click it → <b>Load GGUF …</b> → pick your <code>.gguf</code> file.
-        <span class="dim">(The first click arms the overwrite — click again to
-        confirm.)</span> The box fills with the model's blocks, wired exactly like
-        the original implementation.</li>
+    <li><span class="pill grey">Import ▾</span> → <b>GGUF model …</b> — a whole
+        model comes in at the top level: pick your <code>.gguf</code> file and
+        load it. The box fills with the model's blocks, wired exactly like the
+        original implementation. <span class="dim">(Loading over a box that
+        already holds a model arms the overwrite — the second click
+        confirms.)</span></li>
     <li><span class="pill grey">Backend ▾</span> → connect. Add an
         <span class="pill">input</span> box (or use the skeleton) and press its
         <b>▶ run the design</b>. (Give the tokenizer its prompt first:
@@ -726,10 +731,10 @@
     <span class="pill">input</span> box set to <code>image</code> mode.
   </p>
   <ol>
-    <li><span class="pill grey">Palette ▾</span> → containers → <b>GGUF box</b>.</li>
-    <li>Right-click it → <b>Load GGUF …</b>: pick the model, and pick the
-        <b>vision (mmproj)</b> file (the form preselects the mmproj whose name
-        matches the model). Load it — the design lands with the text model
+    <li><span class="pill grey">Import ▾</span> → <b>GGUF model …</b>: pick the
+        model, and pick the <b>vision (mmproj)</b> file (the form preselects the
+        mmproj whose name matches the model). Load it — the design lands with
+        the text model
         <i>and</i> the vision tower: the image input → the tower → an
         <b>image embeds</b> output, beside the model's own tokens → logits.</li>
     <li>In the image input's window, <b>pick an image</b> (it is stored in the
@@ -1136,9 +1141,9 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         stop. Press <b>resume</b>; the step counter continues where it stopped.</li>
   </ol>
   <div class="try">
-    <b>Then go big.</b> Drop a <b>GGUF box</b> on the canvas, load a real model
-    (<span class="dim">click the overwrite twice</span>), connect the backend, and
-    run a prompt. Double-click into the model and find the boxes you now
+    <b>Then go big.</b> Load a real model
+    (<span class="pill grey">Import ▾</span> → <b>GGUF model …</b>), connect the
+    backend, and run a prompt. Double-click into the model and find the boxes you now
     understand: embeds, layers, norms, ops — same vocabulary, billion-scale.
   </div>
 </section>

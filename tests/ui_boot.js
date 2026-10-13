@@ -200,7 +200,7 @@ globalThis.__t = {
   bxMenuBuild, bxMenuClose, bxClip, bxShape, bxtExport, bxtImport, bxtForm, bxtRefresh,
   bxWeightsForm, bxWeightsApply, bxWeightsExportForm, bxWeightScore, bxTensorDims,
   bxTensorDtype, bxApplyManifest,
-  bxtFilesToggle, bxtFilesClose, bxtPaletteToggle, bxtVramToggle,
+  bxtFilesToggle, bxtFilesClose, bxtPaletteToggle, bxtImportToggle, bxImportGGUF, bxtVramToggle,
   bxtBackendToggle, bxtBackendPick, get BX_BACKEND() { return BX_BACKEND; },
   bxtRunToggle, bxtRunRefresh, bxtRunSync, bxtRunEnabled, bxtRunGo, bxtRunLoad, bxFlowVerify,
   bxtRunOffload,
@@ -750,20 +750,53 @@ check("the Palette menu: Input and Output up top, categories below", () => {
     ["input", "output"], "…and clicking it again collapses");
 });
 
-check("the Palette menu: the GGUF card is top level only", () => {
+check("no GGUF card in the Palette — a model comes in through Import", () => {
   __t.bxRenderPalette();
   const menu = getEl("bxtPalMenu");
   const cards = () => menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind"));
   menu.children.find(c => c.textContent === "containers").click();
-  eql(cards(), ["input", "output", "gguf", "custom"],
-    "containers leads with the GGUF card");
-  const box = __t.bxAdd("custom", 0, 0, {});
-  __t.bxEnter(box.id);              // entering re-renders the menu, the category stays open
-  eql(cards(), ["input", "output", "custom"], "inside a nested box there is no GGUF card");
-  __t.bxLeave();
-  __t.bxRenderPalette();
-  eql(cards(), ["input", "output", "gguf", "custom"], "…and it is back at the top level");
+  eql(cards(), ["input", "output", "custom"],
+    "containers is just the nested box, at the top level");
   menu.children.find(c => c.textContent === "containers").click();   // collapse again
+  // the canvas right-click menu has no GGUF box either
+  __t.bxMenuBuild("canvas", null, { clientX: 10, clientY: 10 });
+  const heads = () => getEl("bxmenu").children.filter(
+    x => String(x.className).split(/\s+/).includes("drop"));
+  heads().find(x => x.textContent === "containers").click();
+  eql(getEl("bxmenu").children.filter(x => x.className === "mi").map(x => x.textContent),
+      ["nested box"], "…and the canvas menu offers only the nested box");
+  __t.bxMenuClose();
+});
+
+check("the Import menu: one door to load a GGUF model", () => {
+  ok(getEl("bxtImport"), "the toolbar has an Import button");
+  eql(getEl("bxtImportMenu").children.map(c => c.textContent), ["GGUF model …"],
+      "…offering a GGUF model");
+  __t.bxtImportToggle();
+  eql(getEl("bxtImportMenu").hidden, false, "a click opens the menu");
+  __t.bxtImportToggle();
+  eql(getEl("bxtImportMenu").hidden, true, "…and another closes it");
+  const before = __t.BX.nodes.length;
+  __t.bxImportGGUF();                          // the item: land the box, open the picker
+  const made = __t.BX.nodes[__t.BX.nodes.length - 1];
+  eql([__t.BX.nodes.length - before, made.kind, made.gguf], [1, "custom", true],
+      "choosing it lands a GGUF box");
+  const form = getEl("bxmenu");
+  ok(!form.hidden && form.children[0] &&
+     String(form.children[0].children.map(c => c.textContent).join(" | "))
+       .indexOf("model") >= 0,
+     "…with the model picker open");
+  __t.bxMenuClose();
+  __t.bxRemove(made.id);
+  // a whole model loads at the top level only
+  const box = __t.bxAdd("custom", 0, 0, {});
+  __t.bxEnter(box.id);
+  __t.bxtRefresh();
+  eql(__t.bxtImportToggle(), false, "inside a nested box the menu refuses");
+  ok(String(getEl("bxtImport").className).indexOf("off") >= 0,
+     "…and the button reads off");
+  __t.bxLeave();
+  __t.bxtRefresh();
   __t.bxRemove(box.id);
 });
 
@@ -2319,7 +2352,7 @@ check("a nested box takes nested JSON and never a canvas", () => {
     ["boundaries", "weights", "text", "tensor ops", "blocks", "containers", "the design"],
     "inside a nested box the categories are all there, collapsed");
   nheads().find(x => x.textContent === "containers").click();
-  eql(nopen(), ["nested box"], "containers has no GGUF card this deep");
+  eql(nopen(), ["nested box"], "containers is just the nested box, any depth");
   nheads().find(x => x.textContent === "the design").click();
   eql(nopen(), ["import a nested box …"],
     "the design has no canvas to save or load here");

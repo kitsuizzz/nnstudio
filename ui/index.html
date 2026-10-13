@@ -940,6 +940,8 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
             onclick="window.open('/docs', '_blank')">Docs</span>
       <span class="bxtbtn" id="bxtPalette" title="add a box to the canvas">Palette ▾</span>
       <div class="bxtdrop" id="bxtPalMenu" hidden></div>
+      <span class="bxtbtn" id="bxtImport" title="bring a GGUF model in">Import ▾</span>
+      <div class="bxtdrop" id="bxtImportMenu" hidden></div>
       <span class="bxtbtn" id="bxtBackend" title="where the heavy work runs">Backend ▾</span>
       <div class="bxtdrop" id="bxtBackendMenu" hidden></div>
       <span class="bxtbtn off" id="bxtTrainBtn" title="show the Train box">Train</span>
@@ -1649,7 +1651,7 @@ function bxAddTemplate(tpl, x, y, name) {
   bxCommit();
   return n;
 }
-function bxAddKind(kind, x, y, v) {              // the palette/menu path: kinds, or a template
+function bxAddKind(kind, x, y, v) {              // the palette / Import path: a kind, or a template
   if (kind === "gguf") return bxAddGGUF(x, y);
   if (BX_TEMPLATES[kind]) return bxAddTemplate(kind, x, y, v && v.name);
   return bxAdd(kind, x, y, v);
@@ -5957,13 +5959,8 @@ function bxMenuBuild(mode, id, ev) {
     ["state space box", () => { const w = bxPoint(ev); bxMenuClose(); bxAddTemplate("ssm", w.x, w.y); }],
     ["mixture of experts box", () => { const w = bxPoint(ev); bxMenuClose(); bxAddTemplate("moe", w.x, w.y); }],
   ], again);
-  const containers = [["nested box", () => bxForm("custom", ev, null)]];
-  if (!BX.up) containers.unshift(["GGUF box", () => {   // a whole model loads at the top level only
-    const w = bxPoint(ev);
-    bxMenuClose();
-    bxAddGGUF(w.x, w.y);
-  }]);
-  section("containers", "containers", containers, again);
+  section("containers", "containers",          // a whole model loads from Import \u25be
+          [["nested box", () => bxForm("custom", ev, null)]], again);
   const design = [];
   if (bxCopied) design.push(["paste", () => {     // at the point you right-clicked
     const w = ev ? bxPoint(ev) : null;
@@ -6053,7 +6050,8 @@ function bxtForm(mode) {
 function bxtExport() { return bxtForm("export"); }
 function bxtImport() { return bxtForm("import"); }
 function bxtDropsClose(keep) {
-  for (const id of ["bxtFilesMenu", "bxtPalMenu", "bxtBackendMenu", "bxtVramMenu"]) {
+  for (const id of ["bxtFilesMenu", "bxtPalMenu", "bxtImportMenu",
+                    "bxtBackendMenu", "bxtVramMenu"]) {
     if (id === keep) continue;
     const m = $(id);
     if (m) m.hidden = true;
@@ -6070,6 +6068,11 @@ function bxtToggle(id) {
 }
 function bxtFilesToggle() { return BX.up ? false : bxtToggle("bxtFilesMenu"); }
 function bxtPaletteToggle() { return bxtToggle("bxtPalMenu"); }
+function bxtImportToggle() { return BX.up ? false : bxtToggle("bxtImportMenu"); }
+function bxImportGGUF() {                      // Import \u2192 a whole model, in the middle
+  if (BX.up) return null;                      // a model loads at the top level only
+  return bxDropPalette("gguf", null);          // lands the box, then opens the picker
+}
 function bxtVramToggle() {
   const open = bxtToggle("bxtVramMenu");
   if (open) bxRenderEstimate();                // the live vram line, fresh
@@ -6805,9 +6808,16 @@ function bxtRefresh() {
     if (btn.classList) btn.classList.toggle("off", up);
     btn.title = up ? "come back out to the top level first" : "the design as JSON";
   }
-  if (up) {                                    // no canvas menu survives going inside
-    const m = $("bxtFilesMenu");
-    if (m) m.hidden = true;
+  const imp = $("bxtImport");                  // a whole model loads at the top level
+  if (imp) {
+    if (imp.classList) imp.classList.toggle("off", up);
+    imp.title = up ? "come back out to the top level first" : "bring a GGUF model in";
+  }
+  if (up) {                                    // no toolbar menu survives going inside
+    for (const id of ["bxtFilesMenu", "bxtImportMenu"]) {
+      const m = $(id);
+      if (m) m.hidden = true;
+    }
   }
   bxtRunRefresh();                             // Run follows the backend's state
 }
@@ -6827,6 +6837,12 @@ function bxtInit() {
                           "every weight box into one pt / safetensors file",
                           () => { bxtDropsClose(); bxWeightsExportForm(); }));
   }
+  const imenu = $("bxtImportMenu");
+  if (imenu) {                                 // the one door to a whole model
+    imenu.appendChild(item("GGUF model \u2026",
+      "load a .gguf from the backend machine \u2014 or build the canvas from a huggingface repo",
+      () => { bxtDropsClose(); bxImportGGUF(); }));
+  }
   const wire = (id, toggle) => {
     const btn = $(id);
     if (btn && btn.addEventListener)
@@ -6838,6 +6854,7 @@ function bxtInit() {
   bxtBackendLoad();                            // the remembered backend choice
   wire("bxtFiles", bxtFilesToggle);
   wire("bxtPalette", bxtPaletteToggle);
+  wire("bxtImport", bxtImportToggle);
   wire("bxtBackend", bxtBackendToggle);
   wire("bxtTrainBtn", bxtRunToggle);
   wire("bxtVram", bxtVramToggle);
@@ -8314,11 +8331,9 @@ function bxForm(kind, ev, node, mode) {
 // canvas to land exactly there.
 let bxpOpen = null;                            // the expanded category, if any
 function bxPreview(kind) {
-  const gguf = kind === "gguf";
   const isTpl = !!BX_TEMPLATES[kind];
-  const fake = { id: "pal-" + kind, kind: (gguf || isTpl) ? "custom" : kind, x: 0, y: 0,
-                 name: gguf ? "GGUF"
-                       : (kind === "embed" ? "embedding " : kind === "layer" ? "fully connected "
+  const fake = { id: "pal-" + kind, kind: isTpl ? "custom" : kind, x: 0, y: 0,
+                 name: (kind === "embed" ? "embedding " : kind === "layer" ? "fully connected "
                         : kind === "act" ? "activation "
                         : kind === "op" ? "operation " : kind === "norm" ? "norm "
                         : kind === "tokenize" ? "tokenizer "
@@ -8346,9 +8361,9 @@ function bxPreview(kind) {
                  conv: kind === "ssm" ? 4 : undefined,
                  experts: kind === "moe" ? 8 : undefined,
                  topk: kind === "moe" ? 2 : undefined,
-                 inner: gguf ? { nodes: [], edges: [] } : (isTpl ? { nodes: [
+                 inner: isTpl ? { nodes: [
                      { id: "pi", kind: "input", name: "in", x: 0, y: 0 },
-                     { id: "po", kind: "output", name: "out", x: 320, y: 0 }], edges: [] } : undefined) };
+                     { id: "po", kind: "output", name: "out", x: 320, y: 0 }], edges: [] } : undefined };
   return svg("svg", { class: "bxpalcard", viewBox: "-14 -8 196 96", width: "100%", height: "96" },
              bxCard(fake));
 }
@@ -8363,8 +8378,7 @@ const BX_PALETTE = () => [
                   ["script", "script box"], ["sample", "sample box"]]],
   ["blocks", [["attn", "attention box"], ["ssm", "state space box"],
               ["moe", "mixture of experts box"]]],
-  ["containers", BX.up ? [["custom", "nested box"]]
-                       : [["gguf", "GGUF box"], ["custom", "nested box"]]],
+  ["containers", [["custom", "nested box"]]],
 ];
 function bxPalCard(kind, label) {
   const item = mk("div", { class: "bxpalitem",
