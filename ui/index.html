@@ -1135,6 +1135,12 @@ function bxRedoStep() {
   return true;
 }
 function bxDim(d) { return d == null ? "?" : String(d); }
+function bxInt(x, keep) {                      // a plain integer: negatives stay
+  if (x === undefined) return keep === undefined ? null : keep;
+  if (x === null || String(x).trim() === "") return null;
+  const v = Number(x);
+  return isFinite(v) ? Math.round(v) : (keep === undefined ? null : keep);
+}
 function bxSize(x, keep) {
   if (x === undefined) return keep === undefined ? null : keep;  // not given: leave it
   if (x === null || x === "") return null;                       // cleared: unconfigured
@@ -1299,6 +1305,12 @@ function bxShape(n) {
       return "[" + (Array.isArray(n.axes) ? n.axes.join(" ") : n.axes) + "]";
     if (op === "mask")
       return (n.mode || "causal") + (n.window ? " w" + n.window : "");
+    if (op === "slice") {
+      const ax = n.axis == null ? 0 : Number(n.axis);
+      if (n.index != null) return "axis " + ax + " \u00b7 index " + n.index;
+      return "axis " + ax + " \u00b7 " + (n.start == null ? 0 : Number(n.start))
+             + ":" + (n.stop == null ? "\u2026" : Number(n.stop));
+    }
     return op;
   }
   if (n.kind === "custom") {                             // how many ports it exposes
@@ -1677,6 +1689,10 @@ function bxAdd(kind, x, y, v) {
     n.op = BX_OPS.indexOf(v.op) >= 0 ? v.op : BX_OPS[0];
     const d = bxDims(v.dims);
     if (d) n.dims = d.join("x");
+    for (const k of ["axis", "index", "start", "stop"]) {   // the slice's own
+      const x = bxInt(v[k], null);
+      if (x != null) n[k] = x;
+    }
   }
   if (kind === "norm") { n.norm = v.norm === "layer" ? "layer" : "rms"; n.eps = bxNum(v.eps, null); }
   if (kind === "embed") {
@@ -2719,6 +2735,9 @@ function bxConfigure(id, vals) {
     const d = bxDtypeName(vals.dtype, null);
     if (d) { n.dtype = d; n.wbytes = null; }       // retyped: estimate from params × this dtype
     else if (!String(vals.dtype == null ? "" : vals.dtype).trim()) n.dtype = null;
+  }
+  for (const k of ["axis", "index", "start", "stop"]) {  // the slice's own fields
+    if (n.kind === "op" && vals[k] !== undefined) n[k] = bxInt(vals[k], n[k]);
   }
   if (n.kind === "op" && vals.dims !== undefined) {      // the shape a reshape makes
     const raw = String(vals.dims == null ? "" : vals.dims).trim();
@@ -8161,6 +8180,14 @@ function bxForm(kind, ev, node, mode) {
   } else if (mode === "operation") {
     f.op = opField(node ? node.op : BX_OPS[0]);
     f.dims = dimsField(node ? node.dims || "" : "");
+    f.axis = numField("axis", node && node.axis != null ? node.axis : 0);
+    f.index = numField("index", node && node.index != null ? node.index : null);
+    f.start = numField("start", node && node.start != null ? node.start : null);
+    f.stop = numField("stop", node && node.stop != null ? node.stop : null);
+    f.sliceHint = mk("div", { class: "panehint",
+      text: "slice: index picks one slot along axis (that dim goes); "
+          + "else start\u2013stop keeps a range \u2014 index -1 is the last one" });
+    wrap.appendChild(f.sliceHint);
   } else if (mode === "norm") {
     f.norm = normField(node ? node.norm : "rms");
     f.eps = numField("epsilon", node ? node.eps : null);
@@ -8273,9 +8300,15 @@ function bxForm(kind, ev, node, mode) {
       mode !== "sample" && mode !== "hf" && mode !== "dataset" &&
       mode !== "reward" && mode !== "train")
     f.t = textField("tensor", node ? node.t || "" : "", "blk.0.attn_q.weight");
-  if (f.op) {                                 // the output-dim field only fits reshape
+  if (f.op) {                                 // the dims fit reshape, the four fit slice
     const lab = f.dims && f.dims.parentNode;
-    const sync = () => { if (lab) lab.hidden = f.op.value !== "reshape"; };
+    const slice = [f.axis, f.index, f.start, f.stop]
+      .map(x => x && x.parentNode).filter(Boolean);
+    if (f.sliceHint) slice.push(f.sliceHint);
+    const sync = () => {
+      if (lab) lab.hidden = f.op.value !== "reshape";
+      for (const l of slice) l.hidden = f.op.value !== "slice";
+    };
     f.op.addEventListener("change", () => { sync(); bxMenuPlace(); });
     sync();
   }
@@ -8306,6 +8339,11 @@ function bxForm(kind, ev, node, mode) {
     if (f.fn) v.act = f.fn.value;
     if (f.op) v.op = f.op.value;
     if (f.dims && f.op && f.op.value === "reshape") v.dims = f.dims.value;
+    if (f.op && f.op.value === "slice") {      // read once, for the slice alone
+      for (const [k, fld] of [["axis", f.axis], ["index", f.index],
+                              ["start", f.start], ["stop", f.stop]])
+        if (fld) v[k] = fld.value;             // "" clears the field
+    }
     if (f.vocab) v.vocab = f.vocab.value;
     if (f.dout) v.dout = f.dout.value;
     if (f.norm) v.norm = f.norm.value;

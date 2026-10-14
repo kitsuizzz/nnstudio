@@ -673,6 +673,13 @@ def slice_zeros_and_partial_rope():
     o2 = T.run(c, {})["values"]["o2"]
     assert o2["shape"] == [2, 2] and o2["peek"] == [1.0, 2.0, 4.0, 5.0], o2
 
+    # slice index -1: the last slot along the axis \u2014 the last token's vector
+    c = canvas([n("input", "i", dout=6, values="1.0 2.0 3.0\n4.0 5.0 6.0"),
+                n("op", "s3", op="slice", axis=0, index=-1),
+                n("output", "o3", din=3)], [edge("i", "s3"), edge("s3", "o3")])
+    o3 = T.run(c, {})["values"]["o3"]
+    assert o3["shape"] == [3] and o3["peek"] == [4.0, 5.0, 6.0], o3
+
     # zeros: the same shape, all zero (an elided branch's contribution)
     c = canvas([n("input", "i", dout=3, values="1.0 2.0 3.0"),
                 n("op", "z", op="zeros"),

@@ -519,7 +519,12 @@
       <code>reshape</code>, <code>permute</code>, <code>repeat</code>,
       <code>mask</code>, <code>slice</code>, <code>zeros</code>; plus each op's own
       settings (<code>dims</code>, <code>axes</code>, <code>theta</code>,
-      <code>window</code>, head geometry for attention…).</p>
+      <code>window</code>, head geometry for attention…). A
+      <code>slice</code> is told <code>axis</code> and either <code>index</code>
+      — one slot, that dim disappears (<code>-1</code> is the last one, so a
+      <code>[7 × 5120]</code> of tokens becomes the last token's
+      <code>[5120]</code>) — or <code>start</code>/<code>stop</code>, which
+      keep a range of that axis.</p>
     </div>
   </div>
 

@@ -2687,6 +2687,41 @@ check("static operation boxes: transpose, dot product, arithmetic, reshape", () 
   [i, t, o, l, a, l2, l3, d, o2, big].forEach(n => __t.bxRemove(n.id));
 });
 
+check("a slice can be told which piece to take (axis, index, start/stop)", () => {
+  const s = __t.bxAdd("op", 200, 0, {});
+  const live = () => __t.bxNode(s.id);         // an import re-makes the node objects
+  __t.bxConfigure(s.id, { op: "slice", axis: 0, index: -1 });
+  eql([live().op, live().axis, live().index], ["slice", 0, -1],
+    "axis 0, index -1: the last slot along the first axis");
+  eql(__t.bxShape(live()), "axis 0 \u00b7 index -1", "the card reads it: " + __t.bxShape(live()));
+  const rec = __t.bxJSONNode(live());
+  eql([rec.op, rec.axis, rec.index], ["slice", 0, -1], "\u2026and the design carries them");
+  eql(__t.bxImportJSON(JSON.stringify(__t.bxExportCanvas()), {}).ok, true, "\u2026and loads back");
+  eql([live().axis, live().index], [0, -1], "\u2026with its slice intact");
+  // start/stop is the other half: a range along that axis
+  __t.bxConfigure(s.id, { index: "", start: "3", stop: "5" });
+  eql([live().index, live().start, live().stop],
+    [null, 3, 5], "clearing index hands it to start/stop");
+  eql(__t.bxShape(live()), "axis 0 \u00b7 3:5", "\u2026which the card reads too");
+  __t.bxConfigure(s.id, { op: "slice", axis: 0, index: -1 });
+  // the form asks for the four \u2014 and only for a slice
+  __t.bxForm("op", null, __t.bxNode(s.id), "operation");
+  const wrap = getEl("bxmenu").children[0];
+  const lab = (t) => wrap.children.find(c => String(c.textContent) === t);
+  eql([lab("axis").hidden, lab("index").hidden, lab("start").hidden, lab("stop").hidden],
+    [false, false, false, false], "a slice's form asks for its four fields");
+  ok(String(lab("index").children[0].value) === "-1", "\u2026with the slice it has");
+  __t.bxMenuClose();
+  __t.bxConfigure(s.id, { op: "reshape", dims: "2x8" });
+  __t.bxForm("op", null, __t.bxNode(s.id), "operation");
+  const wrap2 = getEl("bxmenu").children[0];
+  const lab2 = (t) => wrap2.children.find(c => String(c.textContent) === t);
+  eql([lab2("axis").hidden, lab2("output dim").hidden], [true, false],
+    "\u2026hidden for a reshape, which asks for its output dim instead");
+  __t.bxMenuClose();
+  __t.bxRemove(s.id);
+});
+
 check("reshape can be told the shape it makes (its output dim)", () => {
   const src = __t.bxAdd("layer", 0, 0, {});
   const r = __t.bxAdd("op", 200, 0, {});
