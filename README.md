@@ -130,6 +130,7 @@ code (git-ignored) is the default.
 | `tests/gguf_canvas_test.py` | the pure builder test, on synthetic tensors |
 | `tests/nn_torch_test.py` | the engine's offline tests (forward, ops, training, GGUF weights) |
 | `tests/nn_users_test.py` | the account store, offline: sealed rows (not one plaintext name), the bot check's answers, the .env loader, design CRUD |
+| `tools/quant_bench.py` | what a design's weights cost per sweep: the native kernels timed on real blocks of a GGUF, summed per type |
 | `tools/tls_local.sh` | the tiny local CA + server certificate (`.certs/`, git-ignored) for reaching the app over https from your own devices |
 | `tests/agent_test.py` | the live end-to-end: a real agent connects and a design runs (`--live`) |
 | `weights/` | where `export weights …` writes, and a place to drop pt / safetensors / gguf files for the pickers |
@@ -163,7 +164,11 @@ in the browser):
   Frozen GGUF layers can run **natively**: their quantized blocks stay packed
   and a Triton kernel (bundled with torch, no new dependency) fuses the
   dequant into the matmul — `Q8_0`, `Q4_K`, `Q5_K`, `Q6_K`, `Q2_K`, `Q3_K`,
-  `IQ4_XS` and `IQ4_NL` today; other types dequantize at load as before.
+  `IQ4_XS`, `IQ4_NL`, `IQ3_S`, `IQ3_XXS`, `IQ2_S` and `IQ2_XS` today; `F32`
+  and anything else dequantizes at load as before. The K-family kernels run
+  near half the card's bandwidth; the IQ-family ones are several times
+  slower — `tools/quant_bench.py <file>` times a file block by block and
+  prices one forward pass, which is usually where a slow decode lives.
   [docs/backend.md](docs/backend.md)
   has the per-platform matrix, and `tools/backend_check.py` reports what your
   machine can do.
