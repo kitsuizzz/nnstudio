@@ -484,7 +484,7 @@ if _TRITON is not None:
                  mask=mm[:, None] & nm[None, :])
 
     @triton.jit
-    def _iq4_xs_gemm(A, W, KV, C, M, N, K, BM: tl.constexpr, BN: tl.constexpr):
+    def _iq4_xs_gemm(A, W, KV, C, M, N, K, BM: tl.constexpr, BN: tl.constexpr, SPLIT: tl.constexpr):
         """IQ4_XS: 8 sub-blocks of 32; 6-bit biased scales packed into
         4 + 2 bytes, nibbles mapped through the 16-value codebook."""
         pid_m = tl.program_id(0)
@@ -494,12 +494,15 @@ if _TRITON is not None:
         mm = rm < M
         nm = rn < N
         nsup = K // 256
+        per = (nsup + SPLIT - 1) // SPLIT
+        c0 = tl.program_id(2) * per
+        c1 = tl.minimum(c0 + per, nsup)
         rn64 = rn.to(tl.int64)
         j = tl.arange(0, 32)[None, :]
         j16 = j % 16
         jsh = 4 * (j // 16)
         acc = tl.zeros((BM, BN), dtype=tl.float32)
-        for c in range(0, nsup):
+        for c in range(c0, c1):
             base = (rn64 * nsup + c) * 136
             d = _f16_at(W, base, nm).to(tl.float32)
             for s in tl.static_range(8):
@@ -516,8 +519,12 @@ if _TRITON is not None:
                             + (c * 256 + s * 32 + tl.arange(0, 32))[None, :],
                             mask=mm[:, None], other=0.0)
                 acc += tl.dot(a, tl.trans(w))
-        tl.store(C + rm[:, None] * N + rn[None, :], acc,
-                 mask=mm[:, None] & nm[None, :])
+        if SPLIT == 1:
+            tl.store(C + rm[:, None] * N + rn[None, :], acc,
+                     mask=mm[:, None] & nm[None, :])
+        else:
+            tl.atomic_add(C + rm[:, None] * N + rn[None, :], acc,
+                          mask=mm[:, None] & nm[None, :])
 
     @triton.jit
     def _u32_at(W, off, mask):
@@ -529,7 +536,7 @@ if _TRITON is not None:
         return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
 
     @triton.jit
-    def _iq3_s_gemm(A, W, G, KS, C, M, N, K, BM: tl.constexpr, BN: tl.constexpr):
+    def _iq3_s_gemm(A, W, G, KS, C, M, N, K, BM: tl.constexpr, BN: tl.constexpr, SPLIT: tl.constexpr):
         """IQ3_S: 8 sub-blocks of 32; a 9-bit grid index (qs byte + qh bit)
         picks one 4-value grid row, a sign byte flips values, a nibble scales
         the sub-block (d * (1 + 2*sc))."""
@@ -540,6 +547,9 @@ if _TRITON is not None:
         mm = rm < M
         nm = rn < N
         nsup = K // 256
+        per = (nsup + SPLIT - 1) // SPLIT
+        c0 = tl.program_id(2) * per
+        c1 = tl.minimum(c0 + per, nsup)
         rn64 = rn.to(tl.int64)
         t = tl.arange(0, 32)[None, :]
         j = t // 8
@@ -547,7 +557,7 @@ if _TRITON is not None:
         li = 2 * j + k // 4
         v = k % 4
         acc = tl.zeros((BM, BN), dtype=tl.float32)
-        for c in range(0, nsup):
+        for c in range(c0, c1):
             base = (rn64 * nsup + c) * 110
             d = _f16_at(W, base, nm).to(tl.float32)
             for s in tl.static_range(8):
@@ -566,11 +576,15 @@ if _TRITON is not None:
                             + (c * 256 + s * 32 + tl.arange(0, 32))[None, :],
                             mask=mm[:, None], other=0.0)
                 acc += tl.dot(a, tl.trans(w))
-        tl.store(C + rm[:, None] * N + rn[None, :], acc,
-                 mask=mm[:, None] & nm[None, :])
+        if SPLIT == 1:
+            tl.store(C + rm[:, None] * N + rn[None, :], acc,
+                     mask=mm[:, None] & nm[None, :])
+        else:
+            tl.atomic_add(C + rm[:, None] * N + rn[None, :], acc,
+                          mask=mm[:, None] & nm[None, :])
 
     @triton.jit
-    def _iq3_xxs_gemm(A, W, G, KS, C, M, N, K, BM: tl.constexpr, BN: tl.constexpr):
+    def _iq3_xxs_gemm(A, W, G, KS, C, M, N, K, BM: tl.constexpr, BN: tl.constexpr, SPLIT: tl.constexpr):
         """IQ3_XXS: same 4-value grid rows, but one uint32 per sub-block holds
         both the 4-bit scale (top bits) and four 7-bit sign-codebook indices."""
         pid_m = tl.program_id(0)
@@ -580,6 +594,9 @@ if _TRITON is not None:
         mm = rm < M
         nm = rn < N
         nsup = K // 256
+        per = (nsup + SPLIT - 1) // SPLIT
+        c0 = tl.program_id(2) * per
+        c1 = tl.minimum(c0 + per, nsup)
         rn64 = rn.to(tl.int64)
         t = tl.arange(0, 32)[None, :]
         j = t // 8
@@ -587,7 +604,7 @@ if _TRITON is not None:
         li = 2 * j + k // 4
         v = k % 4
         acc = tl.zeros((BM, BN), dtype=tl.float32)
-        for c in range(0, nsup):
+        for c in range(c0, c1):
             base = (rn64 * nsup + c) * 98
             d = _f16_at(W, base, nm).to(tl.float32)
             for s in tl.static_range(8):
@@ -603,11 +620,15 @@ if _TRITON is not None:
                             + (c * 256 + s * 32 + tl.arange(0, 32))[None, :],
                             mask=mm[:, None], other=0.0)
                 acc += tl.dot(a, tl.trans(w))
-        tl.store(C + rm[:, None] * N + rn[None, :], acc,
-                 mask=mm[:, None] & nm[None, :])
+        if SPLIT == 1:
+            tl.store(C + rm[:, None] * N + rn[None, :], acc,
+                     mask=mm[:, None] & nm[None, :])
+        else:
+            tl.atomic_add(C + rm[:, None] * N + rn[None, :], acc,
+                          mask=mm[:, None] & nm[None, :])
 
     @triton.jit
-    def _iq2_s_gemm(A, W, G, KS, C, M, N, K, BM: tl.constexpr, BN: tl.constexpr):
+    def _iq2_s_gemm(A, W, G, KS, C, M, N, K, BM: tl.constexpr, BN: tl.constexpr, SPLIT: tl.constexpr):
         """IQ2_S: 8 sub-blocks of 32; 10-bit grid index (byte + 2 qh bits) into
         8-value rows, sign bits per byte, nibble scales (d*(0.5+sc)*0.25)."""
         pid_m = tl.program_id(0)
@@ -617,12 +638,15 @@ if _TRITON is not None:
         mm = rm < M
         nm = rn < N
         nsup = K // 256
+        per = (nsup + SPLIT - 1) // SPLIT
+        c0 = tl.program_id(2) * per
+        c1 = tl.minimum(c0 + per, nsup)
         rn64 = rn.to(tl.int64)
         t = tl.arange(0, 16)[None, :]
         j = t // 8
         k = t % 8
         acc = tl.zeros((BM, BN), dtype=tl.float32)
-        for c in range(0, nsup):
+        for c in range(c0, c1):
             base = (rn64 * nsup + c) * 82
             d = _f16_at(W, base, nm).to(tl.float32)
             for s in tl.static_range(16):
@@ -643,11 +667,15 @@ if _TRITON is not None:
                             + (c * 256 + s * 16 + tl.arange(0, 16))[None, :],
                             mask=mm[:, None], other=0.0)
                 acc += tl.dot(a, tl.trans(w))
-        tl.store(C + rm[:, None] * N + rn[None, :], acc,
-                 mask=mm[:, None] & nm[None, :])
+        if SPLIT == 1:
+            tl.store(C + rm[:, None] * N + rn[None, :], acc,
+                     mask=mm[:, None] & nm[None, :])
+        else:
+            tl.atomic_add(C + rm[:, None] * N + rn[None, :], acc,
+                          mask=mm[:, None] & nm[None, :])
 
     @triton.jit
-    def _iq2_xs_gemm(A, W, G, KS, C, M, N, K, BM: tl.constexpr, BN: tl.constexpr):
+    def _iq2_xs_gemm(A, W, G, KS, C, M, N, K, BM: tl.constexpr, BN: tl.constexpr, SPLIT: tl.constexpr):
         """IQ2_XS: 16 sub-blocks of 16; uint16 indices into 8-value grid rows,
         the top bits selecting a 7-bit sign codebook entry."""
         pid_m = tl.program_id(0)
@@ -657,12 +685,15 @@ if _TRITON is not None:
         mm = rm < M
         nm = rn < N
         nsup = K // 256
+        per = (nsup + SPLIT - 1) // SPLIT
+        c0 = tl.program_id(2) * per
+        c1 = tl.minimum(c0 + per, nsup)
         rn64 = rn.to(tl.int64)
         t = tl.arange(0, 16)[None, :]
         j = t // 8
         k = t % 8
         acc = tl.zeros((BM, BN), dtype=tl.float32)
-        for c in range(0, nsup):
+        for c in range(c0, c1):
             base = (rn64 * nsup + c) * 74
             d = _f16_at(W, base, nm).to(tl.float32)
             for s in tl.static_range(16):
@@ -678,8 +709,12 @@ if _TRITON is not None:
                             + (c * 256 + s * 16 + tl.arange(0, 16))[None, :],
                             mask=mm[:, None], other=0.0)
                 acc += tl.dot(a, tl.trans(w))
-        tl.store(C + rm[:, None] * N + rn[None, :], acc,
-                 mask=mm[:, None] & nm[None, :])
+        if SPLIT == 1:
+            tl.store(C + rm[:, None] * N + rn[None, :], acc,
+                     mask=mm[:, None] & nm[None, :])
+        else:
+            tl.atomic_add(C + rm[:, None] * N + rn[None, :], acc,
+                          mask=mm[:, None] & nm[None, :])
 
     @triton.jit
     def _iq4_nl_gemm(A, W, KV, C, M, N, K, BM: tl.constexpr, BN: tl.constexpr):
@@ -784,6 +819,13 @@ def embed(ids, blocks, meta):
     return out.to(device=ids.device, dtype=torch.float32).reshape(*ids.shape, d)
 
 
+_SPLIT_TYPES = frozenset({"IQ4_XS", "IQ3_S", "IQ3_XXS", "IQ2_S", "IQ2_XS"})
+# Measured on a 5080, one row and a full context: the i-quant kernels each
+# prefer their own warp count, and one pipeline stage (three overflows shared
+# memory). tools/quant_bench.py keeps them honest.
+_SPLIT_WARPS = {"IQ4_XS": 8, "IQ3_S": 4, "IQ3_XXS": 4, "IQ2_S": 8, "IQ2_XS": 8}
+
+
 def linear(x, blocks, meta):
     """One layer, natively: x [..., K] -> [..., N] in float32.
 
@@ -798,7 +840,8 @@ def linear(x, blocks, meta):
     if qname is None:
         raise RuntimeError("no native kernel for %r" % (meta.get("qname"),))
     n, k = int(meta["shape"][0]), int(meta["shape"][1])
-    x = x.float()
+    if not x.is_floating_point():
+        x = x.float()               # an f16 input goes straight to f16: no round trip
     lead = tuple(x.shape[:-1])
     x2 = x.reshape(-1, k)
     m = int(x2.shape[0])
@@ -812,7 +855,15 @@ def linear(x, blocks, meta):
         blocks = blocks.contiguous().to(x.device)
     out = torch.empty((m, n), device=x.device, dtype=torch.float32)
     bm, bn = 16, 64
+    # The i-quants decode per weight row: one program per n-tile leaves a card
+    # this size idle. Splitting K spreads each row's chunks over programs that
+    # add into the output — measured ~2x at a single row, ~1.3x at a full
+    # context, same numbers.
+    split = 4 if qname in _SPLIT_TYPES and k > 256 else 1
+    if split > 1:
+        out.zero_()
     grid = (triton.cdiv(m, bm), triton.cdiv(n, bn))
+    gridk = (grid[0], grid[1], split)
     if qname == "Q8_0":
         _q8_0_gemm[grid](xh, blocks, out, m, n, k, BM=bm, BN=bn, BQ=4)
     elif qname == "Q4_K":
@@ -826,17 +877,18 @@ def linear(x, blocks, meta):
     elif qname == "Q3_K":
         _q3_k_gemm[grid](xh, blocks, out, m, n, k, BM=bm, BN=bn)
     elif qname == "IQ4_XS":
-        _iq4_xs_gemm[grid](xh, blocks, _kv_tensor(x.device), out, m, n, k,
-                           BM=bm, BN=bn)
+        _iq4_xs_gemm[gridk](xh, blocks, _kv_tensor(x.device), out, m, n, k,
+                            BM=bm, BN=bn, SPLIT=split, num_stages=1,
+                            num_warps=_SPLIT_WARPS["IQ4_XS"])
     elif qname == "IQ4_NL":
         _iq4_nl_gemm[grid](xh, blocks, _kv_tensor(x.device), out, m, n, k,
                            BM=bm, BN=bn)
     elif qname in ("IQ3_S", "IQ3_XXS", "IQ2_S", "IQ2_XS"):
         kern = {"IQ3_S": _iq3_s_gemm, "IQ3_XXS": _iq3_xxs_gemm,
                 "IQ2_S": _iq2_s_gemm, "IQ2_XS": _iq2_xs_gemm}[qname]
-        kern[grid](xh, blocks, _grid_tensor(qname, x.device),
-                   _ksigns_tensor(x.device), out, m, n, k, BM=bm, BN=bn,
-                   num_stages=1)
+        kern[gridk](xh, blocks, _grid_tensor(qname, x.device),
+                    _ksigns_tensor(x.device), out, m, n, k, BM=bm, BN=bn,
+                    SPLIT=split, num_stages=1, num_warps=_SPLIT_WARPS[qname])
     else:                                          # pragma: no cover
         raise RuntimeError("no native kernel for %s" % qname)
     return out.reshape(*lead, n)
