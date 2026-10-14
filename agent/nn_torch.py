@@ -2494,6 +2494,17 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
     design's dataset boxes read their rows as the run's batch."""
     t0 = time.time()
     graph.train() if train else graph.eval()
+    timing = {"sweeps": 0, "sweep_ms": 0.0}
+
+    def sweep(feed_map):
+        """One forward pass of the whole design — the moment the data leaves
+        its inputs to the moment it lands on the outputs. Timed here, so the
+        run can report the execution apart from the transport and the load."""
+        t = time.perf_counter()
+        vals = graph(feeds=feed_map, on_node=on_node)
+        timing["sweeps"] += 1
+        timing["sweep_ms"] += (time.perf_counter() - t) * 1000.0
+        return vals
 
     def prep(feed_map):
         return {k: (v if (torch.is_tensor(v) or isinstance(v, str))
@@ -2595,7 +2606,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
     def passes():
         if on_step:
             on_step(0)                             # the prompt pass
-        vals = graph(feeds=feeds, on_node=on_node)
+        vals = sweep(feeds)
         if generate and input_id and output_id:
             # grow the ids wherever they are: fed directly, or the ids a
             # tokenizer made of its text — a text pipeline generates the same way
@@ -2618,7 +2629,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                 feeds[input_id] = ids[-max_len:]            # each box moves its own
                 if on_step:
                     on_step(len(generated))                # a fresh sweep: token k
-                vals = graph(feeds=feeds, on_node=on_node)  # the finished text lands too
+                vals = sweep(feeds)                        # the finished text lands too
         return vals
 
     if train:
@@ -2652,6 +2663,10 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                                else _stats_with_image(vals.get(n["id"]), story, view=True))}
                     for n in canvas.get("nodes", []) if n.get("kind") == "output"],
         "ms": int((time.time() - t0) * 1000),
+        "timing": {"sweeps": timing["sweeps"],
+                   "input_to_output_ms": int(round(timing["sweep_ms"])),
+                   "per_sweep_ms": (int(round(timing["sweep_ms"] / timing["sweeps"]))
+                                    if timing["sweeps"] else 0)},
     }
     if train:
         # the probe: this batch's signal, and the test split's — one extra

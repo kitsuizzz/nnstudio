@@ -2228,6 +2228,27 @@ def text_reaches_its_output():
 
 check("text that reaches an output is the output's value", text_reaches_its_output)
 
+
+
+def timing_counters():
+    c = canvas([n("input", "i", dout=1),
+                n("embed", "e", vocab=8, din=1, dout=4),
+                n("layer", "l", din=4, dout=8),
+                n("output", "o", din=8)],
+               [edge("i", "e"), edge("e", "l"), edge("l", "o")])
+    res = T.run(c, {"i": [1]}, input_id="i", output_id="o", generate=3, temperature=0)
+    t = res["timing"]
+    assert t["sweeps"] == 4, t                  # the prompt pass, then one per token
+    assert len(res["generated"] or []) == 3, res["generated"]
+    assert t["input_to_output_ms"] >= 0 and t["per_sweep_ms"] >= 0, t
+    r2 = T.run(c, {"i": [1]}, input_id="i", output_id="o")
+    assert r2["timing"]["sweeps"] == 1, r2["timing"]
+    assert isinstance(r2["timing"]["input_to_output_ms"], int), r2["timing"]
+
+
+check("a run clocks its sweeps: input to output, one per token when generating",
+      timing_counters)
+
 if FAILED:
     print("nn_torch_test: %d failure(s): %s" % (len(FAILED), ", ".join(FAILED)))
     sys.exit(1)

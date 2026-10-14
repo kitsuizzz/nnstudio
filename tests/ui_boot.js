@@ -4438,6 +4438,30 @@ check("an output that received text shows the text", () => {
   eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
 });
 
+check("a run reports run \u2192 result and input \u2192 output", () => {
+  const nodes0 = __t.BX.nodes.length;
+  const ib = __t.bxAdd("input", 900, 200, { dout: 4 });
+  const now = (typeof performance !== "undefined" && performance.now)
+    ? performance.now() : Date.now();
+  __t.BXRUN.sent_at = now - 24100;             // the press happened 24 s ago
+  __t.bxRunResult({ ok: true, values: {}, outputs: [], generated: [], texts: {},
+                    ms: 4000, flow: [],
+                    timing: { sweeps: 4, input_to_output_ms: 3400, per_sweep_ms: 850 } });
+  ok(__t.BXRUN.full_ms >= 24000 && __t.BXRUN.full_ms <= 24600,
+     "the browser clocked run \u2192 result: " + __t.BXRUN.full_ms + " ms");
+  const d = document.createElement("div");
+  __t.bxInputFill(d, ib);
+  const said = d.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
+  ok(said.indexOf("run \u2192 result 24.1 s") >= 0, "…and the window shows it: " + said);
+  ok(said.indexOf("input \u2192 output 3.40 s") >= 0 && said.indexOf("4 sweeps") >= 0,
+     "…with the backend's own execution clock and its sweeps");
+  __t.BXRUN.full_ms = null;
+  __t.BXRUN.timing = null;
+  __t.BXRUN.sent_at = null;
+  __t.bxRemove(ib.id);
+  eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
+});
+
 check("the account: guests by default, a bot check to sign up, sealed designs", async () => {
   const nodes0 = __t.BX.nodes.length;
   const turn = () => new Promise(r => setImmediate(r));   // one event-loop turn

@@ -3953,6 +3953,18 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
   if (outcome)
     pane.appendChild(mk("div", { class: "bxbhint " + (outcome.ok ? "runok" : "runbad"),
                                  text: outcome.text }));
+  const clock = [];                            // the two clocks, side by side
+  if (BXRUN.full_ms != null)
+    clock.push("run \u2192 result " + bxMs(BXRUN.full_ms));
+  const tm = BXRUN.timing;
+  if (tm && tm.input_to_output_ms != null) {
+    let line = "input \u2192 output " + bxMs(tm.input_to_output_ms);
+    if (tm.sweeps > 1)
+      line += " \u00b7 " + tm.sweeps + " sweeps \u00b7 " + bxMs(tm.per_sweep_ms) + " each";
+    clock.push(line);
+  }
+  if (clock.length)
+    pane.appendChild(mk("div", { class: "bxbhint bxclock", text: clock.join(" \u00b7 ") }));
 }
 function bxImageAttach(n, f, zone) {           // a file -> the media store -> the box
   if (!f) return false;
@@ -6926,6 +6938,12 @@ function bxtRunSync() {                       // every run surface, fresh
   bxtRunRefresh();
   bxTrainRefresh();
 }
+function bxMs(v) {                             // a duration, as a person reads it
+  const n = Number(v) || 0;
+  return n >= 10000 ? (n / 1000).toFixed(1) + " s"
+       : n >= 1000 ? (n / 1000).toFixed(2) + " s"
+       : Math.round(n) + " ms";
+}
 function bxGB(bytes) {
   const b = Number(bytes) || 0;
   if (b >= 2 ** 30) return (b / 2 ** 30).toFixed(2) + " GB";
@@ -7138,6 +7156,11 @@ function bxFlowRestore() {                     // a refresh: the backend still h
 function bxRunResult(d) {                      // a finished run: keep every value by path
   BXRUN.last = d;
   BXRUN.error = false;                         // the failure it replaces is gone
+  const nowMs = (typeof performance !== "undefined" && performance.now)
+    ? performance.now() : Date.now();
+  if (BXRUN.sent_at != null)                   // the whole journey: press to result
+    BXRUN.full_ms = Math.max(0, Math.round(nowMs - BXRUN.sent_at));
+  BXRUN.timing = (d && d.timing) || null;      // the backend's own execution clock
   bxDataState = {};
   bxRunValues = {};
   for (const [path, st] of Object.entries((d && d.values) || {})) bxRunValues[path] = st;
@@ -7366,6 +7389,10 @@ function bxtRunGo() {
     bxtRunMsg(flow.why);
     return;
   }
+  BXRUN.sent_at = (typeof performance !== "undefined" && performance.now)
+    ? performance.now() : Date.now();          // the clock behind run -> result
+  BXRUN.full_ms = null;                        // the last run's clocks are stale
+  BXRUN.timing = null;
   BXRUN.running = true;
   BXRUN.msg = "";
   BXRUN.error = false;
