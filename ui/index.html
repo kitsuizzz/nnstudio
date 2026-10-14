@@ -241,6 +241,11 @@
             border: 1px solid var(--panel-brd); border-radius: 12px; overflow: hidden;
             background: rgba(255,255,255,.03); }
   .bxwrap .flowsvg { position: absolute; inset: 0; }
+  /* the canvas is drawn, not read: dragging never highlights its text — the
+     box windows (foreign objects) keep their own selection, editors and all */
+  .bxwrap svg { user-select: none; -webkit-user-select: none; }
+  .bxwrap svg foreignObject, .bxwrap .bxlogpane,
+  .bxwrap .bxlogpane * { user-select: auto; -webkit-user-select: auto; }
   .drect { fill: rgba(30,30,30,.97); stroke: rgba(255,255,255,.16); }
   .dnode:hover .drect { stroke: rgba(249,115,22,.8); }
   /* a fill on the base class, so no kind of box can ever fall back to black */
