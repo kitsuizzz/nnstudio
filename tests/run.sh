@@ -70,7 +70,7 @@ PY
 [ $? -eq 0 ] && ok || bad
 
 step "py_compile"
-$PY -m py_compile nn_engine.py nn_server.py nn_arc.py nn_users.py tools/reverse_job.py tools/reverse_model.py tools/train_job.py tools/backend_check.py agent/nnstudio_agent.py agent/nn_torch.py agent/nn_quant.py && ok || bad
+$PY -m py_compile nn_engine.py nn_server.py nn_arc.py nn_users.py tools/reverse_job.py tools/reverse_model.py tools/quant_bench.py tools/train_job.py tools/backend_check.py agent/nnstudio_agent.py agent/nn_torch.py agent/nn_quant.py && ok || bad
 
 if [ "${1:-}" = "--live" ]; then
   step "live app"
