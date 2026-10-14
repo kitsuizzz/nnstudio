@@ -349,8 +349,11 @@
   <p class="dim">
     The bot check uses Cloudflare's test keys until <code>NNSTUDIO_TURNSTILE_SITE_KEY</code>
     and <code>NNSTUDIO_TURNSTILE_SECRET_KEY</code> name a real widget — the dialog
-    says which is in use. <code>NNSTUDIO_COOKIE_SECURE=1</code> adds the
-    <code>Secure</code> flag to the session cookie for an https deployment.
+    says which is in use. Make one at dash.cloudflare.com → Turnstile → <i>Add
+    widget</i> (the hostname you use; <code>localhost</code> works), put the two
+    keys in the repo's <code>.env</code> and restart the service.
+    <code>NNSTUDIO_COOKIE_SECURE=1</code> adds the <code>Secure</code> flag to
+    the session cookie for an https deployment.
   </p>
 </section>
 

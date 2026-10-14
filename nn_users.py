@@ -38,6 +38,25 @@ TEST_SITE_KEY = "1x00000000000000000000AA"
 TEST_SECRET_KEY = "1x0000000000000000000000000000000AA"
 
 
+def load_env(path=None):
+    """The repo's `.env` seeds os.environ at startup — KEY=VALUE lines, a real
+    environment always wins. It is where the optional keys live (the Turnstile
+    pair among them): the file is ignored, and never holds anything tracked."""
+    path = path or os.path.join(ROOT, ".env")
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                val = val.strip().strip('"').strip("'")
+                if key.strip():
+                    os.environ.setdefault(key.strip(), val)
+    except OSError:
+        pass
+
+
 def db_path(path=None):
     """The accounts' own file — never a tracked one."""
     return path or os.environ.get("NNSTUDIO_USERS_DB") or USERS_DB

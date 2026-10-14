@@ -33,6 +33,8 @@ import nn_arc
 import nn_tasks                # agent_tasks: what the AI agents are doing
 import nn_users                # accounts, and the designs they save
 
+nn_users.load_env()            # the repo's .env seeds the optional keys first
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui", "index.html")
 DOCS = os.path.join(HERE, "ui", "docs.html")

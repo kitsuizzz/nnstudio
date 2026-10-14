@@ -40,7 +40,14 @@ only the token's sha256). Saved designs are private to their account:
 `/api/account/delete`.
 
 Cloudflare's *test* keys are used until the environment names a real widget,
-and the dialog says so:
+and the dialog says so. To put a real one in place: create a widget at
+[dash.cloudflare.com](https://dash.cloudflare.com/) → **Turnstile** → *Add
+widget* (give it the hostname you reach the app on — `localhost` is fine),
+copy the **Site Key** and the **Secret Key**, and put them in the repo's
+`.env` — the server reads it at startup, and a real environment variable wins
+over it. Restart (`systemctl --user restart nnstudio.service`), and the dialog
+stops saying "test keys". The site key is public by design (the page hands it
+to every browser); the secret one stays on the server.
 
     NNSTUDIO_TURNSTILE_SITE_KEY=…      # the widget's site key
     NNSTUDIO_TURNSTILE_SECRET_KEY=…    # its secret key

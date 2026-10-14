@@ -85,6 +85,22 @@ def the_bot_check():
         "the environment's keys win"
 
 
+def the_env_file():
+    key = "NNSTUDIO_TEST_ENV_KEY"
+    os.environ.pop(key, None)
+    p = os.path.join(WORK, "dotenv")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("# a comment\n\nNNSTUDIO_TEST_ENV_KEY = 'a value'\nnot a line\n")
+    nn_users.load_env(p)
+    assert os.environ.get(key) == "a value", os.environ.get(key)   # quotes and spacing go
+    os.environ[key] = "already set"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("NNSTUDIO_TEST_ENV_KEY=from the file\n")
+    nn_users.load_env(p)
+    assert os.environ.get(key) == "already set", "a real environment variable always wins"
+    os.environ.pop(key, None)
+
+
 def designs():
     u = nn_users.register("saver", nn_users.new_token(), path=DB)
     a = nn_users.save_canvas(u["id"], "client", {"type": "canvas", "nodes": []}, path=DB)
@@ -119,6 +135,7 @@ def designs():
 
 check("an account: the token's hash is kept, and that token logs in", registering)
 check("the bot check: Cloudflare's answer decides", the_bot_check)
+check("the .env next to the code seeds the keys — an env var still wins", the_env_file)
 check("a saved design: one per name, nobody else's", designs)
 
 if FAILED:
