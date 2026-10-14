@@ -203,6 +203,10 @@ globalThis.__t = {
   bxTensorDtype, bxApplyManifest,
   bxtFilesToggle, bxtFilesClose, bxtDropsClose, bxtPaletteToggle, bxtImportToggle,
   bxGGUFImport, bxGGUFImportApply, bxtVramToggle,
+  bxSecret, bxAccountLoad, bxtAccountToggle, bxAccountBuild, bxAccountCreate,
+  bxAccountRegister, bxAccountSignedIn, bxAccountOut, bxAccountReveal, bxAccountLogin,
+  bxAccountSaveForm, bxAccountSave, bxAccountOpenForm, bxAccountList, bxAccountOpen,
+  bxAccountOpenApply, get BXACCT() { return BXACCT; },
   bxtBackendToggle, bxtBackendPick, get BX_BACKEND() { return BX_BACKEND; },
   bxtRunToggle, bxtRunRefresh, bxtRunSync, bxtRunEnabled, bxtRunGo, bxtRunLoad, bxFlowVerify,
   bxtRunOffload,
@@ -986,6 +990,120 @@ check("the Palette and VRAM menus open from the toolbar", () => {
     "opening VRAM closes Palette and opens VRAM");
   ok(getEl("bxtPalMenu").hidden, "…and Palette is shut");
   ok(__t.bxtVramToggle() === false && getEl("bxtVramMenu").hidden, "…and VRAM closes");
+});
+
+check("the account: guests by default, a bot check to sign up, a token to log in", () => {
+  const nodes0 = __t.BX.nodes.length;
+  // everyone starts a guest — nothing is saved for one
+  eql(__t.BXACCT.user, null, "the account starts empty: a guest");
+  eql(getEl("bxtAccount").textContent, "guest ▾", "the toolbar says guest");
+  eql(__t.bxAccountSaveForm(), false, "a guest has no save dialog");
+  ok(__t.bxtAccountToggle() === true && !getEl("bxtAccountMenu").hidden,
+     "the account menu opens");
+  const guestItems = getEl("bxtAccountMenu").children.map(c => c.textContent);
+  ok(guestItems.some(t => t.indexOf("create an account") === 0) &&
+     guestItems.some(t => t.indexOf("log in with a token") === 0) &&
+     !guestItems.some(t => t.indexOf("save this canvas") === 0),
+     "a guest is offered an account, not saving: " + guestItems.join(" | "));
+  __t.bxtDropsClose();
+  ok(getEl("bxtAccountMenu").hidden, "…and opening another menu closes it");
+  // the token the client makes: 32 random bytes, base64url, never a password
+  const tok = __t.bxSecret();
+  ok(/^[A-Za-z0-9_-]{43}$/.test(tok) && tok !== __t.bxSecret(),
+     "the browser makes its own 43-character token: " + tok.slice(0, 8) + "…");
+  // creating one: the widget runs, then the name, the token and the challenge go out
+  const realFetch = global.fetch;
+  let renders = 0, sent = {};
+  global.turnstile = { render: (_mount, opts) => { renders++; opts.callback("cf-test"); return "w1"; },
+                       reset: () => {} };
+  global.fetch = async (url, opts) => {
+    if (String(url) === "/api/account/register") {
+      sent = JSON.parse(opts.body);
+      return { ok: true, status: 200,
+               json: async () => ({ ok: true, user: { id: "u_1", name: "tester" } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  __t.bxAccountCreate();
+  const form = getEl("bxmenu");
+  ok(!form.hidden, "the create dialog is up");
+  eql(renders, 1, "…with Cloudflare's widget rendered in it");
+  form.querySelectorAll(".bxinp")[0].value = "tester";
+  form.querySelectorAll(".chip").find(c => String(c.textContent) === "create").click();
+  eql(sent.name, "tester", "create posts the name");
+  ok(/^[A-Za-z0-9_-]{43}$/.test(String(sent.token)),
+     "…the browser-made token, not a password: " + sent.token);
+  eql(sent.challenge, "cf-test", "…and the bot check's challenge travels with it");
+  global.fetch = realFetch;
+  delete global.turnstile;                     // the server's answer is async; state is set on it
+  __t.bxAccountSignedIn({ id: "u_1", name: "tester" });
+  eql(getEl("bxtAccount").textContent, "tester ▾", "signed in, the toolbar reads the name");
+  __t.bxAccountReveal(sent.token, { id: "u_1", name: "tester" });
+  eql(getEl("bxmenu").querySelectorAll(".bxtok")[0].value, sent.token,
+      "the token is shown once, in full — it is the login");
+  __t.bxMenuClose();
+  __t.bxtAccountToggle();
+  const userItems = getEl("bxtAccountMenu").children.map(c => c.textContent);
+  ok(userItems.some(t => t.indexOf("save this canvas") === 0) &&
+     userItems.some(t => t.indexOf("open a saved canvas") === 0) &&
+     !userItems.some(t => t.indexOf("create an account") === 0),
+     "signed in, the menu saves and opens: " + userItems.join(" | "));
+  __t.bxtDropsClose();
+  // saving: the name and the whole canvas travel to the server
+  let save = {};
+  global.fetch = async (url, opts) => {
+    if (String(url) === "/api/account/save") {
+      save = JSON.parse(opts.body);
+      return { ok: true, status: 200, json: async () => ({ ok: true, saved: { name: save.name } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  __t.bxAdd("input", 40, 40, { dout: 8 });     // something worth keeping
+  __t.bxAccountSaveForm();
+  const f2 = getEl("bxmenu");
+  f2.querySelectorAll(".bxinp")[0].value = "my canvas";
+  f2.querySelectorAll(".chip").find(c => String(c.textContent) === "save").click();
+  eql(save.name, "my canvas", "save posts the name");
+  eql((save.design.nodes || []).length, nodes0 + 1, "…and the canvas itself, every box");
+  global.fetch = realFetch;
+  __t.bxMenuClose();
+  while (__t.BX.nodes.length > nodes0) __t.bxRemove(__t.BX.nodes[__t.BX.nodes.length - 1].id);
+  // opening: one row per saved design, and a click replaces the canvas
+  __t.bxAccountOpenForm();
+  const f3 = getEl("bxmenu");
+  const hints = f3.querySelectorAll(".panehint");
+  __t.bxAccountList(f3.querySelectorAll(".bxlist")[0], hints[hints.length - 1],
+                    [{ name: "demo", updated: 1791986884, bytes: 40 }]);
+  const rows = f3.querySelectorAll(".rowl");
+  eql(rows.length, 1, "one row per saved design");
+  eql(rows[0].querySelectorAll(".nm")[0].textContent, "demo", "…named");
+  let asked = "";
+  global.fetch = async (url) => {
+    asked = String(url);
+    return { ok: true, status: 200,
+             json: async () => ({ ok: true, name: "demo",
+                                  design: { type: "canvas", version: 1, nodes: [], edges: [] } }) };
+  };
+  const extra = __t.bxAdd("output", 480, 40, {});   // work on the canvas: the open asks twice
+  rows[0].click();
+  eql(asked, "", "with work on the canvas, the first click only warns");
+  ok(String(hints[hints.length - 1].textContent).indexOf("again") >= 0,
+     "…and says a second click replaces it");
+  rows[0].click();
+  eql(asked, "/api/account/canvas?name=demo", "the second click asks the server for that design");
+  global.fetch = realFetch;
+  if (extra) __t.bxRemove(extra.id);
+  const keepDoc = JSON.stringify(__t.bxExportCanvas());      // put things back after
+  eql(__t.bxAccountOpenApply("demo", { type: "canvas", version: 1, nodes: [], edges: [] }), true,
+      "…and applying it lands as a canvas");
+  eql(__t.BX.nodes.length, 0, "…the saved design is what is on the canvas now");
+  __t.bxImportJSON(keepDoc, {});
+  // logging out: a guest again, with the token still theirs
+  __t.bxAccountOut();
+  eql(__t.BXACCT.user, null, "logging out is a guest again");
+  eql(getEl("bxtAccount").textContent, "guest ▾", "…and the toolbar says so");
+  __t.bxMenuClose();
+  eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
 });
 
 check("the Backend menu: Local and Remote drop down into their instructions", () => {

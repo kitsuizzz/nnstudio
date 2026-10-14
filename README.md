@@ -25,6 +25,30 @@ straight from `nvidia-smi`), `/api/backend` (who is connected) and
 `/api/run` (dispatch the design to the agent). It listens for agents on
 `--control-port` (8125 by default).
 
+## Accounts — guests, and what an account is for
+
+Everyone starts a **guest**: drawing, wiring, running and training all work
+with no account, and nothing of the session is kept on the server. An account
+is only what the server saves a canvas *for*. Creating one always goes through
+Cloudflare's bot check (Turnstile): the browser solves the challenge, generates
+its own token — 32 random bytes, never a password, shown once — and posts both
+to `/api/account/register`, which verifies the challenge with Cloudflare before
+the account exists. Logging in anywhere is that token again
+(`/api/account/login`; the answer is an HttpOnly cookie, and the store keeps
+only the token's sha256). Saved designs are private to their account:
+`/api/account/save`, `/api/account/canvases`, `/api/account/canvas?name=…`,
+`/api/account/delete`.
+
+Cloudflare's *test* keys are used until the environment names a real widget,
+and the dialog says so:
+
+    NNSTUDIO_TURNSTILE_SITE_KEY=…      # the widget's site key
+    NNSTUDIO_TURNSTILE_SECRET_KEY=…    # its secret key
+    NNSTUDIO_COOKIE_SECURE=1           # adds Secure to the session cookie (https)
+
+`NNSTUDIO_USERS_DB` moves the accounts/designs database; `users.db` next to the
+code (git-ignored) is the default.
+
 ## Tests
 
     ./tests/run.sh           # offline: JS syntax, the DOM harness, the builder, the engine, HTML
@@ -37,12 +61,14 @@ straight from `nvidia-smi`), `/api/backend` (who is connected) and
 | `ui/index.html` | the whole app — the canvas, the toolbar (Files · Palette · Backend · Run · VRAM), the right-click menus; one self-contained page |
 | `nn_engine.py` | the GGUF/HF → canvas builder (`build_canvas` is pure; `gguf_canvas`/`hf_canvas` read real headers) — extracted from next-token's engine |
 | `nn_server.py` | the stdlib server: the UI, the GGUF list, the builder endpoint, the GPU badge, the agents' control listener and the run dispatch |
+| `nn_users.py` | accounts for saving designs: the token's sha256, the Cloudflare Turnstile check, and the designs themselves (`users.db`, git-ignored) |
 | `agent/nnstudio_agent.py` | **the user's backend** — run it on the machine that holds the GPU; it dials the app, reports the machine and executes designs |
 | `agent/nn_torch.py` | the canvas→torch engine the agent runs (fed by the app, never by this page) |
 | `agent/nn_tokenizers.py` | huggingface `tokenizer.json` fetching + metadata (stdlib until a tokenizer is loaded) |
 | `tests/ui_boot.js` | the DOM-stub harness (boxes, wires, sizes, estimate, undo, copy/paste, GGUF node, flags, the menus) |
 | `tests/gguf_canvas_test.py` | the pure builder test, on synthetic tensors |
 | `tests/nn_torch_test.py` | the engine's offline tests (forward, ops, training, GGUF weights) |
+| `tests/nn_users_test.py` | the account store, offline: tokens (hash only), the bot check's answers, design CRUD |
 | `tests/agent_test.py` | the live end-to-end: a real agent connects and a design runs (`--live`) |
 | `weights/` | where `export weights …` writes, and a place to drop pt / safetensors / gguf files for the pickers |
 | `models/` | → `~/jevtest/models` (the GGUF files live there) |

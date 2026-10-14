@@ -497,6 +497,25 @@
   .bxmenu .bf.bximp { min-width: 340px; }
   .bxmenu .bf.bximp select { flex: 1 1 auto; min-width: 0; }
   .bxmenu .bf .row { display: flex; gap: 6px; justify-content: flex-end; }
+  /* the account dialogs: a name, Cloudflare's widget, the token shown once */
+  .bxmenu .bf.bxacct { min-width: 340px; max-width: 440px; }
+  .bxmenu .bf.bxacct input[type="text"] { width: 100%; border-radius: 0;
+    padding: 7px 9px; font: 12.5px var(--mono); }
+  .bxmenu .bf.bxacct textarea.bxtok { width: 100%; height: 56px; min-height: 0; border-radius: 0;
+    font: 12px/1.5 var(--mono); word-break: break-all; }
+  .bxmenu .bf.bxacct .bxlist { display: flex; flex-direction: column; gap: 4px;
+    max-height: 220px; overflow: auto; margin: 2px 0; }
+  .bxmenu .bf.bxacct .bxlist .rowl { display: flex; align-items: center; gap: 8px;
+    padding: 5px 7px; border: 1px solid var(--panel-brd); cursor: pointer;
+    background: rgba(0,0,0,.25); }
+  .bxmenu .bf.bxacct .bxlist .rowl:hover { background: rgba(255,255,255,.06); }
+  .bxmenu .bf.bxacct .bxlist .rowl .nm { flex: 1 1 auto; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .bxmenu .bf.bxacct .bxlist .rowl .dt { color: var(--ink-faint); font: 11px var(--mono); }
+  .bxmenu .bf.bxacct .bxlist .rowl .rm { color: var(--ink-faint); padding: 0 4px; }
+  .bxmenu .bf.bxacct .bxlist .rowl .rm:hover { color: #fca5a5; }
+  .bxtmi.dim { color: var(--ink-faint); cursor: default; }
+  .bxtmi.dim:hover { background: transparent; }
   .bxmenu .bf textarea.bxjson { width: 340px; max-width: 48vw; height: 168px; max-height: 42vh; resize: vertical;
                                 background: rgba(22,22,22,.9); color: var(--ink);
                                 border: 1px solid var(--panel-brd); border-radius: 7px;
@@ -957,6 +976,8 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
       <div class="bxtdrop bxtdrop-r" id="bxtVramMenu" hidden>
         <div class="bxvram" id="bxvram"></div>
       </div>
+      <span class="bxtbtn" id="bxtAccount" title="a guest: drawing and running are free, saving takes an account">guest ▾</span>
+      <div class="bxtdrop bxtdrop-r" id="bxtAccountMenu" hidden></div>
     </div>
     <div class="bxrow">
       <div class="bxwrap" id="bxwrap">
@@ -6073,7 +6094,7 @@ function bxtExport() { return bxtForm("export"); }
 function bxtImport() { return bxtForm("import"); }
 function bxtDropsClose(keep) {
   for (const id of ["bxtFilesMenu", "bxtPalMenu", "bxtImportMenu",
-                    "bxtBackendMenu", "bxtVramMenu"]) {
+                    "bxtBackendMenu", "bxtVramMenu", "bxtAccountMenu"]) {
     if (id === keep) continue;
     const m = $(id);
     if (m) m.hidden = true;
@@ -6107,6 +6128,440 @@ function bxtVramToggle() {
   const open = bxtToggle("bxtVramMenu");
   if (open) bxRenderEstimate();                // the live vram line, fresh
   return open;
+}
+// ---- the account: guests by default ----------------------------------------
+// Nothing is kept for a guest — drawing, wiring, running and training are all
+// free, but saving a design is what an account is for. Creating one always
+// goes through Cloudflare's bot check: the browser solves a Turnstile
+// challenge, makes its own token (32 random bytes here — never a password),
+// and sends both to the register endpoint. Logging in anywhere is that token
+// again; the server answers with an HttpOnly cookie and keeps only the
+// token's sha256, so a stolen database cannot be replayed.
+let BXACCT = { user: null, site: "", test: false, max: 0 };
+let BX_TS = { queue: null, failed: false, widget: null };
+function bxSecret() {                          // the token the client makes
+  const bytes = new Uint8Array(32);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) crypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function bxTurnstileLoad(cb) {                 // the widget script, fetched once
+  if (typeof window === "undefined") return cb(null);
+  if (window.turnstile) return cb(window.turnstile);
+  if (BX_TS.failed) return cb(null);
+  if (BX_TS.queue) { BX_TS.queue.push(cb); return; }
+  BX_TS.queue = [cb];
+  const done = (ts) => {
+    const q = BX_TS.queue || [];
+    BX_TS.queue = null;
+    if (!ts) BX_TS.failed = true;
+    for (const fn of q) { try { fn(ts); } catch (e) {} }
+  };
+  if (typeof document === "undefined" || !document.createElement) return done(null);
+  const s = document.createElement("script");
+  s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=__bxTurnstileUp";
+  s.async = true;
+  window.__bxTurnstileUp = () => done(window.turnstile || null);
+  s.onerror = () => done(null);
+  if (document.head) document.head.appendChild(s);
+  else if (document.body) document.body.appendChild(s);
+  if (typeof setTimeout === "function")
+    setTimeout(() => { if (BX_TS.queue) done(window.turnstile || null); }, 10000);
+}
+function bxAccountLoad() {                     // who is this, and what does the check need
+  if (typeof fetch !== "function") return;
+  fetch("/api/account").then(r => r.json()).then(d => {
+    if (!d || !d.ok) return;
+    BXACCT.site = d.site_key || "";
+    BXACCT.test = !!d.test_keys;
+    BXACCT.max = d.max_bytes || 0;
+    if (d.user) BXACCT.user = d.user;
+    bxAccountSync();
+  }).catch(() => {});
+}
+function bxAccountSync() {
+  const b = $("bxtAccount");
+  if (!b) return;
+  b.textContent = (BXACCT.user ? BXACCT.user.name : "guest") + " ▾";
+  b.title = BXACCT.user ? "signed in — the server keeps this account's designs"
+                        : "a guest: drawing and running are free, saving takes an account";
+}
+function bxAccountSignedIn(user) {
+  BXACCT.user = user || null;
+  bxAccountSync();
+}
+function bxAccountOut() { bxAccountSignedIn(null); }
+function bxtAccountToggle() {
+  const m = $("bxtAccountMenu");
+  if (!m) return false;
+  const open = !!m.hidden;
+  bxtDropsClose("bxtAccountMenu");
+  bxAccountBuild();                            // the items depend on who is here
+  m.hidden = !open;
+  if (open) bxtPlace("bxtAccountMenu", "bxtAccount");
+  return open;
+}
+function bxAccountBuild() {
+  const m = $("bxtAccountMenu");
+  if (!m) return;
+  m.innerHTML = "";
+  const item = (text, title, fn, dim) => {
+    const d = mk("div", { class: "bxtmi" + (dim ? " dim" : ""), text, title });
+    if (fn) d.addEventListener("click", fn);
+    m.appendChild(d);
+    return d;
+  };
+  if (!BXACCT.user) {
+    item("a guest — nothing is saved yet", "", null, true);
+    item("create an account …", "one Cloudflare bot check, then a token of your own",
+         () => { bxtDropsClose(); bxAccountCreate(); });
+    item("log in with a token …", "the token an account showed when it was created",
+         () => { bxtDropsClose(); bxAccountLogin(); });
+    return;
+  }
+  item("signed in as " + BXACCT.user.name, "", null, true);
+  item("save this canvas …", "keep this design on the server, under this account",
+       () => { bxtDropsClose(); bxAccountSaveForm(); });
+  item("open a saved canvas …", "a design this account saved before",
+       () => { bxtDropsClose(); bxAccountOpenForm(); });
+  item("log out", "this browser forgets the cookie; the token stays yours",
+       () => { bxtDropsClose(); bxAccountLogout(); });
+}
+function bxAccountLogout() {
+  if (typeof fetch === "function")
+    fetch("/api/account/logout", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+  bxAccountOut();
+}
+function bxAccountForm() {                     // #bxmenu, centered like the import
+  const m = $("bxmenu");
+  if (!m) return null;
+  m.innerHTML = "";
+  const wrap = mk("div", { class: "bf bxacct" });
+  m.appendChild(wrap);
+  m.hidden = false;
+  return wrap;
+}
+function bxAccountPlace() {
+  const m = $("bxmenu");
+  if (!m) return;
+  const w = $("bxwrap");
+  const r = (w && w.getBoundingClientRect) ? w.getBoundingClientRect()
+                                           : { width: 900, height: 500 };
+  bxMenuAt_(Math.max(6, ((r.width || 900) - (m.offsetWidth || 360)) / 2),
+            Math.max(6, ((r.height || 500) - (m.offsetHeight || 200)) / 2));
+  bxMenuPlace();
+}
+function bxAccountRow(wrap, goText, goFn) {
+  const row = mk("div", { class: "row" });
+  const cancel = mk("span", { class: "chip tiny", text: "cancel" });
+  cancel.addEventListener("click", bxMenuClose);
+  const go = mk("span", { class: "chip tiny", text: goText });
+  go.addEventListener("click", () => goFn(go));
+  row.appendChild(cancel);
+  row.appendChild(go);
+  wrap.appendChild(row);
+  return go;
+}
+function bxAccountNameField(defaultName) {
+  const lab = mk("label", { text: "name" });
+  const inp = mk("input", { class: "bxinp", type: "text", autocomplete: "off",
+                            placeholder: "your name" });
+  inp.value = defaultName || "";
+  lab.appendChild(inp);
+  return { lab, inp };
+}
+function bxAccountCreate() {
+  const wrap = bxAccountForm();
+  if (!wrap) return false;
+  wrap.appendChild(mk("div", { class: "mhead", text: "create an account" }));
+  wrap.appendChild(mk("div", { class: "panehint",
+    text: "guests are never saved for — an account is what keeps a design. " +
+          "Cloudflare's bot check runs below, then this browser makes your token." }));
+  const { lab, inp } = bxAccountNameField("");
+  wrap.appendChild(lab);
+  const status = mk("div", { class: "panehint", text: "loading the bot check …" });
+  wrap.appendChild(status);
+  const mount = mk("div", { class: "bxcf" });
+  wrap.appendChild(mount);
+  const token = bxSecret();                    // made here, in the browser
+  let challenge = "";
+  const go = bxAccountRow(wrap, "create", () => submit());
+  const submit = () => {
+    const name = String(inp.value || "").trim();
+    if (!name) { status.textContent = "the account needs a name"; return; }
+    if (!challenge) { status.textContent = "the bot check has not passed yet"; return; }
+    bxAccountRegister(name, token, challenge, status, go);
+  };
+  const start = (ts) => {
+    if (!ts) { status.textContent = "the bot check could not load — an account needs it"; return; }
+    try {
+      BX_TS.widget = ts.render(mount, {
+        sitekey: BXACCT.site,
+        callback: (cf) => {
+          challenge = cf;
+          status.textContent = BXACCT.test ? "bot check passed (Cloudflare's test keys)"
+                                           : "bot check passed";
+          bxAccountPlace();
+        },
+        "error-callback": () => {
+          challenge = "";
+          status.textContent = "the bot check failed — try again";
+        },
+        "expired-callback": () => {
+          challenge = "";
+          status.textContent = "the bot check expired — it will rerun";
+        },
+      });
+      status.textContent = BXACCT.test
+        ? "Cloudflare's test keys — set NNSTUDIO_TURNSTILE_* for the real check"
+        : "waiting for the bot check …";
+    } catch (e) {
+      status.textContent = "the bot check could not start";
+    }
+    bxAccountPlace();
+  };
+  bxAccountPlace();
+  if (typeof window !== "undefined" && window.turnstile) start(window.turnstile);
+  else bxTurnstileLoad(start);
+  return true;
+}
+function bxAccountRegister(name, token, challenge, status, go) {
+  if (typeof fetch !== "function") return false;
+  if (go) go.textContent = "creating …";
+  fetch("/api/account/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, token, challenge }),
+  }).then(r => r.json().then(d => ({ good: r.ok && d.ok, d })))
+    .then(({ good, d }) => {
+      if (!good) throw new Error((d && d.error) || "the server refused");
+      bxAccountSignedIn(d && d.user);
+      bxAccountReveal(token, d && d.user);
+    })
+    .catch(e => {
+      if (go) go.textContent = "create";
+      if (status) status.textContent = String((e && e.message) || e);
+      if (typeof window !== "undefined" && window.turnstile && BX_TS.widget !== null) {
+        try { window.turnstile.reset(BX_TS.widget); } catch (err) {}
+      }
+      bxAccountPlace();
+    });
+  return true;
+}
+function bxAccountReveal(token, user) {
+  const wrap = bxAccountForm();
+  if (!wrap) return false;
+  wrap.appendChild(mk("div", { class: "mhead", text: "your token" }));
+  wrap.appendChild(mk("div", { class: "panehint",
+    text: (user && user.name ? user.name + " is in. " : "") +
+          "It is shown once, and it is the login: keep it somewhere safe, " +
+          "or paste it to sign in on another browser." }));
+  const ta = mk("textarea", { class: "bxtok", readonly: "readonly", spellcheck: "false" });
+  ta.value = token;
+  wrap.appendChild(ta);
+  const row = mk("div", { class: "row" });
+  const copy = mk("span", { class: "chip tiny", text: "copy" });
+  copy.addEventListener("click", () => {
+    let done = false;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
+        const p = navigator.clipboard.writeText(token);
+        if (p && p.catch) p.catch(() => {});
+        done = true;
+      }
+    } catch (e) {}
+    if (!done && ta.select) { try { ta.select(); } catch (e) {} }
+    copy.textContent = done ? "copied" : "select all";
+  });
+  const fin = mk("span", { class: "chip tiny", text: "done" });
+  fin.addEventListener("click", bxMenuClose);
+  row.appendChild(copy);
+  row.appendChild(fin);
+  wrap.appendChild(row);
+  bxAccountPlace();
+  return true;
+}
+function bxAccountLogin() {
+  const wrap = bxAccountForm();
+  if (!wrap) return false;
+  wrap.appendChild(mk("div", { class: "mhead", text: "log in with a token" }));
+  wrap.appendChild(mk("div", { class: "panehint",
+    text: "an account shows its token once, when it is created — paste that here." }));
+  const lab = mk("label", { text: "token" });
+  const inp = mk("input", { class: "bxinp", type: "text", autocomplete: "off",
+                            placeholder: "the 43-character token" });
+  lab.appendChild(inp);
+  wrap.appendChild(lab);
+  const status = mk("div", { class: "panehint", text: "" });
+  wrap.appendChild(status);
+  const go = bxAccountRow(wrap, "log in", (btn) => {
+    const token = String(inp.value || "").trim();
+    if (!token) { status.textContent = "the token is empty"; return; }
+    if (typeof fetch !== "function") { status.textContent = "the app cannot reach the server"; return; }
+    btn.textContent = "checking …";
+    fetch("/api/account/login", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }) })
+      .then(r => r.json().then(d => ({ good: r.ok && d.ok, d })))
+      .then(({ good, d }) => {
+        if (!good) throw new Error((d && d.error) || "that token is not an account");
+        bxAccountSignedIn(d && d.user);
+        bxMenuClose();
+      })
+      .catch(e => {
+        btn.textContent = "log in";
+        status.textContent = String((e && e.message) || e);
+        bxAccountPlace();
+      });
+  });
+  bxAccountPlace();
+  return true;
+}
+function bxAccountSaveForm() {
+  if (!BXACCT.user || typeof fetch !== "function") return false;
+  const design = bxExportCanvas();
+  const text = JSON.stringify(design);
+  const wrap = bxAccountForm();
+  if (!wrap) return false;
+  wrap.appendChild(mk("div", { class: "mhead", text: "save this canvas" }));
+  wrap.appendChild(mk("div", { class: "panehint",
+    text: "kept on the server under " + BXACCT.user.name +
+          " — saving over a name replaces what it held." }));
+  let remembered = "";
+  try { remembered = localStorage.getItem("nnstudio_canvas_name") || ""; } catch (e) {}
+  const { lab, inp } = bxAccountNameField(remembered || "design 1");
+  wrap.appendChild(lab);
+  const status = mk("div", { class: "panehint",
+    text: text.length + " bytes" + (BXACCT.max ? " of " + Math.round(BXACCT.max / 2 ** 20) + " MB" : "") });
+  wrap.appendChild(status);
+  let saved = false;
+  const go = bxAccountRow(wrap, "save", () => {
+    if (saved) { bxMenuClose(); return; }
+    const name = String(inp.value || "").trim();
+    if (!name) { status.textContent = "the design needs a name"; return; }
+    bxAccountSave(name, design, status, go, () => { saved = true; });
+  });
+  bxAccountPlace();
+  return true;
+}
+function bxAccountSave(name, design, status, go, onSaved) {
+  if (typeof fetch !== "function") return false;
+  if (go) go.textContent = "saving …";
+  fetch("/api/account/save", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, design }) })
+    .then(r => r.json().then(d => ({ good: r.ok && d.ok, d })))
+    .then(({ good, d }) => {
+      if (!good) throw new Error((d && d.error) || "the server refused");
+      try { localStorage.setItem("nnstudio_canvas_name", name); } catch (e) {}
+      if (status) status.textContent = "saved as " + name + " ✓";
+      if (go) go.textContent = "close";
+      if (onSaved) onSaved();
+    })
+    .catch(e => {
+      if (go) go.textContent = "save";
+      if (status) status.textContent = String((e && e.message) || e);
+      bxAccountPlace();
+    });
+  return true;
+}
+function bxAccountOpenForm() {
+  if (!BXACCT.user) return false;
+  const wrap = bxAccountForm();
+  if (!wrap) return false;
+  wrap.appendChild(mk("div", { class: "mhead", text: "open a saved canvas" }));
+  wrap.appendChild(mk("div", { class: "panehint",
+    text: "loading one replaces everything already on the canvas." }));
+  const list = mk("div", { class: "bxlist" });
+  const status = mk("div", { class: "panehint", text: "reading the list …" });
+  wrap.appendChild(list);
+  wrap.appendChild(status);
+  bxAccountRow(wrap, "close", () => bxMenuClose());
+  bxAccountPlace();
+  if (typeof fetch !== "function") { status.textContent = "the app cannot reach the server"; return true; }
+  fetch("/api/account/canvases").then(r => r.json()).then(d => {
+    if (!d || !d.ok) throw new Error((d && d.error) || "the list could not be read");
+    bxAccountList(list, status, d.canvases || []);
+  }).catch(e => {
+    status.textContent = String((e && e.message) || e);
+    bxAccountPlace();
+  });
+  return true;
+}
+function bxWhen(t) {
+  const d = new Date((Number(t) || 0) * 1000);
+  if (!d || !d.toLocaleString) return "";
+  try { return d.toLocaleString(); } catch (e) { return ""; }
+}
+function bxAccountList(list, status, rows) {
+  if (!list) return false;
+  list.innerHTML = "";
+  if (!rows.length) {
+    status.textContent = "nothing saved yet — save this canvas first.";
+    bxAccountPlace();
+    return true;
+  }
+  const count = () => {
+    const left = (list.children || []).length;
+    status.textContent = left ? left + (left === 1 ? " design" : " designs")
+                              : "nothing saved yet — save this canvas first.";
+  };
+  let armed = "";
+  status.textContent = rows.length + (rows.length === 1 ? " design" : " designs");
+  for (const r of rows) {
+    const rowl = mk("div", { class: "rowl", title: "open " + r.name });
+    rowl.appendChild(mk("span", { class: "nm", text: r.name }));
+    rowl.appendChild(mk("span", { class: "dt", text: bxWhen(r.updated) }));
+    const rm = mk("span", { class: "rm", text: "×", title: "delete it" });
+    rm.addEventListener("click", (ev) => {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      if (typeof fetch !== "function") return;
+      fetch("/api/account/delete", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: r.name }) }).then(() => {
+          if (rowl.remove) rowl.remove();
+          else if (list.removeChild) list.removeChild(rowl);
+          count();
+          bxAccountPlace();
+        }).catch(() => {});
+    });
+    rowl.appendChild(rm);
+    rowl.addEventListener("click", () => {
+      const blank = !((bxExportCanvas().nodes || []).length);
+      if (!blank && armed !== r.name) {        // an overwrite is asked twice
+        armed = r.name;
+        status.textContent = "opening " + r.name + " replaces the canvas — click it again";
+        return;
+      }
+      status.textContent = "opening " + r.name + " …";
+      bxAccountOpen(r.name, status);
+    });
+    list.appendChild(rowl);
+  }
+  bxAccountPlace();
+  return true;
+}
+function bxAccountOpen(name, status) {
+  if (typeof fetch !== "function") return false;
+  fetch("/api/account/canvas?name=" + encodeURIComponent(name)).then(r => r.json()).then(d => {
+    if (!d || !d.ok || !d.design) throw new Error((d && d.error) || "that design could not be read");
+    if (!bxAccountOpenApply(name, d.design)) throw new Error("that design is not a canvas");
+  }).catch(e => {
+    if (status) status.textContent = String((e && e.message) || e);
+    bxAccountPlace();
+  });
+  return true;
+}
+function bxAccountOpenApply(name, design) {
+  const where = bxtAnchor();
+  const read = bxJSONRead(JSON.stringify(design), where);
+  if (!read.ok) return false;
+  bxJSONApply(read, where);
+  bxMenuClose();
+  return true;
 }
 // ---- the Backend menu: two dropdowns, their instructions inside ------------
 // The heavy work does not run in this page: Local dispatches to a connector on
@@ -6953,6 +7408,7 @@ function bxtInit() {
   wire("bxtBackend", bxtBackendToggle);
   wire("bxtTrainBtn", bxtRunToggle);
   wire("bxtVram", bxtVramToggle);
+  wire("bxtAccount", bxtAccountToggle);
   document.addEventListener("mousedown", (ev) => {   // a click outside closes them all
     const t = ev.target;
     if (t && t.closest && (t.closest(".bxtdrop") || t.closest(".bxtbtn"))) return;
@@ -6960,6 +7416,8 @@ function bxtInit() {
   });
   bxtDropsClose();                             // all menus start closed
   bxtRefresh();
+  bxAccountSync();                             // the tool strip already says guest
+  bxAccountLoad();                             // …and the server says who it is
   fetchBackend();                              // who is connected right now
   if (typeof setInterval === "function") setInterval(fetchBackend, 5000);
 }

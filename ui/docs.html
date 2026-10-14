@@ -334,6 +334,24 @@
     carries its own network inside the file, so one file can hold a whole model.
     The canvas also auto-saves in the browser — reload and your work is still there.
   </p>
+  <p>
+    <b>Everyone starts a guest.</b> A guest draws, wires and runs like anyone;
+    what a guest never gets is the server <i>keeping</i> the design. That is what
+    the <span class="pill grey">guest ▾</span> menu is for: <i>create an
+    account</i> puts one Cloudflare bot check in the way (you solve it in the
+    dialog), then this browser makes a token — 32 random bytes, shown once — and
+    the token is the whole login. Anywhere else, <i>log in with a token</i> and
+    paste it. Signed in, the menu saves the canvas under a name of yours and
+    opens what was saved; saving over a name replaces it. The server keeps a hash
+    of the token, never the token, and the designs live in their own database
+    file (<code>users.db</code>) — nothing of it is in git.
+  </p>
+  <p class="dim">
+    The bot check uses Cloudflare's test keys until <code>NNSTUDIO_TURNSTILE_SITE_KEY</code>
+    and <code>NNSTUDIO_TURNSTILE_SECRET_KEY</code> name a real widget — the dialog
+    says which is in use. <code>NNSTUDIO_COOKIE_SECURE=1</code> adds the
+    <code>Secure</code> flag to the session cookie for an https deployment.
+  </p>
 </section>
 
 <!-- ============================================================ boxes -->

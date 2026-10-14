@@ -24,12 +24,14 @@ import sys
 import threading
 import time
 import uuid
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import nn_engine
 import nn_arc
 import nn_tasks                # agent_tasks: what the AI agents are doing
+import nn_users                # accounts, and the designs they save
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui", "index.html")
@@ -42,6 +44,9 @@ BLOB_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".bmp": "image/bmp", ".mp4": "video/mp4", ".webm": "video/webm",
              ".ogv": "video/ogg", ".mov": "video/quicktime", ".m4v": "video/mp4"}
 BLOB_ID = __import__("re").compile(r"^[0-9a-f]{8,64}\.[a-z0-9]{2,5}$")
+_ACCT_LOCK = threading.Lock()
+_ACCT_HITS = {}                   # account writes, per bucket, a minute's window
+
 MODELS_DIR = os.path.join(HERE, "models")
 AGENT_DIR = os.path.join(HERE, "agent")
 WEIGHTS_DIR = os.path.join(HERE, "weights")
@@ -562,12 +567,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):    # keep the journal quiet
         pass
 
-    def _send(self, code, body, ctype="application/json; charset=utf-8"):
+    def _send(self, code, body, ctype="application/json; charset=utf-8", extra=None):
         if isinstance(body, str):
             body = body.encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():     # e.g. the session cookie
+            self.send_header(k, v)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         try:
@@ -575,8 +582,53 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass                          # the client hung up mid-answer: fine
 
-    def _json(self, obj, code=200):
-        self._send(code, json.dumps(json_safe(obj)))
+    def _json(self, obj, code=200, extra=None):
+        self._send(code, json.dumps(json_safe(obj)), extra=extra)
+
+    # ---- the account: a guest by default, a token once there is one ---------
+    # Creating an account always goes through Cloudflare's bot check: the
+    # browser solves a Turnstile challenge and sends its own freshly made
+    # token with it — that token is the login, now and later.
+    def _token(self):
+        """The token the request presents: the session cookie, or a bearer."""
+        cookie = self.headers.get("Cookie") or ""
+        for part in cookie.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "nn_token" and v:
+                return urllib.parse.unquote(v)
+        auth = self.headers.get("Authorization") or ""
+        if auth.lower().startswith("bearer "):
+            return auth[7:].strip()
+        return ""
+
+    def _account(self):
+        return nn_users.user_for(self._token())
+
+    def _cookie(self, token, clear=False):
+        parts = ["nn_token=" + ("" if clear else urllib.parse.quote(str(token))),
+                 "Path=/", "HttpOnly", "SameSite=Lax",
+                 "Max-Age=" + ("0" if clear else "31536000")]
+        if os.environ.get("NNSTUDIO_COOKIE_SECURE"):
+            parts.append("Secure")
+        return {"Set-Cookie": "; ".join(parts)}
+
+    def _throttle(self, bucket, limit=20, window=60.0):
+        """A small in-memory guard on the account's write paths: N a minute."""
+        now = time.time()
+        with _ACCT_LOCK:
+            hits = _ACCT_HITS.setdefault(bucket, [])
+            hits[:] = [t for t in hits if now - t < window]
+            if len(hits) >= limit:
+                return False
+            hits.append(now)
+            return True
+
+    def _account_json(self):
+        """Who the caller is, and what the dialogs need to draw themselves."""
+        user = self._account()
+        site, _secret, test = nn_users.site_keys()
+        return {"ok": True, "user": user, "site_key": site, "test_keys": test,
+                "max_bytes": nn_users.CANVAS_MAX}
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -669,6 +721,29 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": str(e)}, 500)
                 return
             self._send(200, body, "text/html; charset=utf-8")
+            return
+        if path == "/api/account":
+            self._json(self._account_json())
+            return
+        if path == "/api/account/canvases":
+            user = self._account()
+            if not user:
+                self._json({"ok": False, "error": "log in first"}, 401)
+                return
+            self._json({"ok": True, "canvases": nn_users.list_canvases(user["id"])})
+            return
+        if path == "/api/account/canvas":
+            user = self._account()
+            if not user:
+                self._json({"ok": False, "error": "log in first"}, 401)
+                return
+            name = (parse_qs(urlparse(self.path).query).get("name") or [""])[0]
+            got = nn_users.get_canvas(user["id"], name)
+            if not got:
+                self._json({"ok": False, "error": "no design by that name"}, 404)
+                return
+            self._json({"ok": True, "name": name, "design": got["design"],
+                        "updated": got["updated"]})
             return
         if path == "/api/models":
             self._json({"models": list_models()})
@@ -834,6 +909,63 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
             data = {}
+        if path == "/api/account/register":
+            if not self._throttle("register", limit=10):
+                self._json({"ok": False, "error": "too many tries — wait a minute"}, 429)
+                return
+            name = str(data.get("name") or "").strip()
+            token = str(data.get("token") or "")
+            challenge = str(data.get("challenge") or "")
+            _site, secret, _test = nn_users.site_keys()
+            ok, why = nn_users.verify_turnstile(secret, challenge, ip=self.client_address[0])
+            if not ok:
+                self._json({"ok": False, "error": why or "the bot check refused"}, 403)
+                return
+            try:
+                user = nn_users.register(name, token)
+            except ValueError as e:
+                self._json({"ok": False, "error": str(e)}, 400)
+                return
+            self._json({"ok": True, "user": user}, extra=self._cookie(token))
+            return
+        if path == "/api/account/login":
+            if not self._throttle("login", limit=30):
+                self._json({"ok": False, "error": "too many tries — wait a minute"}, 429)
+                return
+            token = str(data.get("token") or "")
+            user = nn_users.user_for(token)
+            if not user:
+                self._json({"ok": False, "error": "that token is not an account"}, 401)
+                return
+            self._json({"ok": True, "user": user}, extra=self._cookie(token))
+            return
+        if path == "/api/account/logout":
+            self._json({"ok": True}, extra=self._cookie("", clear=True))
+            return
+        if path == "/api/account/save":
+            user = self._account()
+            if not user:
+                self._json({"ok": False, "error": "an account is what saves — "
+                                                   "you are a guest"}, 401)
+                return
+            if not self._throttle("save", limit=60):
+                self._json({"ok": False, "error": "too many saves — wait a minute"}, 429)
+                return
+            try:
+                saved = nn_users.save_canvas(user["id"], data.get("name"), data.get("design"))
+            except ValueError as e:
+                self._json({"ok": False, "error": str(e)}, 400)
+                return
+            self._json({"ok": True, "saved": saved})
+            return
+        if path == "/api/account/delete":
+            user = self._account()
+            if not user:
+                self._json({"ok": False, "error": "log in first"}, 401)
+                return
+            gone = nn_users.drop_canvas(user["id"], data.get("name"))
+            self._json({"ok": True, "dropped": gone})
+            return
         if path == "/api/gguf/canvas":
             model = str(data.get("model") or "").strip()
             repo = str(data.get("repo") or "").strip()
