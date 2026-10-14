@@ -5351,8 +5351,11 @@ function bxHoverTarget(n, t) {                 // which card a hovered box asks 
   const dot = t && t.closest ? t.closest(".dport") : null;
   const p = dot && dot.getAttribute ? dot.getAttribute("data-port") : null;
   if (p == null) return { id: n.id, part: "list" };   // the body: the whole list
+  // an SVG element's .className is an SVGAnimatedString, never a string: the
+  // dot's direction must come from its class attribute
+  const cls = String((dot.getAttribute && dot.getAttribute("class")) || dot.className || "");
   return { id: n.id, part: "port", port: Math.max(0, Number(p) || 0),
-           dir: String(dot.className).indexOf("out") >= 0 ? "out" : "in" };
+           dir: cls.indexOf("out") >= 0 ? "out" : "in" };
 }
 function bxHotKey(target) {
   return target.id + ">" + target.part + ">" + (target.dir || "") + ">" + (target.port || 0);

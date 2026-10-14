@@ -667,6 +667,18 @@ check("a nested box's dots and body read as its own i/o boxes", () => {
   eql(line("who"), "output", "an out dot reads as the inner output box");
   eql(line("shp"), "expects matrix [? × 128]", "…and what it takes");
   eql(line("note"), "port 1 of Inner-Model", "…port 1 of the nested box");
+  // the real DOM hands an SVG dot's .className as an SVGAnimatedString object,
+  // and closest() reads the class attribute — emulate that exactly
+  const svgDot = {
+    className: { baseVal: "dport hit out", animVal: "dport hit out" },
+    getAttribute: (k) => (k === "class" ? "dport hit out"
+                      : k === "data-port" ? "0" : null),
+    closest: (sel) => (sel === ".dport" ? svgDot : (sel === ".dnode" ? g : null)),
+  };
+  __t.bxHotSet(null);
+  __t.bxHotMove({ target: svgDot, clientX: 120, clientY: 80 });
+  eql(line("who"), "output", "…even when the DOM hands .className as an object");
+  eql(line("shp"), "expects matrix [? × 128]", "…still that box's own shape");
   __t.bxHotSet(null);
   __t.bxRemove(c.id);
 });
