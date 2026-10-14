@@ -46,6 +46,9 @@ runs/
 outputs/
 logs/
 *.log
+# no database file is ever tracked: each one is derived (hf_arc.db is rebuilt
+# by the reverse agent) or private (users.db — sealed accounts and designs)
+*.db
 users.db*
 *.db-journal
 .certs/
