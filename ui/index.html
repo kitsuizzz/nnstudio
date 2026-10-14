@@ -2007,6 +2007,9 @@ let bxErrBoxes = new Set();
 function bxDocBad(nodes, edges) {
   const bad = new Set();
   if (bxLevelOff()) return bad;                  // everything here is off
+  const view = bxRunDoc(nodes, edges);           // the run's boxes: the rest is discarded
+  nodes = view.nodes;
+  edges = view.edges;
   const has = (id) => nodes.some(n => n.id === id);
   const ins = new Map(), outs = new Map();
   for (const n of nodes) { ins.set(n.id, new Set()); outs.set(n.id, new Set()); }
@@ -2050,6 +2053,9 @@ let bxWarnBoxes = new Set();
 function bxDocWarn(nodes, edges) {
   const warn = new Set();
   if (bxLevelOff()) return warn;                 // everything here is off anyway
+  const view = bxRunDoc(nodes, edges);           // warnings only where the run goes
+  nodes = view.nodes;
+  edges = view.edges;
   const find = (id) => nodes.find(n => n.id === id) || null;
   for (const e of edges) {
     const a = find(e.from), b = find(e.to);
@@ -3529,7 +3535,7 @@ function bxTrainStart(n) {                        // the run button, for trainin
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ type: "train",
                                                 name: n.name || "training",
-                                                design: canvas }) })
+                                                design: bxRunCanvas(canvas) }) })
     .then(r => r.json())
     .then(d => {
       if (!d || !d.ok || !d.task)
@@ -3565,8 +3571,9 @@ function bxTrainLoadCkpt(n, st) {                 // train → inference, with t
   bxRender();
   bxtRunSync();
   fetch("/api/load", { method: "POST", headers: { "Content-Type": "application/json" },
-                       body: JSON.stringify({ canvas, mode: "inference",
-                                               checkpoint: st.saved_at }) })
+                       body: JSON.stringify({ canvas: bxRunCanvas(canvas),
+                                              mode: "inference",
+                                              checkpoint: st.saved_at }) })
     .then(r => r.json().then(d => ({ ok: r.ok, d })))
     .then(res => {
       BXRUN.loading = false;
@@ -6555,16 +6562,78 @@ function bxtRunOffload() {                     // let the backend drop everythin
       fetchBackend();
     });
 }
+// ---------------------------------------------------------- the run's own boxes
+// A design may hold boxes the run never touches: a spare model, a half-built
+// branch, an input nothing reads. The run is what goes from a source to an
+// output (or a loss); everything else is discarded — the marks look only at
+// the run, and the backend is asked only for what the run needs.
+function bxFeedsItself(n, edges) {             // a box that makes its own data
+  if (!n) return false;
+  if (n.kind === "input" || n.kind === "dataset" || n.kind === "script")
+    return true;
+  return (n.kind === "tokenize" || n.kind === "hf") &&
+         !(edges || []).some(e => e.to === n.id);
+}
+function bxRunSet(nodes, edges) {              // ids on a source -> sink path
+  nodes = nodes || [];
+  edges = edges || [];
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const src = nodes.filter(n => bxFeedsItself(n, edges));
+  const sink = nodes.filter(n => n.kind === "output" || n.kind === "loss");
+  const step = (from, dir) => {
+    const seen = new Set(from.map(n => n.id));
+    const q = from.slice();
+    while (q.length) {
+      const n = q.pop();
+      for (const e of edges) {
+        const nid = dir === "fwd" ? (e.from === n.id ? e.to : null)
+                                  : (e.to === n.id ? e.from : null);
+        const m = nid == null ? null : byId.get(nid);
+        if (!m || seen.has(m.id)) continue;
+        seen.add(m.id);
+        q.push(m);
+      }
+    }
+    return seen;
+  };
+  const fwd = step(src, "fwd"), back = step(sink, "back");
+  const run = new Set();
+  for (const id of fwd) if (back.has(id)) run.add(id);
+  return run;
+}
+function bxRunDoc(nodes, edges) {              // one level, the run's boxes only
+  nodes = nodes || [];
+  edges = edges || [];
+  const named = new Set();                     // datasets a Train box feeds from
+  for (const n of nodes)
+    if (n.kind === "train")
+      [n.dataset, n.test_dataset].forEach(x => { if (x) named.add(x); });
+  const run = bxRunSet(nodes, edges);
+  const keep = nodes.filter(n => run.has(n.id) || named.has(n.id) ||
+                                 n.kind === "train" || n.kind === "agent" ||
+                                 n.kind === "reward");
+  const ids = new Set(keep.map(n => n.id));
+  return { nodes: keep, edges: edges.filter(e => ids.has(e.from) && ids.has(e.to)) };
+}
+function bxRunCanvas(doc) {                    // the exported design, minus the boxes
+  if (!doc || !(doc.nodes || []).length) return doc;   // off the run's path
+  const view = bxRunDoc(doc.nodes, doc.edges);
+  const keep = new Set(view.nodes.map(n => n.id));
+  const nodes = [];
+  for (const n of doc.nodes) {
+    if (!keep.has(n.id)) continue;
+    if (n.kind === "custom" && n.inner) n.inner = bxRunCanvas(n.inner);
+    nodes.push(n);
+  }
+  return Object.assign({}, doc, { nodes,
+    edges: (doc.edges || []).filter(e => keep.has(e.from) && keep.has(e.to)) });
+}
 function bxFlowVerify() {                        // the browser's dataflow check: a source
   // must carry data to an output before the backend is asked to run the design
   const nodes = BX.nodes || [], edges = BX.edges || [];
-  const bad = new Set(), reach = new Set(), inPorts = new Map();
+  const bad = new Set(), reach = new Set();
   if (!nodes.length) return { ok: false, bad, why: "the canvas is empty" };
-  for (const n of nodes) inPorts.set(n.id, new Set());
-  for (const e of edges) if (inPorts.has(e.to)) inPorts.get(e.to).add(e.toPort || 0);
-  const feeds_itself = (n) => n.kind === "input" || n.kind === "dataset" ||
-    ((n.kind === "tokenize" || n.kind === "hf") && !inPorts.get(n.id).size) ||
-    n.kind === "script";
+  const feeds_itself = (n) => bxFeedsItself(n, edges);
   const q = [];
   for (const n of nodes)
     if (!bxOffHere(n) && feeds_itself(n)) { reach.add(n.id); q.push(n.id); }
@@ -6593,6 +6662,7 @@ function bxtRunGo() {
     if (BX.up) bxtRunMsg("the whole design runs from the top level \u2014 go back out first");
     return;
   }
+  const runCanvas = bxRunCanvas(canvas);       // the run's own boxes: the rest is discarded
   const feeds = {};
   const training = (BXRUN.mode || "inference") === "training";
   if (!training) {                             // in training, the dataset feeds the input
@@ -6609,8 +6679,10 @@ function bxtRunGo() {
       if (raw) feeds[n.id] = raw;            // a string: the tokenizer downstream reads it
     }
   }
+  const runIds = bxRunSet(BX.nodes, BX.edges);
   const images = training ? []                     // training feeds the dataset, not
-    : BX.nodes.filter(n => n.kind === "input" && n.input_mode === "image");
+    : BX.nodes.filter(n => n.kind === "input" && n.input_mode === "image" &&
+                           runIds.has(n.id));        // a discarded input needs nothing
   const noimg = images.find(n => !n.image);
   if (noimg) {
     bxtRunMsg("input \u201c" + (noimg.name || noimg.id)
@@ -6671,7 +6743,7 @@ function bxtRunGo() {
   const grows = BX.nodes.filter(n => n.kind === "tokenize" &&
                                      !BX.edges.some(e => e.to === n.id))
     .concat(BX.nodes.filter(n => n.kind === "input"));
-  const body = { canvas, feeds, mode: BXRUN.mode || "inference" };
+  const body = { canvas: runCanvas, feeds, mode: BXRUN.mode || "inference" };
   const gen = training ? 0 : Math.max(0, Math.round(Number(BXRUN.gen) || 0));
   if (gen > 0 && outs.length && grows.length) {
     body.generate = gen;                       // the loop grows the ids and samples
@@ -7506,9 +7578,11 @@ function bxBindModels(nodes, models, inherited) {
 }
 
 function bxRunFix() {                          // true: the run must wait
-  if (!bxUnboundModels(BX.nodes, null).length) return false;
+  const run = bxRunSet(BX.nodes, BX.edges);    // only the run's boxes need a file
+  const need = bxUnboundModels(BX.nodes, null).filter(n => run.has(n.id));
+  if (!need.length) return false;
   if (bxModels) {
-    const r = bxBindModels(BX.nodes, bxModels, null);
+    const r = bxBindModels(need, bxModels, null);
     if (r.bound.length) {
       bxCommit();                              // one undo step, the run goes on
       bxRender();

@@ -220,7 +220,7 @@ globalThis.__t = {
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
   bxRunFeeds, bxInputFill, bxInputExpand, bxOutputFill, bxOutputExpand, bxPaneFill,
-  bxHotSet, bxHotMove, bxTipHide,
+  bxHotSet, bxHotMove, bxTipHide, bxRunSet, bxRunCanvas, bxFeedsItself,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
   bxTableRead, bxTableWrite, bxTableType, bxTableSetCell, bxTableRenameCol,
   bxTableInsertCol, bxTableDeleteCol, bxTableAddRow, bxTableDeleteRow,
@@ -471,6 +471,34 @@ check("the canvas draws a grid that follows the view", () => {
   __t.bxZoomAt({ clientX: 300, clientY: 200 }, 2);
   ok(String(gridOf().children[1]._attrs.d) !== before, "…re-stepping as the view zooms");
   __t.bxZoomAt({ clientX: 300, clientY: 200 }, 0.5);    // back to 1× for the rest
+});
+
+check("the run discards the boxes it never touches", () => {
+  const errs = () => __t.bxErrorSet();
+  const i = __t.bxAdd("input", 0, 0, { dout: 4, values: "1 2 3 4" });
+  const l = __t.bxAdd("layer", 200, 0, { din: 4, dout: 4 });
+  const o = __t.bxAdd("output", 400, 0, { din: 4 });
+  __t.bxConnect(i.id, l.id);
+  __t.bxConnect(l.id, o.id);
+  const stray = __t.bxAdd("layer", 0, 300, { din: 8, dout: 8 });      // no wires at all
+  const branch = __t.bxAdd("layer", 200, 300, { din: 4, dout: 8 });   // fed, leads nowhere
+  __t.bxConnect(i.id, branch.id);
+  const spare = __t.bxAdd("input", 0, 500, { dout: 8 });              // nothing reads it
+  eql([errs().has(stray.id), errs().has(branch.id), errs().has(spare.id)],
+      [false, false, false], "a stray box, a dangling branch and a spare input: no errors");
+  eql([errs().has(i.id), errs().has(l.id), errs().has(o.id)], [false, false, false],
+      "\u2026and nothing on the run's own path is marked");
+  const runDoc = __t.bxRunCanvas(__t.bxExportCanvas());
+  const ids = runDoc.nodes.map(n => n.id);
+  eql([ids.indexOf(stray.id), ids.indexOf(branch.id), ids.indexOf(spare.id)], [-1, -1, -1],
+      "the run drops every box it never touches");
+  ok(ids.indexOf(i.id) >= 0 && ids.indexOf(l.id) >= 0 && ids.indexOf(o.id) >= 0,
+     "\u2026and keeps the path from the input to the output");
+  eql(runDoc.edges.filter(e => e.from === l.id || e.to === l.id).length, 2,
+      "\u2026with that path's wires alone");
+  eql(__t.bxExportCanvas().nodes.map(n => n.id).indexOf(stray.id) >= 0, true,
+      "the design itself keeps every box");
+  [stray.id, branch.id, spare.id, i.id, l.id, o.id].forEach(x => __t.bxRemove(x));
 });
 
 check("a wire is deletable on the spot (hover × , or right-click)", () => {
@@ -2999,13 +3027,13 @@ check("error boxes: isolation, dead ends, bad wires, and nesting", () => {
   const fc = __t.bxAdd("layer", 200, 0, {});
   const o = __t.bxAdd("output", 400, 0, {});
   __t.bxConfigure(i.id, { dout: 512 });
-  eql(__t.bxErrorSet({ nodes: [{ id: fc.id, kind: "layer", x: 0, y: 0 }], edges: [] }).has(fc.id), true,
-    "a box with no wires at all is an error box");
+  eql(__t.bxErrorSet({ nodes: [{ id: fc.id, kind: "layer", x: 0, y: 0 }], edges: [] }).has(fc.id), false,
+    "a box with no wires at all is discarded, not an error");
   __t.bxConnect(i.id, fc.id);
-  eql(errs().has(fc.id), true, "…and still is when only its input is wired (its output goes nowhere)");
+  eql(errs().has(fc.id), false, "…and while it leads nowhere it stays discarded");
   eql(errs().has(i.id), false, "an input box that feeds something is fine");
   __t.bxConnect(fc.id, o.id);
-  eql(errs().has(fc.id), false, "wiring the output clears it");
+  eql(errs().has(fc.id), false, "wiring it to an output puts it on the run — and it is whole");
   eql(errs().has(o.id), false, "…and the output is fed");
   // every input dot counts: a two-input operation with one dot empty is in error
   const i2 = __t.bxAdd("input", 0, 300, {});
@@ -3014,11 +3042,15 @@ check("error boxes: isolation, dead ends, bad wires, and nesting", () => {
   __t.bxConfigure(i2.id, { dout: 512 });
   __t.bxConfigure(mm.id, { op: "add" });
   __t.bxConnect(i2.id, mm.id, 0, 0);
-  eql(errs().has(mm.id), true, "a two-input box with one dot empty is an error");
+  eql(errs().has(mm.id), false, "off the run's path, an empty dot is fine: discarded");
   __t.bxConnect(i.id, mm.id, 0, 1);
-  eql(errs().has(mm.id), true, "…and it stays one while nothing leaves it");
+  eql(errs().has(mm.id), false, "…still off it while nothing leaves the box");
   __t.bxConnect(mm.id, o2.id);
-  eql(errs().has(mm.id), false, "both dots fed and one wire out: valid");
+  eql(errs().has(mm.id), false, "on the run: both dots fed and one wire out, valid");
+  __t.bxRemoveEdge(i.id, mm.id, 0, 1);
+  eql(errs().has(mm.id), true, "…but an empty dot on the run is an error");
+  __t.bxConnect(i.id, mm.id, 0, 1);
+  eql(errs().has(mm.id), false, "…and feeding it clears it");
   // a mismatched wire puts both of its boxes in error
   const o3 = __t.bxAdd("output", 400, 500, {});
   __t.bxConnect(mm.id, o3.id);
@@ -3027,50 +3059,40 @@ check("error boxes: isolation, dead ends, bad wires, and nesting", () => {
   eql([errs().has(o3.id), errs().has(mm.id)], [true, true],
     "a resize that breaks the wire marks both ends as error boxes");
   __t.bxRemove(o3.id);
-  // an error deep inside marks every box above it
+  // an error on the run's path deep inside marks every box above it
   const outer = __t.bxAdd("custom", 700, 0, {});
   ok(__t.bxEnter(outer.id), "into the outer nested box");
-  const mid = __t.bxAdd("custom", 0, 0, {});          // one level down
-  const midId = mid.id;
-  ok(__t.bxEnter(midId), "into the inner one");
-  const deep = __t.bxAdd("layer", 0, 0, {});
+  const oin = __t.bxAdd("input", -200, 0, { dout: 512 });      // the block's own in dot
+  const oadd = __t.bxAdd("op", 0, 0, { op: "add", din: 512 });  // two dots, one left empty
+  const oout = __t.bxAdd("output", 200, 0, { din: 512 });      // …and its out dot
+  __t.bxConnect(oin.id, oadd.id, 0, 0);
+  __t.bxConnect(oadd.id, oout.id);
   __t.bxLeave();
-  __t.bxLeave();
-  eql([__t.bxErrorSet(__t.bxNode(outer.id).inner).has(midId), errs().has(outer.id)], [true, true],
-    "one isolated box two levels down marks its parent and the top box");
-  eql(errs().has(i.id), false, "…while clean boxes stay clean");
-  // fix it from the inside: the deep box first
-  ok(__t.bxEnter(outer.id), "back inside");
-  ok(__t.bxEnter(midId), "back into the inner one");
-  const ii = __t.bxAdd("input", -200, 0, {});
-  const io = __t.bxAdd("output", 200, 0, {});
-  __t.bxConnect(ii.id, deep.id);
-  __t.bxConnect(deep.id, io.id);
-  eql(__t.bxErrorSet({ nodes: __t.BX.nodes, edges: __t.BX.edges }).has(deep.id), false, "the deep box is fixed");
-  __t.bxLeave();
-  const ii2 = __t.bxAdd("input", -400, 0, {});       // mid's own dots, inside outer
-  const io2 = __t.bxAdd("output", 400, 0, {});
-  __t.bxConnect(ii2.id, midId, 0, 0);
-  __t.bxConnect(midId, io2.id);
-  __t.bxLeave();
-  eql(__t.bxErrorSet(__t.bxNode(outer.id).inner).has(midId), false, "wiring the inner box fixes it");
-  eql(errs().has(outer.id), true, "…but the top box still floats, so it is still in error");
-  const link = __t.bxAdd("input", 500, 0, {});       // put outer itself into the flow
-  const sink = __t.bxAdd("output", 1000, 0, {});
+  const link = __t.bxAdd("input", 500, 0, { dout: 512 });       // the block joins the run
+  const sink = __t.bxAdd("output", 1000, 0, { din: 512 });
   __t.bxConnect(link.id, outer.id);
   __t.bxConnect(outer.id, sink.id);
-  eql(errs().has(outer.id), false, "…and once it takes part in the flow, everything clears");
+  eql([__t.bxErrorSet(__t.bxNode(outer.id).inner).has(oadd.id), errs().has(outer.id)],
+    [true, true], "an empty dot inside marks its box and every box above it");
+  eql(errs().has(link.id), false, "…while clean boxes stay clean");
   // the card wears it: the class and the alert mark
-  const stray = __t.bxAdd("layer", 1400, 0, {});        // a fresh box has no wires yet
   const host = getEl("bxcanvas");
-  ok(host.querySelectorAll(".dnode.err").length >= 1, "an error box is drawn with the err class");
+  ok(host.querySelectorAll(".dnode.err").length >= 1, "the block is drawn with the err class");
   ok(host.querySelectorAll(".dwarn").length >= 1, "…and carries its alert mark");
-  __t.bxRemove(stray.id);
+  // feed the empty dot from the inside: the marks clear
+  ok(__t.bxEnter(outer.id), "back inside");
+  __t.bxConnect(oin.id, oadd.id, 0, 1);
+  eql(__t.bxErrorSet({ nodes: __t.BX.nodes, edges: __t.BX.edges }).has(oadd.id), false,
+    "the inner box is fixed");
+  __t.bxLeave();
+  eql(errs().has(outer.id), false, "…and the block clears with it");
+  __t.bxRemove(outer.id);
+  __t.bxRemove(link.id);
+  __t.bxRemove(sink.id);
   const clean = __t.bxErrorSet({ nodes: [{ id: "x1", kind: "input", x: 0, y: 0, dout: 8 },
                                          { id: "x2", kind: "output", x: 200, y: 0, din: 8 }],
                                  edges: [{ from: "x1", to: "x2", fromPort: 0, toPort: 0 }] }).size;
   eql(clean, 0, "a well-formed little network has no error boxes");
-  [i, fc, o, i2, mm, o2, link, sink, outer].forEach(n => __t.bxRemove(n.id));
 });
 
 check("a GGUF-built canvas loads: the model is one dedicated nested box", () => {
@@ -3455,10 +3477,18 @@ check("deactivate & freeze: no data in, no gradients out — and it reaches insi
   b.din = 8;
   // a nested box carries the flag to everything inside it
   const nest = __t.bxAdd("custom", 600, 0, { name: "block" });
-  nest.inner = { nodes: [{ id: "i1", kind: "input", name: "in", x: 0, y: 0, dout: 8 },
-                         { id: "i2", kind: "norm", name: "n", x: 240, y: 0, norm: "rms",
-                           eps: 1e-6, t: "w", params: 8, wbytes: 32, dtype: "f32" }],
-                 edges: [{ from: "i1", to: "i2" }] };   // the norm goes nowhere
+  nest.inner = { nodes: [{ id: "i1", kind: "input", name: "in", x: 0, y: 0, dout: 4 },
+                         { id: "i2", kind: "norm", name: "n", x: 200, y: 0, norm: "rms",
+                           eps: 1e-6, t: "w", params: 8, wbytes: 32, dtype: "f32" },
+                         { id: "i3", kind: "op", name: "add", x: 380, y: 0, op: "add",
+                           din: 4, dout: 4 },
+                         { id: "i4", kind: "output", name: "out", x: 560, y: 0, din: 4 }],
+                 edges: [{ from: "i1", to: "i2" },
+                         { from: "i2", to: "i3", toPort: 0 },
+                         { from: "i3", to: "i4" }] };   // one dot of the add is empty
+  const o2 = __t.bxAdd("output", 800, 0, { din: 4 });
+  __t.bxConnect(b.id, nest.id);                         // the block joins the run
+  __t.bxConnect(nest.id, o2.id);
   eql(__t.bxErrorSet().has(nest.id), true, "an unfinished inside marks the box");
   __t.bxMenuBuild("box", nest.id, {});
   openCat(getEl("bxmenu"), "flow");
@@ -3476,6 +3506,10 @@ check("deactivate & freeze: no data in, no gradients out — and it reaches insi
                    edges: [{ from: "j1", to: "j2" }, { from: "j2", to: "j3" }] };
   const packet2 = __t.bxAdd("custom", 800, 0, { name: "packet2" });
   packet2.inner = inner2;
+  const pin = __t.bxAdd("input", 600, 0, { dout: 8 });    // the packet joins the run
+  const pout = __t.bxAdd("output", 1000, 0, { din: 8 });
+  __t.bxConnect(pin.id, packet2.id);
+  __t.bxConnect(packet2.id, pout.id);
   eql(__t.bxWarnSet().has(packet2.id), false, "a whole nested box starts unwarned");
   inner2.nodes[1].off = true;
   eql([__t.bxWarnSet(packet2.inner).has("j3"), __t.bxWarnSet().has(packet2.id),
@@ -3525,6 +3559,8 @@ check("an inactive output marks the block that holds it inactive too", () => {
                 edges: [{ from: "s1", to: "s2" }, { from: "s1", to: "s3" }] };
   const dstA = __t.bxAdd("output", 600, 300, { din: 8 });
   const dstB = __t.bxAdd("output", 600, 500, { din: 8 });
+  const feed2 = __t.bxAdd("input", -200, 300, { dout: 8 });   // the block joins the run
+  __t.bxConnect(feed2.id, two.id);
   __t.bxConnect(two.id, dstA.id, 0, 0);
   __t.bxConnect(two.id, dstB.id, 1, 0);
   const wireTo = (id) => __t.BX.edges.find(e => e.to === id);

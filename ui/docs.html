@@ -244,6 +244,9 @@
         then press <b>▶ run the design</b> in an <span class="pill">input</span>
         box. The page verifies the dataflow first — a wired path from an input to
         an output — then the backend computes it: the wires light as the data goes,
+        and <b>only the boxes on that path take part</b>: a spare model, a
+        half-built branch or an input nothing reads is discarded — neither
+        marked nor sent to the backend,
         and each data box shows what it received (the
         <span class="pill">output</span> shows its own). A run is
         <b>inference</b>: no gradients are kept (the lightest run — dataset boxes
