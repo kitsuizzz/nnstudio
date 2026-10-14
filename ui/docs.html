@@ -355,8 +355,11 @@
     and without it the account shows locked (<i>account 🔒</i>) until the token
     is pasted into <i>unlock with your token …</i>. Lose the token and the saved
     designs are gone for good — there is no reset, the server included. Sealing
-    needs WebCrypto, so use <code>http://localhost</code> or https; a plain-http
-    LAN address cannot sign up.
+    needs WebCrypto, which lives on secure origins only: <code>http://localhost</code>
+    or https. A machine that should be reached from other devices over plain
+    http can mint a certificate from a tiny local authority
+    (<code>tools/tls_local.sh</code>) and trust its <code>ca.crt</code> once on
+    each device — then <code>https://&lt;address&gt;:8124</code> works the same.
   </p>
   <p class="dim">
     The bot check uses Cloudflare's test keys until <code>NNSTUDIO_TURNSTILE_SITE_KEY</code>

@@ -19,6 +19,7 @@ import shutil
 import signal
 import socket
 import socketserver
+import ssl
 import subprocess
 import sys
 import threading
@@ -561,6 +562,30 @@ class ControlHandler(socketserver.BaseRequestHandler):
 class ControlServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
+
+
+class WebServer(ThreadingHTTPServer):
+    """The HTTP server — and, when a certificate is given, HTTPS on the very
+    same port. The first byte of a connection says which: 0x16 is a TLS
+    handshake, a method letter is plain HTTP. So http://localhost stays what
+    it always was, while a device that trusted the local CA can use
+    https://<address> for the same app — and WebCrypto, which only lives on a
+    secure origin, comes alive there."""
+    tls_ctx = None
+
+    def get_request(self):
+        conn, addr = self.socket.accept()
+        if self.tls_ctx is not None:
+            try:
+                if conn.recv(1, socket.MSG_PEEK) == b"\x16":
+                    conn = self.tls_ctx.wrap_socket(conn, server_side=True)
+            except OSError:                    # a bad handshake, a probe: no news
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                raise OSError("dropped during the TLS peek")
+        return conn, addr
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1330,6 +1355,8 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8124)
     ap.add_argument("--control-port", type=int, default=8125)
+    ap.add_argument("--tls-cert", default="", help="serve https too (tools/tls_local.sh makes one)")
+    ap.add_argument("--tls-key", default="")
     args = ap.parse_args()
     try:
         nn_tasks.reconcile()               # a task whose process is gone is done
@@ -1340,9 +1367,18 @@ def main():
                      name="nnstudio-control").start()
     threading.Thread(target=heartbeat_loop, daemon=True,
                      name="nnstudio-heartbeat").start()
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print("nnstudio on http://%s:%d (agents on %s:%d)"
-          % (args.host, args.port, args.host, args.control_port), flush=True)
+    server = WebServer((args.host, args.port), Handler)
+    tls = ""
+    if args.tls_cert or args.tls_key:
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(args.tls_cert, args.tls_key or None)
+            server.tls_ctx = ctx
+            tls = " and https"
+        except (OSError, ssl.SSLError) as e:    # the app still runs over http
+            print("nnstudio: the certificate could not be loaded (%s)" % (e,), flush=True)
+    print("nnstudio on http%s://%s:%d (agents on %s:%d)"
+          % ("(s)" if tls else "", args.host, args.port, args.host, args.control_port), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

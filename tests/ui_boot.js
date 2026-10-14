@@ -4419,8 +4419,11 @@ check("the Train box: one only, at the top level, and no rename", () => {
 
 check("the account: guests by default, a bot check to sign up, sealed designs", async () => {
   const nodes0 = __t.BX.nodes.length;
-  const flush = async () => {                  // let a UI chain land: the crypto settles
-    for (let i = 0; i < 12; i++) await new Promise(r => setImmediate(r));
+  const turn = () => new Promise(r => setImmediate(r));   // one event-loop turn
+  const flush = async () => { for (let i = 0; i < 8; i++) await turn(); };
+  const until = async (ok, turns = 80) => {    // the crypto wall clock varies: wait for it
+    for (let i = 0; i < turns && !ok(); i++) await turn();
+    return ok();
   };
   // everyone starts a guest — nothing is saved for one
   eql(__t.BXACCT.user, null, "the account starts empty: a guest");
@@ -4481,7 +4484,8 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
       "…and the sealed name, which only the token opens");
   ok(!JSON.stringify(sent).includes("tester") && !JSON.stringify(sent).includes(made),
      "no plaintext name goes out — and never the token itself");
-  await flush();                               // the stubbed answer lands: signed in + revealed
+  ok(await until(() => getEl("bxtAccount").textContent === "tester ▾"),
+     "the stubbed answer lands: signed in and revealed");
   eql(getEl("bxtAccount").textContent, "tester ▾", "signed in, the toolbar reads the name");
   eql(__t.BXACCT.token, made, "the token is kept in this browser");
   eql(__t.bxTokenRecall(), made, "…remembered for the next reload");
@@ -4523,13 +4527,13 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
   const f3 = getEl("bxmenu");
   f3.querySelectorAll(".bxinp")[0].value = "not-the-token";
   f3.querySelectorAll(".chip").find(c => String(c.textContent) === "unlock").click();
-  await flush();
   const hint = f3.querySelectorAll(".panehint");
+  await until(() => String(hint[hint.length - 1].textContent).length > 0);
   ok(String(hint[hint.length - 1].textContent).indexOf("cannot open") >= 0,
      "a wrong token cannot unlock: " + hint[hint.length - 1].textContent);
   f3.querySelectorAll(".bxinp")[0].value = made;
   f3.querySelectorAll(".chip").find(c => String(c.textContent) === "unlock").click();
-  await flush();
+  await until(() => getEl("bxtAccount").textContent === "tester ▾");
   eql(getEl("bxtAccount").textContent, "tester ▾", "the real token unlocks it");
   __t.bxMenuClose();
   // opening: rows carry sealed names; a click asks for the blob by its tag

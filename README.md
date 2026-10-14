@@ -64,6 +64,35 @@ A `users.db` from before the sealing is moved aside on first use
 (`users.db.pre-e2e`) and a fresh store takes its place; old accounts simply
 sign up again.
 
+### From another device — https with a local CA
+
+Sealing needs a secure origin, so a plain-http address such as
+`http://10.8.0.9:8124` cannot sign up or save. The server serves https on the
+same port (the first byte of a connection says which), with a certificate from
+a tiny local authority:
+
+    bash tools/tls_local.sh          # makes .certs/ (git-ignored; keys 0600)
+    systemctl --user restart nnstudio.service
+
+It answers to `localhost`, the host's name, and every address the machine
+holds. Copy `.certs/ca.crt` to the device once and trust it — over the VPN,
+from the device: `scp <user>@10.8.0.9:/path/to/nnstudio/.certs/ca.crt .` —
+then per platform:
+
+| platform | trust the CA |
+|---|---|
+| Android | Settings → Security → Encryption & credentials → Install a certificate → **CA certificate** |
+| iOS / iPadOS | install the profile, then Settings → General → About → **Certificate Trust Settings** → enable full trust |
+| Linux | `sudo cp ca.crt /usr/local/share/ca-certificates/nnstudio.crt && sudo update-ca-certificates` (Firefox has its own store) |
+| macOS | double-click → add to the System keychain → **Always Trust** |
+| Windows | double-click → Install → Local Machine → **Trusted Root Certification Authorities** |
+
+Then `https://10.8.0.9:8124` is a fully valid origin: WebCrypto, the bot check
+and saving behave; `http://localhost:8124` on the machine itself is unchanged.
+If the machine's address changes, `bash tools/tls_local.sh --force` re-makes
+the server certificate — the CA, and so every device's trust, is kept
+(`--new-ca` starts a fresh authority, requiring a re-trust).
+
 Cloudflare's *test* keys are used until the environment names a real widget,
 and the dialog says so. To put a real one in place: create a widget at
 [dash.cloudflare.com](https://dash.cloudflare.com/) → **Turnstile** → *Add
@@ -101,6 +130,7 @@ code (git-ignored) is the default.
 | `tests/gguf_canvas_test.py` | the pure builder test, on synthetic tensors |
 | `tests/nn_torch_test.py` | the engine's offline tests (forward, ops, training, GGUF weights) |
 | `tests/nn_users_test.py` | the account store, offline: sealed rows (not one plaintext name), the bot check's answers, the .env loader, design CRUD |
+| `tools/tls_local.sh` | the tiny local CA + server certificate (`.certs/`, git-ignored) for reaching the app over https from your own devices |
 | `tests/agent_test.py` | the live end-to-end: a real agent connects and a design runs (`--live`) |
 | `weights/` | where `export weights …` writes, and a place to drop pt / safetensors / gguf files for the pickers |
 | `models/` | → `~/jevtest/models` (the GGUF files live there) |
