@@ -812,13 +812,9 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 .bxtbtn:hover { color: var(--ink); border-color: rgba(249,115,22,.6); }
 .bxtbtn.off { opacity: .4; cursor: default; }
 .bxtbtn.off:hover { color: var(--ink-dim); border-color: var(--panel-brd); }
-/* the Run button is the app's main action, so it is filled, not outlined */
-#bxtTrainBtn { color: #1a120b; background: var(--accent); border-color: var(--accent);
-               padding: 3px 15px; }
-#bxtTrainBtn:hover { color: #1a120b; border-color: var(--accent); }
-#bxtTrainBtn.off { opacity: 1; color: var(--ink-dim);
-                   background: rgba(249,115,22,.22); border-color: rgba(249,115,22,.45); }
-#bxtTrainBtn.off:hover { color: var(--ink-dim); border-color: rgba(249,115,22,.45); }
+/* the Train box's door lives in the Backend menu: a row, and dim when the
+   box is not on the canvas */
+.bxtmi.off { opacity: .55; }
 .bxtdrop { position: absolute; top: 32px; left: 10px; z-index: 40; min-width: 158px; padding: 4px;
            max-height: 76vh; overflow-y: auto;
            background: rgba(20,20,20,.98); border: 1px solid var(--panel-brd);
@@ -970,7 +966,6 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
       <div class="bxtdrop" id="bxtImportMenu" hidden></div>
       <span class="bxtbtn" id="bxtBackend" title="where the heavy work runs">Backend ▾</span>
       <div class="bxtdrop" id="bxtBackendMenu" hidden></div>
-      <span class="bxtbtn off" id="bxtTrainBtn" title="show the Train box">Train</span>
       <span class="bxtspace"></span>
       <span class="bxtbtn" id="bxtVram" title="the VRAM estimate">VRAM ▾</span>
       <div class="bxtdrop bxtdrop-r" id="bxtVramMenu" hidden>
@@ -6794,6 +6789,11 @@ function bxtBackendRender() {
   const menu = $("bxtBackendMenu");
   if (!menu) return;
   menu.innerHTML = "";
+  const door = mk("div", { class: "bxtmi", id: "bxtTrainBtn",
+                           title: bxTrainDoorTitle(), text: bxTrainDoorText() });
+  if (!bxTrainShown()) door.classList.add("off");
+  door.addEventListener("click", () => bxtRunToggle());
+  menu.appendChild(door);
   let pane = bxtBackendSection(menu, "local", "Local");
   if (pane) {
     const a = BXRUN.local && BXRUN.local.agent;
@@ -6809,7 +6809,7 @@ function bxtBackendRender() {
       pane.appendChild(mk("pre", { class: "bxbcode",
         text: "python nnstudio_agent.py --app " + host + ":8125" }));
       pane.appendChild(mk("div", { class: "bxbhint",
-        text: "2 \u00b7 it reports the machine here and Run lights up. needs python3 "
+        text: "2 \u00b7 it reports the machine here and the Train box lights up. needs python3 "
             + "and torch \u2014 the CUDA build for the GPU." }));
       pane.appendChild(mk("div", { class: "bxbhint", text: "waiting for an agent\u2026" }));
     }
@@ -6883,19 +6883,29 @@ function bxtRunEnabled() {
   return !!(BXRUN.local && BXRUN.local.connected) ||
          (BX_BACKEND.mode === "remote" && !!(BX_BACKEND.key || "").trim());
 }
-function bxtRunRefresh() {                    // the button follows the box's appearance
-  const btn = $("bxtTrainBtn");
-  if (!btn) return;
+function bxTrainShown() {                      // the Train box is on the canvas
+  if (BX.up) return false;                     // it lives at the top level only
   const hub = bxTrainAnywhere();
-  const shown = !BX.up && !!hub && !hub.hidden;
-  if (btn.classList) btn.classList.toggle("off", !shown);
-  btn.title = BX.up ? "come back out to the top level first"
-            : shown ? "hide the Train box"
-                    : "show the Train box";
+  return !!hub && !hub.hidden;
+}
+function bxTrainDoorText() {                   // what the Backend menu's row offers
+  if (BX.up) return "the Train box lives at the top level";
+  return bxTrainShown() ? "hide the Train box" : "show the Train box";
+}
+function bxTrainDoorTitle() {
+  if (BX.up) return "come back out to the top level first";
+  return bxTrainShown() ? "hide the Train box" : "show the Train box";
+}
+function bxtRunRefresh() {                    // the Backend menu's row follows the box
+  const item = $("bxtTrainBtn");
+  if (!item) return;                           // the menu is closed: built fresh on open
+  if (item.classList) item.classList.toggle("off", !bxTrainShown());
+  item.title = bxTrainDoorTitle();
+  if (item.textContent != null) item.textContent = bxTrainDoorText();
 }
 function bxtRunToggle() {                     // the Run button: the box on / off
   if (BX.up) return false;                    // the Run box lives at the top level
-  bxtDropsClose();                            // a plain button: no dropdown to close
+  bxtDropsClose();                            // the Backend menu shuts behind it
   const hub = bxTrainAnywhere();
   if (!hub) {                                 // none yet: the toggle creates it
     bxDropPalette("train", null);
@@ -7585,7 +7595,6 @@ function bxtInit() {
   wire("bxtPalette", bxtPaletteToggle);
   wire("bxtImport", bxtImportToggle);
   wire("bxtBackend", bxtBackendToggle);
-  wire("bxtTrainBtn", bxtRunToggle);
   wire("bxtVram", bxtVramToggle);
   wire("bxtAccount", bxtAccountToggle);
   document.addEventListener("mousedown", (ev) => {   // a click outside closes them all

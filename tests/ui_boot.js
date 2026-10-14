@@ -1037,8 +1037,11 @@ check("the Backend menu: Local and Remote drop down into their instructions", ()
   ok(m.hidden, "…and it closes");
 });
 
-check("the Train button: the box on and off the canvas", () => {
+check("the Train door: in the Backend menu, the box on and off the canvas", () => {
+  const menu = getEl("bxtBackendMenu");
+  if (menu.hidden) __t.bxtBackendToggle();     // the row is built when the menu opens
   const btn = getEl("bxtTrainBtn");
+  ok(menu.children.indexOf(btn) >= 0, "the Train door is a row in the Backend menu");
   const panes = () => getEl("bxcanvas").querySelectorAll(".bxlogpane")
     .map(el => el.getAttribute("data-agent"));
   const trainCount = () => __t.BX.nodes.filter(n => n.kind === "train").length;
@@ -1050,18 +1053,19 @@ check("the Train button: the box on and off the canvas", () => {
   __t.bxtRunRefresh();
   ok(trainCount() === 0, "the canvas starts with no Train box");
   ok(__t.bxtRunEnabled() === false, "…and no backend is connected");
-  ok(String(btn.className).indexOf("off") >= 0, "…so the Train button reads off");
-  ok(btn.title === "show the Train box", "…saying what a press will do");
-  ok(__t.bxtRunToggle() === true, "the button shows the box");
+  ok(String(btn.className).indexOf("off") >= 0, "…so the row reads dim");
+  ok(btn.textContent === "show the Train box" && btn.title === "show the Train box",
+     "…saying what a press will do: " + btn.textContent);
+  ok(__t.bxtRunToggle() === true, "the row shows the box");
   const hub = __t.bxTrainHub();
   ok(hub && hub.name === "train 1", "…a fresh Train box named train 1");
   ok(panes().indexOf(hub.id) >= 0, "…drawn on the canvas");
-  ok(String(btn.className).indexOf("off") < 0 && btn.title === "hide the Train box",
-     "…and the button now offers to hide it");
+  ok(String(btn.className).indexOf("off") < 0 && btn.textContent === "hide the Train box",
+     "…and the row now offers to hide it: " + btn.textContent);
   ok(__t.bxtRunToggle() === false && hub.hidden === true, "a second press hides the box");
   ok(panes().indexOf(hub.id) < 0, "…the box leaves the canvas");
-  ok(String(btn.className).indexOf("off") >= 0 && btn.title === "show the Train box",
-     "…and the button offers to show it again");
+  ok(String(btn.className).indexOf("off") >= 0 && btn.textContent === "show the Train box",
+     "…and the row offers to show it again: " + btn.textContent);
   ok(__t.bxTrainHub() && __t.bxTrainHub().id === hub.id, "…hidden, it is still the hub");
   ok(__t.bxAdd("train", 200, 0, {}) === null, "…so a second one stays refused");
   eql(__t.bxJSONNode(hub).hidden, true, "…and the design carries the hidden flag");
@@ -4387,7 +4391,8 @@ check("the Train box: one only, at the top level, and no rename", () => {
   const nest = __t.bxAdd("custom", 0, 300, {});
   __t.bxEnter(nest.id);
   ok(__t.bxAdd("train", 0, 0, {}) === null, "inside a nested box a Train box is refused");
-  ok(__t.bxtRunToggle() === false, "…and the Train button shows no box here");
+  ok(__t.bxtRunToggle() === false, "…and the Train door shows no box here");
+  if (getEl("bxtBackendMenu").hidden) __t.bxtBackendToggle();
   __t.bxtRunRefresh();
   ok(getEl("bxtTrainBtn").title.indexOf("top level") >= 0,
      "…and says the Train box lives at the top level");

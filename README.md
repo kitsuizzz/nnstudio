@@ -119,7 +119,7 @@ code (git-ignored) is the default.
 
 | file | role |
 |---|---|
-| `ui/index.html` | the whole app — the canvas, the toolbar (Files · Palette · Backend · Run · VRAM), the right-click menus; one self-contained page |
+| `ui/index.html` | the whole app — the canvas, the toolbar (Files · Palette · Backend — the Train box's door, up top of that menu — · VRAM), the right-click menus; one self-contained page |
 | `nn_engine.py` | the GGUF/HF → canvas builder (`build_canvas` is pure; `gguf_canvas`/`hf_canvas` read real headers) — extracted from next-token's engine |
 | `nn_server.py` | the stdlib server: the UI, the GGUF list, the builder endpoint, the GPU badge, the agents' control listener and the run dispatch |
 | `nn_users.py` | accounts for saving designs: sealed names/designs, keyed tags, the auth hash, the Turnstile check (`users.db`, git-ignored — ciphertext only) |
@@ -156,9 +156,9 @@ in the browser):
   The agent needs `python3`, `torch` (the CUDA build to use the GPU) and
   `numpy`; `gguf` is optional (only designs bound to real GGUF files need it,
   and the file must sit at the same path on that machine). As soon as it
-  connects, the section says **connected**, the **Run** menu lights up — and
-  Run is where the machine shows up: its specs, its live RAM/VRAM, and the
-  load controls.
+  connects, the section says **connected** and the **Train box's door** —
+  the menu's first row — turns live. The box itself is where the machine
+  shows up: its specs, its live RAM/VRAM, and the load controls.
 
   Frozen GGUF layers can run **natively**: their quantized blocks stay packed
   and a Triton kernel (bundled with torch, no new dependency) fuses the
@@ -170,7 +170,7 @@ in the browser):
 - **Remote — Modal (BYOK)** — paste a Modal token (it stays in this browser,
   never in the design) and jobs will run on your own Modal account; the
   section points at `modal.com → Settings → Tokens`. The transport is not
-  wired yet: Run enables with a saved key, and says so.
+  wired yet: the Train box enables with a saved key, and says so.
 
 The section in use wears an orange dot, and the choice survives a reload.
 A caveat: the control port trusts whoever connects — keep it on a network you
@@ -178,10 +178,10 @@ control.
 
 ## Run — the whole design, on your backend
 
-**Run** sits next to Backend and is **disabled until a backend is
-established** (an agent connected under Local, or a saved Modal key under
-Remote); its title says *connect a backend first* until then. Open it and it
-is the one place that shows:
+**Train** opens from the **Backend** menu — its door is that menu's first
+row — and is **disabled until a backend is established** (an agent connected
+under Local, or a saved Modal key under Remote); the box says *connect a
+backend first* until then. Open it and it is the one place that shows:
 
 - **the machine** — the agent's specs (CPU and cores, RAM, GPU and VRAM,
   torch/CUDA, OS) and **what it is using right now**: `ram now 14.2 / 30 GB ·
