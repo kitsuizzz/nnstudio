@@ -46,7 +46,7 @@ runs/
 outputs/
 logs/
 *.log
-users.db
+users.db*
 *.db-journal
 *.db-wal
 *.db-shm

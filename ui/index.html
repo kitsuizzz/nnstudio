@@ -6129,16 +6129,25 @@ function bxtVramToggle() {
   if (open) bxRenderEstimate();                // the live vram line, fresh
   return open;
 }
-// ---- the account: guests by default ----------------------------------------
+// ---- the account: guests by default, and designs even the server can't read
 // Nothing is kept for a guest — drawing, wiring, running and training are all
 // free, but saving a design is what an account is for. Creating one always
 // goes through Cloudflare's bot check: the browser solves a Turnstile
-// challenge, makes its own token (32 random bytes here — never a password),
-// and sends both to the register endpoint. Logging in anywhere is that token
-// again; the server answers with an HttpOnly cookie and keeps only the
-// token's sha256, so a stolen database cannot be replayed.
-let BXACCT = { user: null, site: "", test: false, max: 0 };
+// challenge and the register endpoint verifies it before the row exists.
+//
+// The token the browser makes is never sent anywhere. Three things are
+// derived from it, here in the page: an auth credential (the only value the
+// server ever sees — it keeps a hash of it), a keyed name tag (so the server
+// can hold a row per name and refuse duplicates without learning the name),
+// and an AES-GCM key that names and designs are sealed with before they
+// leave. The server stores ciphertext; without the token nobody — the server
+// included — can read it. Lose the token and the designs are gone for good.
+let BXACCT = { user: null, name: "", token: "", locked: false, site: "", test: false, max: 0 };
 let BX_TS = { queue: null, failed: false, widget: null };
+function bxCryptoReady() {
+  return typeof crypto !== "undefined" && !!crypto.subtle && !!crypto.getRandomValues &&
+         typeof TextEncoder === "function" && typeof TextDecoder === "function";
+}
 function bxSecret() {                          // the token the client makes
   const bytes = new Uint8Array(32);
   if (typeof crypto !== "undefined" && crypto.getRandomValues) crypto.getRandomValues(bytes);
@@ -6146,6 +6155,61 @@ function bxSecret() {                          // the token the client makes
   let s = "";
   for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function bxUtf8(s) { return new TextEncoder().encode(String(s)); }
+function bxB64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function bxUnb64(text) {
+  const bin = atob(String(text));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bxHex(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += bytes[i].toString(16).padStart(2, "0");
+  return s;
+}
+async function bxDigest(label, text) {         // sha256("label|text") — the whole KDF
+  const out = await crypto.subtle.digest("SHA-256", bxUtf8(label + "|" + text));
+  return new Uint8Array(out);
+}
+async function bxAuthCred(token) {             // what the server is allowed to see
+  return bxHex(await bxDigest("nnstudio-auth-v1", token));
+}
+async function bxNameTag(token, name) {        // keyed: the same name is the same tag
+  return bxHex(await bxDigest("nnstudio-name-v1",
+                              token + "|" + String(name || "").trim().toLowerCase()));
+}
+async function bxDataKey(token) {
+  return crypto.subtle.importKey("raw", await bxDigest("nnstudio-data-v1", token),
+                                 "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+async function bxSeal(token, value) {          // AES-GCM, a fresh nonce each time
+  const key = await bxDataKey(token);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key,
+                                          bxUtf8(JSON.stringify(value)));
+  return { iv: bxB64(iv), ct: bxB64(new Uint8Array(ct)) };
+}
+async function bxUnseal(token, sealed) {
+  const key = await bxDataKey(token);
+  const raw = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bxUnb64(sealed.iv) },
+                                          key, bxUnb64(sealed.ct));
+  return JSON.parse(new TextDecoder().decode(raw));
+}
+function bxTokenRemember(token) {              // the key, for the next reload
+  try {
+    if (token) localStorage.setItem("nnstudio_token", token);
+    else localStorage.removeItem("nnstudio_token");
+  } catch (e) {}
+}
+function bxTokenRecall() {
+  try { return localStorage.getItem("nnstudio_token") || ""; } catch (e) { return ""; }
 }
 function bxTurnstileLoad(cb) {                 // the widget script, fetched once
   if (typeof window === "undefined") return cb(null);
@@ -6172,27 +6236,69 @@ function bxTurnstileLoad(cb) {                 // the widget script, fetched onc
 }
 function bxAccountLoad() {                     // who is this, and what does the check need
   if (typeof fetch !== "function") return;
+  const remembered = bxTokenRecall();
   fetch("/api/account").then(r => r.json()).then(d => {
     if (!d || !d.ok) return;
     BXACCT.site = d.site_key || "";
     BXACCT.test = !!d.test_keys;
     BXACCT.max = d.max_bytes || 0;
-    if (d.user) BXACCT.user = d.user;
-    bxAccountSync();
+    if (d.user) {
+      if (remembered) return bxAccountSignedIn(d.user, remembered);
+      bxAccountLocked(d.user);                 // signed in, but the key is not in this browser
+      return;
+    }
+    if (!remembered || !bxCryptoReady()) { bxAccountSync(); return; }
+    return bxAuthCred(remembered).then(auth =>  // the cookie went away; the token is here
+      fetch("/api/account/login", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auth }) })
+        .then(r => r.json())
+        .then(l => { if (l && l.ok && l.user) return bxAccountSignedIn(l.user, remembered); })
+        .catch(() => {}));
   }).catch(() => {});
+}
+async function bxAccountSignedIn(user, token) {
+  BXACCT.user = user || null;
+  BXACCT.token = String(token || "");
+  BXACCT.name = "";
+  BXACCT.locked = !BXACCT.token;
+  if (BXACCT.user && BXACCT.user.name_ct && BXACCT.token) {
+    try { BXACCT.name = String(await bxUnseal(BXACCT.token, BXACCT.user.name_ct)); }
+    catch (e) { BXACCT.locked = true; BXACCT.token = ""; }   // a token for some other account
+  }
+  bxTokenRemember(BXACCT.token);
+  bxAccountSync();
+}
+function bxAccountLocked(user) {
+  BXACCT.user = user || null;
+  BXACCT.token = "";
+  BXACCT.name = "";
+  BXACCT.locked = !!BXACCT.user;
+  bxAccountSync();
+}
+function bxAccountOut() {
+  BXACCT.user = null;
+  BXACCT.name = "";
+  BXACCT.token = "";
+  BXACCT.locked = false;
+  bxTokenRemember("");
+  bxAccountSync();
 }
 function bxAccountSync() {
   const b = $("bxtAccount");
   if (!b) return;
-  b.textContent = (BXACCT.user ? BXACCT.user.name : "guest") + " ▾";
-  b.title = BXACCT.user ? "signed in — the server keeps this account's designs"
-                        : "a guest: drawing and running are free, saving takes an account";
+  if (!BXACCT.user) {
+    b.textContent = "guest ▾";
+    b.title = "a guest: drawing and running are free, saving takes an account";
+    return;
+  }
+  if (BXACCT.locked) {
+    b.textContent = "account 🔒";
+    b.title = "signed in — paste your token once so this browser can read your designs";
+    return;
+  }
+  b.textContent = BXACCT.name + " ▾";
+  b.title = "signed in — designs are sealed in this browser; the server holds only ciphertext";
 }
-function bxAccountSignedIn(user) {
-  BXACCT.user = user || null;
-  bxAccountSync();
-}
-function bxAccountOut() { bxAccountSignedIn(null); }
 function bxtAccountToggle() {
   const m = $("bxtAccountMenu");
   if (!m) return false;
@@ -6221,12 +6327,20 @@ function bxAccountBuild() {
          () => { bxtDropsClose(); bxAccountLogin(); });
     return;
   }
-  item("signed in as " + BXACCT.user.name, "", null, true);
-  item("save this canvas …", "keep this design on the server, under this account",
+  if (BXACCT.locked) {
+    item("signed in — this browser holds no key", "", null, true);
+    item("unlock with your token …", "the token is the key to your saved designs",
+         () => { bxtDropsClose(); bxAccountUnlockForm(); });
+    item("log out", "this browser forgets the cookie and any key it held",
+         () => { bxtDropsClose(); bxAccountLogout(); });
+    return;
+  }
+  item("signed in as " + BXACCT.name, "", null, true);
+  item("save this canvas …", "sealed here first — the server never sees the design",
        () => { bxtDropsClose(); bxAccountSaveForm(); });
   item("open a saved canvas …", "a design this account saved before",
        () => { bxtDropsClose(); bxAccountOpenForm(); });
-  item("log out", "this browser forgets the cookie; the token stays yours",
+  item("log out", "this browser forgets the cookie and the token it held",
        () => { bxtDropsClose(); bxAccountLogout(); });
 }
 function bxAccountLogout() {
@@ -6279,7 +6393,8 @@ function bxAccountCreate() {
   wrap.appendChild(mk("div", { class: "mhead", text: "create an account" }));
   wrap.appendChild(mk("div", { class: "panehint",
     text: "guests are never saved for — an account is what keeps a design. " +
-          "Cloudflare's bot check runs below, then this browser makes your token." }));
+          "Cloudflare's bot check runs below, then this browser makes your token " +
+          "and seals everything with it before it is sent." }));
   const { lab, inp } = bxAccountNameField("");
   wrap.appendChild(lab);
   const status = mk("div", { class: "panehint", text: "loading the bot check …" });
@@ -6324,41 +6439,50 @@ function bxAccountCreate() {
     bxAccountPlace();
   };
   bxAccountPlace();
+  if (!bxCryptoReady()) {
+    status.textContent = "this browser or origin has no WebCrypto — the sealing needs " +
+                         "http://localhost or https";
+    return true;
+  }
   if (typeof window !== "undefined" && window.turnstile) start(window.turnstile);
   else bxTurnstileLoad(start);
   return true;
 }
-function bxAccountRegister(name, token, challenge, status, go) {
+async function bxAccountRegister(name, token, challenge, status, go) {
   if (typeof fetch !== "function") return false;
+  if (!bxCryptoReady()) { if (status) status.textContent = "this browser cannot seal"; return false; }
   if (go) go.textContent = "creating …";
-  fetch("/api/account/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, token, challenge }),
-  }).then(r => r.json().then(d => ({ good: r.ok && d.ok, d })))
-    .then(({ good, d }) => {
-      if (!good) throw new Error((d && d.error) || "the server refused");
-      bxAccountSignedIn(d && d.user);
-      bxAccountReveal(token, d && d.user);
-    })
-    .catch(e => {
-      if (go) go.textContent = "create";
-      if (status) status.textContent = String((e && e.message) || e);
-      if (typeof window !== "undefined" && window.turnstile && BX_TS.widget !== null) {
-        try { window.turnstile.reset(BX_TS.widget); } catch (err) {}
-      }
-      bxAccountPlace();
-    });
+  try {
+    const body = {
+      name_tag: await bxNameTag(token, name),
+      name_ct: await bxSeal(token, name),
+      auth: await bxAuthCred(token),
+      challenge,
+    };
+    const r = await fetch("/api/account/register", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error((d && d.error) || "the server refused");
+    await bxAccountSignedIn(d.user, token);
+    bxAccountReveal(token, BXACCT.name || name);
+  } catch (e) {
+    if (go) go.textContent = "create";
+    if (status) status.textContent = String((e && e.message) || e);
+    if (typeof window !== "undefined" && window.turnstile && BX_TS.widget !== null) {
+      try { window.turnstile.reset(BX_TS.widget); } catch (err) {}
+    }
+    bxAccountPlace();
+  }
   return true;
 }
-function bxAccountReveal(token, user) {
+function bxAccountReveal(token, name) {
   const wrap = bxAccountForm();
   if (!wrap) return false;
   wrap.appendChild(mk("div", { class: "mhead", text: "your token" }));
   wrap.appendChild(mk("div", { class: "panehint",
-    text: (user && user.name ? user.name + " is in. " : "") +
-          "It is shown once, and it is the login: keep it somewhere safe, " +
-          "or paste it to sign in on another browser." }));
+    text: (name ? name + " is in. " : "") +
+          "It is shown once. It is the login, and it is the only key to your saved " +
+          "designs — the server never sees it, so losing it loses them." }));
   const ta = mk("textarea", { class: "bxtok", readonly: "readonly", spellcheck: "false" });
   ta.value = token;
   wrap.appendChild(ta);
@@ -6389,7 +6513,8 @@ function bxAccountLogin() {
   if (!wrap) return false;
   wrap.appendChild(mk("div", { class: "mhead", text: "log in with a token" }));
   wrap.appendChild(mk("div", { class: "panehint",
-    text: "an account shows its token once, when it is created — paste that here." }));
+    text: "an account shows its token once, when it is created — paste that here. " +
+          "It stays in this browser: it authenticates and it decrypts." }));
   const lab = mk("label", { text: "token" });
   const inp = mk("input", { class: "bxinp", type: "text", autocomplete: "off",
                             placeholder: "the 43-character token" });
@@ -6401,16 +6526,20 @@ function bxAccountLogin() {
     const token = String(inp.value || "").trim();
     if (!token) { status.textContent = "the token is empty"; return; }
     if (typeof fetch !== "function") { status.textContent = "the app cannot reach the server"; return; }
+    if (!bxCryptoReady()) { status.textContent = "this browser or origin has no WebCrypto"; return; }
     btn.textContent = "checking …";
-    fetch("/api/account/login", { method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }) })
-      .then(r => r.json().then(d => ({ good: r.ok && d.ok, d })))
-      .then(({ good, d }) => {
-        if (!good) throw new Error((d && d.error) || "that token is not an account");
-        bxAccountSignedIn(d && d.user);
-        bxMenuClose();
-      })
+    bxAuthCred(token).then(auth =>
+      fetch("/api/account/login", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auth }) })
+        .then(r => r.json())
+        .then(d => {
+          if (!d || !d.ok) throw new Error((d && d.error) || "that token is not an account");
+          return bxAccountSignedIn(d.user, token);
+        })
+        .then(() => {
+          if (BXACCT.locked) throw new Error("that token does not open this account's designs");
+          bxMenuClose();
+        }))
       .catch(e => {
         btn.textContent = "log in";
         status.textContent = String((e && e.message) || e);
@@ -6420,22 +6549,58 @@ function bxAccountLogin() {
   bxAccountPlace();
   return true;
 }
+function bxAccountUnlockForm() {
+  const wrap = bxAccountForm();
+  if (!wrap) return false;
+  wrap.appendChild(mk("div", { class: "mhead", text: "unlock your designs" }));
+  wrap.appendChild(mk("div", { class: "panehint",
+    text: "the token is the key. The server never had it — this browser just needs " +
+          "to be told it again." }));
+  const lab = mk("label", { text: "token" });
+  const inp = mk("input", { class: "bxinp", type: "text", autocomplete: "off",
+                            placeholder: "the token your account showed you" });
+  lab.appendChild(inp);
+  wrap.appendChild(lab);
+  const status = mk("div", { class: "panehint", text: "" });
+  wrap.appendChild(status);
+  const go = bxAccountRow(wrap, "unlock", (btn) => {
+    const token = String(inp.value || "").trim();
+    if (!token) { status.textContent = "the token is empty"; return; }
+    if (!bxCryptoReady()) { status.textContent = "this browser or origin has no WebCrypto"; return; }
+    const user = BXACCT.user;
+    if (!user || !user.name_ct) { status.textContent = "there is nothing locked here"; return; }
+    btn.textContent = "checking …";
+    bxUnseal(token, user.name_ct)
+      .catch(() => { throw new Error("that token cannot open this account's designs"); })
+      .then(() => bxAccountSignedIn(user, token))
+      .then(() => bxMenuClose())
+      .catch(e => {
+        btn.textContent = "unlock";
+        status.textContent = String((e && e.message) || e);
+        bxAccountPlace();
+      });
+  });
+  bxAccountPlace();
+  return true;
+}
 function bxAccountSaveForm() {
-  if (!BXACCT.user || typeof fetch !== "function") return false;
+  if (!BXACCT.user || typeof fetch !== "function" || !bxCryptoReady()) return false;
+  if (BXACCT.locked) { bxAccountUnlockForm(); return false; }
   const design = bxExportCanvas();
   const text = JSON.stringify(design);
   const wrap = bxAccountForm();
   if (!wrap) return false;
   wrap.appendChild(mk("div", { class: "mhead", text: "save this canvas" }));
   wrap.appendChild(mk("div", { class: "panehint",
-    text: "kept on the server under " + BXACCT.user.name +
-          " — saving over a name replaces what it held." }));
+    text: "sealed in this browser under " + BXACCT.name +
+          " — the server keeps ciphertext, and saving over a name replaces it." }));
   let remembered = "";
   try { remembered = localStorage.getItem("nnstudio_canvas_name") || ""; } catch (e) {}
   const { lab, inp } = bxAccountNameField(remembered || "design 1");
   wrap.appendChild(lab);
   const status = mk("div", { class: "panehint",
-    text: text.length + " bytes" + (BXACCT.max ? " of " + Math.round(BXACCT.max / 2 ** 20) + " MB" : "") });
+    text: text.length + " bytes of design" +
+          (BXACCT.max ? " — sealed limit " + Math.round(BXACCT.max / 2 ** 20) + " MB" : "") });
   wrap.appendChild(status);
   let saved = false;
   const go = bxAccountRow(wrap, "save", () => {
@@ -6447,29 +6612,36 @@ function bxAccountSaveForm() {
   bxAccountPlace();
   return true;
 }
-function bxAccountSave(name, design, status, go, onSaved) {
-  if (typeof fetch !== "function") return false;
-  if (go) go.textContent = "saving …";
-  fetch("/api/account/save", { method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, design }) })
-    .then(r => r.json().then(d => ({ good: r.ok && d.ok, d })))
-    .then(({ good, d }) => {
-      if (!good) throw new Error((d && d.error) || "the server refused");
-      try { localStorage.setItem("nnstudio_canvas_name", name); } catch (e) {}
-      if (status) status.textContent = "saved as " + name + " ✓";
-      if (go) go.textContent = "close";
-      if (onSaved) onSaved();
-    })
-    .catch(e => {
-      if (go) go.textContent = "save";
-      if (status) status.textContent = String((e && e.message) || e);
-      bxAccountPlace();
-    });
+async function bxAccountSave(name, design, status, go, onSaved) {
+  if (typeof fetch !== "function" || BXACCT.locked) return false;
+  if (go) go.textContent = "sealing …";
+  try {
+    const name_tag = await bxNameTag(BXACCT.token, name);
+    const name_ct = await bxSeal(BXACCT.token, name);
+    const blob = await bxSeal(BXACCT.token, design);
+    if (BXACCT.max && blob.ct.length > BXACCT.max)
+      throw new Error("that design is too big to seal (" +
+                      (blob.ct.length / 2 ** 20).toFixed(1) + " MB)");
+    if (go) go.textContent = "saving …";
+    const r = await fetch("/api/account/save", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name_tag, name_ct, blob }) });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error((d && d.error) || "the server refused");
+    try { localStorage.setItem("nnstudio_canvas_name", name); } catch (e) {}
+    if (status) status.textContent = "saved as " + name + " ✓ (sealed)";
+    if (go) go.textContent = "close";
+    if (onSaved) onSaved();
+  } catch (e) {
+    if (go) go.textContent = "save";
+    if (status) status.textContent = String((e && e.message) || e);
+    bxAccountPlace();
+  }
   return true;
 }
 function bxAccountOpenForm() {
   if (!BXACCT.user) return false;
+  if (BXACCT.locked) { bxAccountUnlockForm(); return false; }
   const wrap = bxAccountForm();
   if (!wrap) return false;
   wrap.appendChild(mk("div", { class: "mhead", text: "open a saved canvas" }));
@@ -6484,7 +6656,7 @@ function bxAccountOpenForm() {
   if (typeof fetch !== "function") { status.textContent = "the app cannot reach the server"; return true; }
   fetch("/api/account/canvases").then(r => r.json()).then(d => {
     if (!d || !d.ok) throw new Error((d && d.error) || "the list could not be read");
-    bxAccountList(list, status, d.canvases || []);
+    return bxAccountList(list, status, d.canvases || []);
   }).catch(e => {
     status.textContent = String((e && e.message) || e);
     bxAccountPlace();
@@ -6496,14 +6668,17 @@ function bxWhen(t) {
   if (!d || !d.toLocaleString) return "";
   try { return d.toLocaleString(); } catch (e) { return ""; }
 }
-function bxAccountList(list, status, rows) {
+async function bxAccountList(list, status, rows, token) {
   if (!list) return false;
+  token = token === undefined ? BXACCT.token : token;
   list.innerHTML = "";
   if (!rows.length) {
     status.textContent = "nothing saved yet — save this canvas first.";
     bxAccountPlace();
     return true;
   }
+  const names = await Promise.all(rows.map(r =>
+    bxUnseal(token, r.name_ct).then(n => String(n), () => "(unreadable)")));
   const count = () => {
     const left = (list.children || []).length;
     status.textContent = left ? left + (left === 1 ? " design" : " designs")
@@ -6511,9 +6686,9 @@ function bxAccountList(list, status, rows) {
   };
   let armed = "";
   status.textContent = rows.length + (rows.length === 1 ? " design" : " designs");
-  for (const r of rows) {
-    const rowl = mk("div", { class: "rowl", title: "open " + r.name });
-    rowl.appendChild(mk("span", { class: "nm", text: r.name }));
+  rows.forEach((r, i) => {
+    const rowl = mk("div", { class: "rowl", title: "open " + names[i] });
+    rowl.appendChild(mk("span", { class: "nm", text: names[i] }));
     rowl.appendChild(mk("span", { class: "dt", text: bxWhen(r.updated) }));
     const rm = mk("span", { class: "rm", text: "×", title: "delete it" });
     rm.addEventListener("click", (ev) => {
@@ -6521,7 +6696,7 @@ function bxAccountList(list, status, rows) {
       if (typeof fetch !== "function") return;
       fetch("/api/account/delete", { method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: r.name }) }).then(() => {
+        body: JSON.stringify({ name_tag: r.name_tag }) }).then(() => {
           if (rowl.remove) rowl.remove();
           else if (list.removeChild) list.removeChild(rowl);
           count();
@@ -6531,24 +6706,27 @@ function bxAccountList(list, status, rows) {
     rowl.appendChild(rm);
     rowl.addEventListener("click", () => {
       const blank = !((bxExportCanvas().nodes || []).length);
-      if (!blank && armed !== r.name) {        // an overwrite is asked twice
-        armed = r.name;
-        status.textContent = "opening " + r.name + " replaces the canvas — click it again";
+      if (!blank && armed !== r.name_tag) {     // an overwrite is asked twice
+        armed = r.name_tag;
+        status.textContent = "opening " + names[i] + " replaces the canvas — click it again";
         return;
       }
-      status.textContent = "opening " + r.name + " …";
-      bxAccountOpen(r.name, status);
+      status.textContent = "opening " + names[i] + " …";
+      bxAccountOpen(r.name_tag, names[i], status);
     });
     list.appendChild(rowl);
-  }
+  });
   bxAccountPlace();
   return true;
 }
-function bxAccountOpen(name, status) {
+function bxAccountOpen(name_tag, name, status) {
   if (typeof fetch !== "function") return false;
-  fetch("/api/account/canvas?name=" + encodeURIComponent(name)).then(r => r.json()).then(d => {
-    if (!d || !d.ok || !d.design) throw new Error((d && d.error) || "that design could not be read");
-    if (!bxAccountOpenApply(name, d.design)) throw new Error("that design is not a canvas");
+  fetch("/api/account/canvas?tag=" + encodeURIComponent(name_tag)).then(r => r.json()).then(d => {
+    if (!d || !d.ok || !d.blob) throw new Error((d && d.error) || "that design could not be read");
+    return bxUnseal(BXACCT.token, d.blob).then(design => {
+      if (!bxAccountOpenApply(name || "design", design))
+        throw new Error("that design is not a canvas");
+    });
   }).catch(e => {
     if (status) status.textContent = String((e && e.message) || e);
     bxAccountPlace();

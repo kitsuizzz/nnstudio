@@ -203,10 +203,12 @@ globalThis.__t = {
   bxTensorDtype, bxApplyManifest,
   bxtFilesToggle, bxtFilesClose, bxtDropsClose, bxtPaletteToggle, bxtImportToggle,
   bxGGUFImport, bxGGUFImportApply, bxtVramToggle,
-  bxSecret, bxAccountLoad, bxtAccountToggle, bxAccountBuild, bxAccountCreate,
-  bxAccountRegister, bxAccountSignedIn, bxAccountOut, bxAccountReveal, bxAccountLogin,
-  bxAccountSaveForm, bxAccountSave, bxAccountOpenForm, bxAccountList, bxAccountOpen,
-  bxAccountOpenApply, get BXACCT() { return BXACCT; },
+  bxSecret, bxCryptoReady, bxAuthCred, bxNameTag, bxSeal, bxUnseal,
+  bxTokenRemember, bxTokenRecall, bxAccountLoad, bxtAccountToggle, bxAccountBuild,
+  bxAccountCreate, bxAccountRegister, bxAccountSignedIn, bxAccountLocked, bxAccountOut,
+  bxAccountReveal, bxAccountLogin, bxAccountUnlockForm, bxAccountSaveForm, bxAccountSave,
+  bxAccountOpenForm, bxAccountList, bxAccountOpen, bxAccountOpenApply,
+  get BXACCT() { return BXACCT; },
   bxtBackendToggle, bxtBackendPick, get BX_BACKEND() { return BX_BACKEND; },
   bxtRunToggle, bxtRunRefresh, bxtRunSync, bxtRunEnabled, bxtRunGo, bxtRunLoad, bxFlowVerify,
   bxtRunOffload,
@@ -263,10 +265,18 @@ const paneText = (n) => {
 // checks below start from a truly empty canvas, as they always have
 for (const n of __t.BX.nodes.slice()) __t.bxRemove(n.id);
 let failed = 0;
+const pending = [];                             // async checks: the summary waits for them
 function check(name, fn) {
-  try { fn(); console.log("  ok   " + name); }
-  catch (e) { failed++; console.log("  FAIL " + name + " — " + e.message);
-              if (process.env.STACK) console.log(e.stack); }
+  const done = (e) => {
+    if (e) { failed++; console.log("  FAIL " + name + " — " + e.message);
+             if (process.env.STACK) console.log(e.stack); }
+    else console.log("  ok   " + name);
+  };
+  try {
+    const out = fn();
+    if (out && typeof out.then === "function") pending.push(out.then(() => done(), done));
+    else done();
+  } catch (e) { done(e); }
 }
 const eql = (a, b, msg) => assert.deepStrictEqual(a, b, msg || (JSON.stringify(a) + " != " + JSON.stringify(b)));
 const ok = (v, msg) => assert.ok(v, msg);
@@ -990,120 +1000,6 @@ check("the Palette and VRAM menus open from the toolbar", () => {
     "opening VRAM closes Palette and opens VRAM");
   ok(getEl("bxtPalMenu").hidden, "…and Palette is shut");
   ok(__t.bxtVramToggle() === false && getEl("bxtVramMenu").hidden, "…and VRAM closes");
-});
-
-check("the account: guests by default, a bot check to sign up, a token to log in", () => {
-  const nodes0 = __t.BX.nodes.length;
-  // everyone starts a guest — nothing is saved for one
-  eql(__t.BXACCT.user, null, "the account starts empty: a guest");
-  eql(getEl("bxtAccount").textContent, "guest ▾", "the toolbar says guest");
-  eql(__t.bxAccountSaveForm(), false, "a guest has no save dialog");
-  ok(__t.bxtAccountToggle() === true && !getEl("bxtAccountMenu").hidden,
-     "the account menu opens");
-  const guestItems = getEl("bxtAccountMenu").children.map(c => c.textContent);
-  ok(guestItems.some(t => t.indexOf("create an account") === 0) &&
-     guestItems.some(t => t.indexOf("log in with a token") === 0) &&
-     !guestItems.some(t => t.indexOf("save this canvas") === 0),
-     "a guest is offered an account, not saving: " + guestItems.join(" | "));
-  __t.bxtDropsClose();
-  ok(getEl("bxtAccountMenu").hidden, "…and opening another menu closes it");
-  // the token the client makes: 32 random bytes, base64url, never a password
-  const tok = __t.bxSecret();
-  ok(/^[A-Za-z0-9_-]{43}$/.test(tok) && tok !== __t.bxSecret(),
-     "the browser makes its own 43-character token: " + tok.slice(0, 8) + "…");
-  // creating one: the widget runs, then the name, the token and the challenge go out
-  const realFetch = global.fetch;
-  let renders = 0, sent = {};
-  global.turnstile = { render: (_mount, opts) => { renders++; opts.callback("cf-test"); return "w1"; },
-                       reset: () => {} };
-  global.fetch = async (url, opts) => {
-    if (String(url) === "/api/account/register") {
-      sent = JSON.parse(opts.body);
-      return { ok: true, status: 200,
-               json: async () => ({ ok: true, user: { id: "u_1", name: "tester" } }) };
-    }
-    return { ok: true, status: 200, json: async () => ({ ok: true }) };
-  };
-  __t.bxAccountCreate();
-  const form = getEl("bxmenu");
-  ok(!form.hidden, "the create dialog is up");
-  eql(renders, 1, "…with Cloudflare's widget rendered in it");
-  form.querySelectorAll(".bxinp")[0].value = "tester";
-  form.querySelectorAll(".chip").find(c => String(c.textContent) === "create").click();
-  eql(sent.name, "tester", "create posts the name");
-  ok(/^[A-Za-z0-9_-]{43}$/.test(String(sent.token)),
-     "…the browser-made token, not a password: " + sent.token);
-  eql(sent.challenge, "cf-test", "…and the bot check's challenge travels with it");
-  global.fetch = realFetch;
-  delete global.turnstile;                     // the server's answer is async; state is set on it
-  __t.bxAccountSignedIn({ id: "u_1", name: "tester" });
-  eql(getEl("bxtAccount").textContent, "tester ▾", "signed in, the toolbar reads the name");
-  __t.bxAccountReveal(sent.token, { id: "u_1", name: "tester" });
-  eql(getEl("bxmenu").querySelectorAll(".bxtok")[0].value, sent.token,
-      "the token is shown once, in full — it is the login");
-  __t.bxMenuClose();
-  __t.bxtAccountToggle();
-  const userItems = getEl("bxtAccountMenu").children.map(c => c.textContent);
-  ok(userItems.some(t => t.indexOf("save this canvas") === 0) &&
-     userItems.some(t => t.indexOf("open a saved canvas") === 0) &&
-     !userItems.some(t => t.indexOf("create an account") === 0),
-     "signed in, the menu saves and opens: " + userItems.join(" | "));
-  __t.bxtDropsClose();
-  // saving: the name and the whole canvas travel to the server
-  let save = {};
-  global.fetch = async (url, opts) => {
-    if (String(url) === "/api/account/save") {
-      save = JSON.parse(opts.body);
-      return { ok: true, status: 200, json: async () => ({ ok: true, saved: { name: save.name } }) };
-    }
-    return { ok: true, status: 200, json: async () => ({ ok: true }) };
-  };
-  __t.bxAdd("input", 40, 40, { dout: 8 });     // something worth keeping
-  __t.bxAccountSaveForm();
-  const f2 = getEl("bxmenu");
-  f2.querySelectorAll(".bxinp")[0].value = "my canvas";
-  f2.querySelectorAll(".chip").find(c => String(c.textContent) === "save").click();
-  eql(save.name, "my canvas", "save posts the name");
-  eql((save.design.nodes || []).length, nodes0 + 1, "…and the canvas itself, every box");
-  global.fetch = realFetch;
-  __t.bxMenuClose();
-  while (__t.BX.nodes.length > nodes0) __t.bxRemove(__t.BX.nodes[__t.BX.nodes.length - 1].id);
-  // opening: one row per saved design, and a click replaces the canvas
-  __t.bxAccountOpenForm();
-  const f3 = getEl("bxmenu");
-  const hints = f3.querySelectorAll(".panehint");
-  __t.bxAccountList(f3.querySelectorAll(".bxlist")[0], hints[hints.length - 1],
-                    [{ name: "demo", updated: 1791986884, bytes: 40 }]);
-  const rows = f3.querySelectorAll(".rowl");
-  eql(rows.length, 1, "one row per saved design");
-  eql(rows[0].querySelectorAll(".nm")[0].textContent, "demo", "…named");
-  let asked = "";
-  global.fetch = async (url) => {
-    asked = String(url);
-    return { ok: true, status: 200,
-             json: async () => ({ ok: true, name: "demo",
-                                  design: { type: "canvas", version: 1, nodes: [], edges: [] } }) };
-  };
-  const extra = __t.bxAdd("output", 480, 40, {});   // work on the canvas: the open asks twice
-  rows[0].click();
-  eql(asked, "", "with work on the canvas, the first click only warns");
-  ok(String(hints[hints.length - 1].textContent).indexOf("again") >= 0,
-     "…and says a second click replaces it");
-  rows[0].click();
-  eql(asked, "/api/account/canvas?name=demo", "the second click asks the server for that design");
-  global.fetch = realFetch;
-  if (extra) __t.bxRemove(extra.id);
-  const keepDoc = JSON.stringify(__t.bxExportCanvas());      // put things back after
-  eql(__t.bxAccountOpenApply("demo", { type: "canvas", version: 1, nodes: [], edges: [] }), true,
-      "…and applying it lands as a canvas");
-  eql(__t.BX.nodes.length, 0, "…the saved design is what is on the canvas now");
-  __t.bxImportJSON(keepDoc, {});
-  // logging out: a guest again, with the token still theirs
-  __t.bxAccountOut();
-  eql(__t.BXACCT.user, null, "logging out is a guest again");
-  eql(getEl("bxtAccount").textContent, "guest ▾", "…and the toolbar says so");
-  __t.bxMenuClose();
-  eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
 });
 
 check("the Backend menu: Local and Remote drop down into their instructions", () => {
@@ -4520,6 +4416,169 @@ check("the Train box: one only, at the top level, and no rename", () => {
   for (const n of __t.BX.nodes.slice()) __t.bxRemove(n.id);
 });
 
-if (failed) { console.log("ui_boot: " + failed + " failure(s)"); process.exit(1); }
-console.log("ui_boot: all assertions passed (" + __t.BX.nodes.length + " boxes on the canvas)");
-process.exit(0);
+
+check("the account: guests by default, a bot check to sign up, sealed designs", async () => {
+  const nodes0 = __t.BX.nodes.length;
+  const flush = async () => {                  // let a UI chain land: the crypto settles
+    for (let i = 0; i < 12; i++) await new Promise(r => setImmediate(r));
+  };
+  // everyone starts a guest — nothing is saved for one
+  eql(__t.BXACCT.user, null, "the account starts empty: a guest");
+  eql(getEl("bxtAccount").textContent, "guest ▾", "the toolbar says guest");
+  eql(__t.bxAccountSaveForm(), false, "a guest has no save dialog");
+  ok(__t.bxtAccountToggle() === true && !getEl("bxtAccountMenu").hidden,
+     "the account menu opens");
+  const guestItems = getEl("bxtAccountMenu").children.map(c => c.textContent);
+  ok(guestItems.some(t => t.indexOf("create an account") === 0) &&
+     guestItems.some(t => t.indexOf("log in with a token") === 0) &&
+     !guestItems.some(t => t.indexOf("save this canvas") === 0),
+     "a guest is offered an account, not saving: " + guestItems.join(" | "));
+  __t.bxtDropsClose();
+  // the token the client makes: 32 random bytes, base64url, never a password
+  const tok = __t.bxSecret();
+  ok(/^[A-Za-z0-9_-]{43}$/.test(tok) && tok !== __t.bxSecret(),
+     "the browser makes its own 43-character token: " + tok.slice(0, 8) + "…");
+  // the derivations: what the server may see, and what seals the design
+  const auth = await __t.bxAuthCred(tok);
+  ok(/^[0-9a-f]{64}$/.test(auth) && auth !== tok,
+     "auth is a sha256 of the token, never the token: " + auth.slice(0, 12) + "…");
+  eql(await __t.bxNameTag(tok, " My Canvas "), await __t.bxNameTag(tok, "my canvas"),
+      "the name tag is keyed and case-blind");
+  const sealed = await __t.bxSeal(tok, { hello: "world" });
+  ok(!JSON.stringify(sealed).includes("world"), "sealing hides the plaintext");
+  eql(await __t.bxUnseal(tok, sealed), { hello: "world" }, "…the same token opens it");
+  let refused = false;
+  try { await __t.bxUnseal(tok + "x", sealed); } catch (e) { refused = true; }
+  ok(refused, "no other token can open it");
+  // creating one: the widget runs, and only sealed values leave the browser
+  const realFetch = global.fetch, realRand = crypto.getRandomValues;
+  crypto.getRandomValues = (arr) => { for (let i = 0; i < arr.length; i++) arr[i] = i + 1; return arr; };
+  const made = __t.bxSecret();                 // the dialog makes exactly this token
+  let renders = 0, sent = null, hit = null;
+  const seen = new Promise(r => { hit = r; });
+  global.turnstile = { render: (_mount, opts) => { renders++; opts.callback("cf-test"); return "w1"; },
+                       reset: () => {} };
+  global.fetch = async (url, opts) => {
+    if (String(url) === "/api/account/register") {
+      sent = JSON.parse(opts.body);
+      hit();
+      return { ok: true, status: 200,
+               json: async () => ({ ok: true, user: { id: "u_1", name_ct: sent.name_ct, created: 0 } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  __t.bxAccountCreate();
+  const form = getEl("bxmenu");
+  ok(!form.hidden, "the create dialog is up");
+  eql(renders, 1, "…with Cloudflare's widget rendered in it");
+  form.querySelectorAll(".bxinp")[0].value = "tester";
+  form.querySelectorAll(".chip").find(c => String(c.textContent) === "create").click();
+  await seen;
+  eql(sent.auth, await __t.bxAuthCred(made), "register carries the derived auth");
+  eql(sent.challenge, "cf-test", "…and the bot check's challenge");
+  eql(sent.name_tag, await __t.bxNameTag(made, "tester"), "…and the keyed name tag");
+  eql(await __t.bxUnseal(made, sent.name_ct), "tester",
+      "…and the sealed name, which only the token opens");
+  ok(!JSON.stringify(sent).includes("tester") && !JSON.stringify(sent).includes(made),
+     "no plaintext name goes out — and never the token itself");
+  await flush();                               // the stubbed answer lands: signed in + revealed
+  eql(getEl("bxtAccount").textContent, "tester ▾", "signed in, the toolbar reads the name");
+  eql(__t.BXACCT.token, made, "the token is kept in this browser");
+  eql(__t.bxTokenRecall(), made, "…remembered for the next reload");
+  eql(getEl("bxmenu").querySelectorAll(".bxtok")[0].value, made,
+      "the token is shown once, in full — the login and the key");
+  __t.bxMenuClose();
+  // saving: the design travels sealed
+  let save = null, saveHit = null;
+  const saved = new Promise(r => { saveHit = r; });
+  global.fetch = async (url, opts) => {
+    if (String(url) === "/api/account/save") {
+      save = JSON.parse(opts.body);
+      saveHit();
+      return { ok: true, status: 200, json: async () => ({ ok: true, saved: { name_tag: save.name_tag } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  __t.bxAdd("input", 40, 40, { dout: 8 });     // something worth keeping
+  __t.bxAccountSaveForm();
+  const f2 = getEl("bxmenu");
+  f2.querySelectorAll(".bxinp")[0].value = "my canvas";
+  f2.querySelectorAll(".chip").find(c => String(c.textContent) === "save").click();
+  await saved;
+  ok(save && save.design === undefined && !JSON.stringify(save).includes("my canvas"),
+     "saving posts ciphertext only");
+  eql(save.name_tag, await __t.bxNameTag(made, "my canvas"), "…under the keyed name tag");
+  eql(await __t.bxUnseal(made, save.name_ct), "my canvas", "…with the name sealed");
+  eql(((await __t.bxUnseal(made, save.blob)).nodes || []).length, nodes0 + 1,
+      "…and the whole design sealed");
+  await flush();
+  __t.bxMenuClose();
+  while (__t.BX.nodes.length > nodes0) __t.bxRemove(__t.BX.nodes[__t.BX.nodes.length - 1].id);
+  // locked: the cookie says who, but without the token there is nothing to read
+  __t.bxAccountLocked(__t.BXACCT.user);
+  eql(__t.BXACCT.locked, true, "without the key the account is locked");
+  eql(getEl("bxtAccount").textContent, "account 🔒", "…and the toolbar says so");
+  eql(__t.bxAccountSaveForm(), false, "…saving waits for the unlock");
+  __t.bxAccountUnlockForm();
+  const f3 = getEl("bxmenu");
+  f3.querySelectorAll(".bxinp")[0].value = "not-the-token";
+  f3.querySelectorAll(".chip").find(c => String(c.textContent) === "unlock").click();
+  await flush();
+  const hint = f3.querySelectorAll(".panehint");
+  ok(String(hint[hint.length - 1].textContent).indexOf("cannot open") >= 0,
+     "a wrong token cannot unlock: " + hint[hint.length - 1].textContent);
+  f3.querySelectorAll(".bxinp")[0].value = made;
+  f3.querySelectorAll(".chip").find(c => String(c.textContent) === "unlock").click();
+  await flush();
+  eql(getEl("bxtAccount").textContent, "tester ▾", "the real token unlocks it");
+  __t.bxMenuClose();
+  // opening: rows carry sealed names; a click asks for the blob by its tag
+  __t.bxAccountOpenForm();
+  const f4 = getEl("bxmenu");
+  const hints = f4.querySelectorAll(".panehint");
+  const list = f4.querySelectorAll(".bxlist")[0];
+  const tagX = "ab".repeat(32);
+  await __t.bxAccountList(list, hints[hints.length - 1],
+                          [{ name_tag: tagX, name_ct: await __t.bxSeal(made, "demo"),
+                             updated: 1791986884, bytes: 40 }]);
+  const rows = f4.querySelectorAll(".rowl");
+  eql(rows.length, 1, "one row per saved design");
+  eql(rows[0].querySelectorAll(".nm")[0].textContent, "demo", "…named from the sealed name");
+  let asked = "";
+  global.fetch = async (url) => {
+    asked = String(url);
+    return { ok: true, status: 200, json: async () => ({ ok: true, name_ct: null,
+             blob: await __t.bxSeal(made, { type: "canvas", version: 1, nodes: [], edges: [] }),
+             updated: 0 }) };
+  };
+  const box = __t.bxAdd("output", 480, 40, {});
+  rows[0].click();
+  eql(asked, "", "with work on the canvas, the first click only warns");
+  ok(String(hints[hints.length - 1].textContent).indexOf("again") >= 0,
+     "…and says a second click replaces it");
+  rows[0].click();
+  eql(asked, "/api/account/canvas?tag=" + tagX, "the second click asks the server by tag");
+  global.fetch = realFetch;
+  __t.bxRemove(box.id);
+  const keepDoc = JSON.stringify(__t.bxExportCanvas());
+  const blob = await __t.bxSeal(made, { type: "canvas", version: 1, nodes: [], edges: [] });
+  eql(__t.bxAccountOpenApply("demo", await __t.bxUnseal(made, blob)), true,
+      "…and the sealed design opens locally");
+  eql(__t.BX.nodes.length, 0, "…the saved design is what is on the canvas now");
+  __t.bxImportJSON(keepDoc, {});
+  // logging out: a guest again, and the browser forgets the key
+  __t.bxAccountOut();
+  eql(__t.BXACCT.user, null, "logging out is a guest again");
+  eql(getEl("bxtAccount").textContent, "guest ▾", "…and the toolbar says so");
+  eql(__t.bxTokenRecall(), "", "…and the remembered key is gone");
+  __t.bxMenuClose();
+  delete global.turnstile;
+  crypto.getRandomValues = realRand;
+  eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
+});
+
+Promise.all(pending).then(() => {            // async checks report with the rest
+  if (failed) { console.log("ui_boot: " + failed + " failure(s)"); process.exit(1); }
+  console.log("ui_boot: all assertions passed (" + __t.BX.nodes.length + " boxes on the canvas)");
+  process.exit(0);
+});

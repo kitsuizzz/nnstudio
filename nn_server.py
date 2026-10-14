@@ -630,7 +630,7 @@ class Handler(BaseHTTPRequestHandler):
         user = self._account()
         site, _secret, test = nn_users.site_keys()
         return {"ok": True, "user": user, "site_key": site, "test_keys": test,
-                "max_bytes": nn_users.CANVAS_MAX}
+                "max_bytes": nn_users.BLOB_MAX}
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -739,13 +739,13 @@ class Handler(BaseHTTPRequestHandler):
             if not user:
                 self._json({"ok": False, "error": "log in first"}, 401)
                 return
-            name = (parse_qs(urlparse(self.path).query).get("name") or [""])[0]
-            got = nn_users.get_canvas(user["id"], name)
+            tag = (parse_qs(urlparse(self.path).query).get("tag") or [""])[0]
+            got = nn_users.get_canvas(user["id"], tag)
             if not got:
-                self._json({"ok": False, "error": "no design by that name"}, 404)
+                self._json({"ok": False, "error": "no design by that tag"}, 404)
                 return
-            self._json({"ok": True, "name": name, "design": got["design"],
-                        "updated": got["updated"]})
+            self._json({"ok": True, "name_tag": tag, "name_ct": got["name_ct"],
+                        "blob": got["blob"], "updated": got["updated"]})
             return
         if path == "/api/models":
             self._json({"models": list_models()})
@@ -915,8 +915,9 @@ class Handler(BaseHTTPRequestHandler):
             if not self._throttle("register", limit=10):
                 self._json({"ok": False, "error": "too many tries — wait a minute"}, 429)
                 return
-            name = str(data.get("name") or "").strip()
-            token = str(data.get("token") or "")
+            name_tag = str(data.get("name_tag") or "")
+            name_ct = data.get("name_ct")
+            auth = str(data.get("auth") or "")
             challenge = str(data.get("challenge") or "")
             _site, secret, _test = nn_users.site_keys()
             ok, why = nn_users.verify_turnstile(secret, challenge, ip=self.client_address[0])
@@ -924,22 +925,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": why or "the bot check refused"}, 403)
                 return
             try:
-                user = nn_users.register(name, token)
+                user = nn_users.register(name_tag, name_ct, auth)
             except ValueError as e:
                 self._json({"ok": False, "error": str(e)}, 400)
                 return
-            self._json({"ok": True, "user": user}, extra=self._cookie(token))
+            self._json({"ok": True, "user": user}, extra=self._cookie(auth))
             return
         if path == "/api/account/login":
             if not self._throttle("login", limit=30):
                 self._json({"ok": False, "error": "too many tries — wait a minute"}, 429)
                 return
-            token = str(data.get("token") or "")
-            user = nn_users.user_for(token)
+            auth = str(data.get("auth") or "")
+            user = nn_users.user_for(auth)
             if not user:
                 self._json({"ok": False, "error": "that token is not an account"}, 401)
                 return
-            self._json({"ok": True, "user": user}, extra=self._cookie(token))
+            self._json({"ok": True, "user": user}, extra=self._cookie(auth))
             return
         if path == "/api/account/logout":
             self._json({"ok": True}, extra=self._cookie("", clear=True))
@@ -954,7 +955,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "too many saves — wait a minute"}, 429)
                 return
             try:
-                saved = nn_users.save_canvas(user["id"], data.get("name"), data.get("design"))
+                saved = nn_users.save_canvas(user["id"], data.get("name_tag"),
+                                             data.get("name_ct"), data.get("blob"))
             except ValueError as e:
                 self._json({"ok": False, "error": str(e)}, 400)
                 return
@@ -965,7 +967,7 @@ class Handler(BaseHTTPRequestHandler):
             if not user:
                 self._json({"ok": False, "error": "log in first"}, 401)
                 return
-            gone = nn_users.drop_canvas(user["id"], data.get("name"))
+            gone = nn_users.drop_canvas(user["id"], data.get("name_tag"))
             self._json({"ok": True, "dropped": gone})
             return
         if path == "/api/gguf/canvas":

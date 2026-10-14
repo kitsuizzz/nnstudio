@@ -31,13 +31,38 @@ Everyone starts a **guest**: drawing, wiring, running and training all work
 with no account, and nothing of the session is kept on the server. An account
 is only what the server saves a canvas *for*. Creating one always goes through
 Cloudflare's bot check (Turnstile): the browser solves the challenge, generates
-its own token — 32 random bytes, never a password, shown once — and posts both
-to `/api/account/register`, which verifies the challenge with Cloudflare before
-the account exists. Logging in anywhere is that token again
-(`/api/account/login`; the answer is an HttpOnly cookie, and the store keeps
-only the token's sha256). Saved designs are private to their account:
-`/api/account/save`, `/api/account/canvases`, `/api/account/canvas?name=…`,
-`/api/account/delete`.
+its own token — 32 random bytes, never a password, shown once — and the
+register endpoint verifies the challenge with Cloudflare before the row
+exists.
+
+**The server never sees the token, and cannot read what it saves.** Three
+values are derived from the token, in the browser, each under its own label:
+
+| derived | goes | the server keeps |
+|---|---|---|
+| `auth` = sha256("nnstudio-auth-v1" + token) | every request (cookie / bearer) | its sha256 — a hash of a hash |
+| `name tag` = sha256("nnstudio-name-v1" + token + lower(name)) | with each save | the tag itself — keyed, so it cannot be matched to a guessed name |
+| data key = sha256("nnstudio-data-v1" + token) → AES-GCM | nothing | — |
+
+Names and designs are sealed with AES-GCM *before* they are sent; `users.db`
+holds the tag, the sealed name, the sealed design, and the auth hash — no
+plaintext name, design, or credential. What stays visible is only metadata:
+that an account exists, how many designs it has, their sizes and timestamps.
+Losing the token loses the designs for good — there is no reset, server
+included. The browser remembers the token (`localStorage`) so a reload stays
+unlocked; *log out* forgets it, and a browser without it shows the account
+locked ("account 🔒") until the token is pasted again.
+
+Endpoints, sealed end to end: `/api/account/register` (`name_tag`, `name_ct`,
+`auth`, `challenge`), `/api/account/login` (`auth`), `/api/account/save`
+(`name_tag`, `name_ct`, `blob`), `/api/account/canvases`,
+`/api/account/canvas?tag=…`, `/api/account/delete` (`name_tag`). Sealing needs
+WebCrypto, which browsers only expose on secure origins — `http://localhost`
+counts, https counts, a plain-http LAN address does not (the dialog says so).
+
+A `users.db` from before the sealing is moved aside on first use
+(`users.db.pre-e2e`) and a fresh store takes its place; old accounts simply
+sign up again.
 
 Cloudflare's *test* keys are used until the environment names a real widget,
 and the dialog says so. To put a real one in place: create a widget at
@@ -68,14 +93,14 @@ code (git-ignored) is the default.
 | `ui/index.html` | the whole app — the canvas, the toolbar (Files · Palette · Backend · Run · VRAM), the right-click menus; one self-contained page |
 | `nn_engine.py` | the GGUF/HF → canvas builder (`build_canvas` is pure; `gguf_canvas`/`hf_canvas` read real headers) — extracted from next-token's engine |
 | `nn_server.py` | the stdlib server: the UI, the GGUF list, the builder endpoint, the GPU badge, the agents' control listener and the run dispatch |
-| `nn_users.py` | accounts for saving designs: the token's sha256, the Cloudflare Turnstile check, and the designs themselves (`users.db`, git-ignored) |
+| `nn_users.py` | accounts for saving designs: sealed names/designs, keyed tags, the auth hash, the Turnstile check (`users.db`, git-ignored — ciphertext only) |
 | `agent/nnstudio_agent.py` | **the user's backend** — run it on the machine that holds the GPU; it dials the app, reports the machine and executes designs |
 | `agent/nn_torch.py` | the canvas→torch engine the agent runs (fed by the app, never by this page) |
 | `agent/nn_tokenizers.py` | huggingface `tokenizer.json` fetching + metadata (stdlib until a tokenizer is loaded) |
 | `tests/ui_boot.js` | the DOM-stub harness (boxes, wires, sizes, estimate, undo, copy/paste, GGUF node, flags, the menus) |
 | `tests/gguf_canvas_test.py` | the pure builder test, on synthetic tensors |
 | `tests/nn_torch_test.py` | the engine's offline tests (forward, ops, training, GGUF weights) |
-| `tests/nn_users_test.py` | the account store, offline: tokens (hash only), the bot check's answers, design CRUD |
+| `tests/nn_users_test.py` | the account store, offline: sealed rows (not one plaintext name), the bot check's answers, the .env loader, design CRUD |
 | `tests/agent_test.py` | the live end-to-end: a real agent connects and a design runs (`--live`) |
 | `weights/` | where `export weights …` writes, and a place to drop pt / safetensors / gguf files for the pickers |
 | `models/` | → `~/jevtest/models` (the GGUF files live there) |

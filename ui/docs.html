@@ -342,9 +342,21 @@
     dialog), then this browser makes a token — 32 random bytes, shown once — and
     the token is the whole login. Anywhere else, <i>log in with a token</i> and
     paste it. Signed in, the menu saves the canvas under a name of yours and
-    opens what was saved; saving over a name replaces it. The server keeps a hash
-    of the token, never the token, and the designs live in their own database
-    file (<code>users.db</code>) — nothing of it is in git.
+    opens what was saved; saving over a name replaces it.
+  </p>
+  <p>
+    <b>The server cannot read any of it.</b> The token never leaves the
+    browser: an <i>auth credential</i> is derived from it (the server keeps only
+    a hash of that), a keyed <i>name tag</i> lets rows be keyed and duplicates
+    refused without the server learning the name, and an AES-GCM key seals every
+    name and design before it is sent. <code>users.db</code> is therefore a pile
+    of ciphertext plus the times and sizes — nothing of it is in git. The browser
+    remembers the token so a reload stays unlocked; <i>log out</i> forgets it,
+    and without it the account shows locked (<i>account 🔒</i>) until the token
+    is pasted into <i>unlock with your token …</i>. Lose the token and the saved
+    designs are gone for good — there is no reset, the server included. Sealing
+    needs WebCrypto, so use <code>http://localhost</code> or https; a plain-http
+    LAN address cannot sign up.
   </p>
   <p class="dim">
     The bot check uses Cloudflare's test keys until <code>NNSTUDIO_TURNSTILE_SITE_KEY</code>

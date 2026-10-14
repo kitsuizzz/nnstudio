@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Accounts: what is stored for a token (its hash, never the token), the name
-rules, Cloudflare's bot-check answers, and one design per name per account."""
+"""Accounts, sealed: the server stores a keyed tag per name, the sealed name,
+the sealed design — and only the auth credential's hash. Never a plaintext
+name, design or credential. (Plus the bot check's answers and the .env loader.)
+"""
+import base64
 import os
 import sqlite3
 import sys
 import tempfile
-import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -27,31 +29,54 @@ WORK = tempfile.mkdtemp(prefix="nnstudio-users-")
 DB = os.path.join(WORK, "users.db")
 
 
+def sealed(text, iv=b"0123456789ab"):
+    """What the client sends: a nonce and ciphertext, base64. The server only
+    ever checks the shape — it cannot open one of these."""
+    return {"iv": base64.b64encode(iv).decode(),
+            "ct": base64.b64encode(str(text).encode()).decode()}
+
+
+def tag(ch):
+    return ch * 64
+
+
 def registering():
-    tok = nn_users.new_token()
-    u = nn_users.register("tester", tok, path=DB)
-    assert u["name"] == "tester" and u["id"].startswith("u_"), u
-    row = sqlite3.connect(DB).execute("select token_hash from users").fetchone()
-    assert row[0] == nn_users.hash_token(tok) and tok not in row[0], "the raw token must not be stored"
-    assert nn_users.user_for(tok, path=DB)["id"] == u["id"], "the token logs in"
-    assert nn_users.user_for(tok + "x", path=DB) is None, "a tampered token is nobody"
-    assert nn_users.user_for("", path=DB) is None, "no token: a guest"
-    for bad in ("", "a", "x" * 33, "has/slash"):
+    auth = nn_users.new_auth()
+    u = nn_users.register(tag("a"), sealed("tester"), auth, path=DB)
+    assert u["id"].startswith("u_"), u
+    row = sqlite3.connect(DB).execute(
+        "select name_tag, name_ct, auth_hash from users").fetchone()
+    assert row[2] == nn_users.hash_auth(auth) and auth not in row[2], \
+        "the credential is stored as its hash"
+    assert row[0] == tag("a") and "tester" not in row[1], "the name is sealed: %r" % (row,)
+    blob = open(DB, "rb").read()
+    assert b"tester" not in blob, "not one plaintext name in the whole file"
+    assert nn_users.user_for(auth, path=DB)["id"] == u["id"], "the credential logs in"
+    assert nn_users.user_for(auth + "0", path=DB) is None, "a tampered credential is nobody"
+    assert nn_users.user_for("", path=DB) is None, "no credential: a guest"
+    try:
+        nn_users.register(tag("a"), sealed("someone else"), nn_users.new_auth(), path=DB)
+        raise AssertionError("a taken tag was accepted")
+    except ValueError as e:
+        assert "taken" in str(e), e
+    for bad_tag in ("", "zz" * 32, "a" * 63):
         try:
-            nn_users.register(bad, nn_users.new_token(), path=DB)
-            raise AssertionError("accepted the name %r" % bad)
+            nn_users.register(bad_tag, sealed("x"), nn_users.new_auth(), path=DB)
+            raise AssertionError("accepted the tag %r" % bad_tag)
         except ValueError:
             pass
     try:
-        nn_users.register("TESTER", nn_users.new_token(), path=DB)
-        raise AssertionError("a taken name was accepted")
+        nn_users.register(tag("b"), sealed("x"), "not-a-sha256", path=DB)
+        raise AssertionError("a bad credential was accepted")
     except ValueError as e:
-        assert "taken" in str(e), e
-    try:
-        nn_users.register("shorty", "abc", path=DB)
-        raise AssertionError("a short token was accepted")
-    except ValueError as e:
-        assert "short" in str(e), e
+        assert "auth" in str(e), e
+    for bad in (None, {}, {"iv": "", "ct": "AA=="}, {"iv": "AA==", "ct": ""},
+                {"iv": "AA==", "ct": "x" * (nn_users.NAME_CT_MAX + 2)}):
+        try:
+            nn_users.register(tag("c"), bad, nn_users.new_auth(), path=DB)
+            raise AssertionError("accepted a bad sealed name: %r" % (bad,))
+        except ValueError:
+            pass
 
 
 def the_bot_check():
@@ -59,7 +84,8 @@ def the_bot_check():
 
     def ok(url, body):
         seen["url"] = url
-        seen["fields"] = dict(urllib.parse.parse_qsl(body.decode()))
+        seen["fields"] = dict(__import__("urllib.parse", fromlist=["parse_qsl"])
+                              .parse_qsl(body.decode()))
         return {"success": True}
 
     good, err = nn_users.verify_turnstile("s3cret", "cf-token", ip="1.2.3.4", fetch=ok)
@@ -101,42 +127,58 @@ def the_env_file():
     os.environ.pop(key, None)
 
 
+def the_old_store():
+    p = os.path.join(WORK, "old.db")
+    conn = sqlite3.connect(p)
+    conn.execute("CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT UNIQUE, "
+                 "token_hash TEXT, created REAL)")
+    conn.execute("INSERT INTO users VALUES ('u_1', 'old', 'deadbeef', 0)")
+    conn.commit()
+    conn.close()
+    nn_users.ensure(p)                         # the pre-sealing schema steps aside
+    assert os.path.exists(p + ".pre-e2e"), "the old file is kept, not deleted"
+    assert os.path.exists(p), "a fresh store takes its place"
+    cols = [r[1] for r in sqlite3.connect(p).execute("PRAGMA table_info(users)")]
+    assert "name_tag" in cols and "auth_hash" in cols, cols
+    assert nn_users.user_for(nn_users.new_auth(), path=p) is None, \
+        "and no old row can log in"
+
+
 def designs():
-    u = nn_users.register("saver", nn_users.new_token(), path=DB)
-    a = nn_users.save_canvas(u["id"], "client", {"type": "canvas", "nodes": []}, path=DB)
-    assert a["name"] == "client" and a["bytes"] > 0, a
-    nn_users.save_canvas(u["id"], "client", {"nodes": [1]}, path=DB)
-    got = nn_users.get_canvas(u["id"], "client", path=DB)
-    assert got["design"]["nodes"] == [1], "saving over one replaces it"
-    nn_users.save_canvas(u["id"], "other", {"nodes": []}, path=DB)
-    names = sorted(c["name"] for c in nn_users.list_canvases(u["id"], path=DB))
-    assert names == ["client", "other"], names
-    assert nn_users.drop_canvas(u["id"], "other", path=DB) is True, "dropping one works"
-    assert [c["name"] for c in nn_users.list_canvases(u["id"], path=DB)] == ["client"]
-    other = nn_users.register("other", nn_users.new_token(), path=DB)
-    assert nn_users.get_canvas(other["id"], "client", path=DB) is None, "nobody else's design"
-    for name in ("", "x" * 65):
+    u = nn_users.register(tag("d"), sealed("saver"), nn_users.new_auth(), path=DB)
+    a = nn_users.save_canvas(u["id"], tag("1"), sealed("client"),
+                             sealed('{"nodes":[]}'), path=DB)
+    assert a["name_tag"] == tag("1") and a["bytes"] > 0, a
+    nn_users.save_canvas(u["id"], tag("1"), sealed("client"),
+                         sealed('{"nodes":[1]}'), path=DB)
+    got = nn_users.get_canvas(u["id"], tag("1"), path=DB)
+    assert got["blob"] == sealed('{"nodes":[1]}'), "saving over one replaces it"
+    nn_users.save_canvas(u["id"], tag("2"), sealed("other"), sealed("{}"), path=DB)
+    tags = sorted(c["name_tag"] for c in nn_users.list_canvases(u["id"], path=DB))
+    assert tags == [tag("1"), tag("2")], tags
+    assert nn_users.drop_canvas(u["id"], tag("2"), path=DB) is True, "dropping one works"
+    assert [c["name_tag"] for c in nn_users.list_canvases(u["id"], path=DB)] == [tag("1")]
+    other = nn_users.register(tag("e"), sealed("other"), nn_users.new_auth(), path=DB)
+    assert nn_users.get_canvas(other["id"], tag("1"), path=DB) is None, "nobody else's design"
+    assert nn_users.get_canvas(u["id"], "not-a-tag", path=DB) is None
+    for bad in (None, {"iv": "AA==", "ct": "x" * (nn_users.BLOB_MAX + 2)}):
         try:
-            nn_users.save_canvas(u["id"], name, {}, path=DB)
-            raise AssertionError("saved the name %r" % name)
+            nn_users.save_canvas(u["id"], tag("9"), sealed("big"), bad, path=DB)
+            raise AssertionError("accepted a bad sealed design")
         except ValueError as e:
-            assert "name" in str(e), e
+            assert "design" in str(e), e
     try:
-        nn_users.save_canvas(u["id"], "big", {"blob": "x" * (nn_users.CANVAS_MAX + 10)}, path=DB)
-        raise AssertionError("an oversized design was saved")
-    except ValueError as e:
-        assert "too big" in str(e), e
-    try:
-        nn_users.save_canvas(None, "client", {}, path=DB)
+        nn_users.save_canvas(None, tag("1"), sealed("x"), sealed("{}"), path=DB)
         raise AssertionError("a guest saved a design")
     except ValueError as e:
         assert "account" in str(e), e
 
 
-check("an account: the token's hash is kept, and that token logs in", registering)
+check("an account: a hashed credential, a sealed name, nothing plaintext", registering)
 check("the bot check: Cloudflare's answer decides", the_bot_check)
 check("the .env next to the code seeds the keys — an env var still wins", the_env_file)
-check("a saved design: one per name, nobody else's", designs)
+check("an old store steps aside for the sealed one, nothing deleted", the_old_store)
+check("a sealed design: one per tag, nobody else's", designs)
 
 if FAILED:
     print("nn_users: %d failure(s): %s" % (len(FAILED), ", ".join(FAILED)))
