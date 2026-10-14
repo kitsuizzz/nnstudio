@@ -2213,6 +2213,21 @@ def vision_refuses_unknown_projectors():
 
 check("a vision tower names the projector it cannot run", vision_refuses_unknown_projectors)
 
+
+
+def text_reaches_its_output():
+    c = canvas([n("input", "i", input_mode="text"), n("output", "o")],
+               [edge("i", "o")])
+    r = T.run_graph(T.compile_canvas(c), c, {"i": "hello there"})
+    assert r["values"].get("o") == {"text": "hello there"}, r["values"].get("o")
+    assert r["values"].get("i") == {"text": "hello there"}, "the input shows its own text"
+    assert r.get("texts", {}).get("o") == "hello there", r.get("texts")
+    outs = [o for o in r.get("outputs", []) if o["id"] == "o"]
+    assert outs and outs[0]["stats"] == {"text": "hello there"}, outs
+
+
+check("text that reaches an output is the output's value", text_reaches_its_output)
+
 if FAILED:
     print("nn_torch_test: %d failure(s): %s" % (len(FAILED), ", ".join(FAILED)))
     sys.exit(1)

@@ -4417,6 +4417,22 @@ check("the Train box: one only, at the top level, and no rename", () => {
 });
 
 
+check("an output that received text shows the text", () => {
+  const nodes0 = __t.BX.nodes.length;
+  const out = __t.bxAdd("output", 900, 60, { din: null });
+  __t.bxRunValues[out.id] = { text: "the quick brown fox" };
+  const pane = document.createElement("div");
+  __t.bxOutputFill(pane, out);
+  const shown = pane.querySelectorAll(".bxdata").map(e => e.textContent).join(" | ");
+  ok(shown.indexOf("the quick brown fox") >= 0, "the window quotes it: " + shown);
+  eql(__t.bxShape(out), "text", "…and calls the data what it is");
+  ok(String(__t.bxStateText(__t.bxRunValues[out.id])).indexOf("quick") >= 0,
+     "…and the card carries it too");
+  delete __t.bxRunValues[out.id];
+  __t.bxRemove(out.id);
+  eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
+});
+
 check("the account: guests by default, a bot check to sign up, sealed designs", async () => {
   const nodes0 = __t.BX.nodes.length;
   const turn = () => new Promise(r => setImmediate(r));   // one event-loop turn

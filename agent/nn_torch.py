@@ -2630,22 +2630,26 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
     story = image_story(canvas, collected)
     outs = output_paths(canvas)                  # the viewable nodes
     values = {}
+    texts = {}
     for path, v in collected.items():
+        if isinstance(v, str):
+            # text is a value: the box it reached — the output at the end of a
+            # generate, a text input — shows it, not only the box that made it
+            values[path] = {"text": v}
+            texts[path] = v
+            continue
         st = _stats_with_image(v, story, view=(path in outs))
         if st is not None:
             values[path] = st
-    texts = {}
-    last = graph.last_vals or {}
-    for n in canvas.get("nodes", []):
-        if n.get("kind") in ("detokenize", "hf") and isinstance(last.get(n["id"]), str):
-            texts[n["id"]] = last[n["id"]]
     out = {
         "ok": True,
         "values": values,
         "generated": generated,
         "texts": texts,
         "outputs": [{"id": n["id"], "name": n.get("name"),
-                     "stats": _stats_with_image(vals.get(n["id"]), story, view=True)}
+                     "stats": ({"text": vals.get(n["id"])}
+                               if isinstance(vals.get(n["id"]), str)
+                               else _stats_with_image(vals.get(n["id"]), story, view=True))}
                     for n in canvas.get("nodes", []) if n.get("kind") == "output"],
         "ms": int((time.time() - t0) * 1000),
     }

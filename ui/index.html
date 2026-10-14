@@ -1341,9 +1341,10 @@ function bxShape(n) {
   if (n.kind === "input") return n.input_mode === "text" ? "text"
                                : n.input_mode === "image" ? "image"
                                : (bxMatrixShape(n.values) || bxDim(n.dout));
-  if (n.kind === "output") {                             // an image that arrived
+  if (n.kind === "output") {                             // what arrived: text, a picture…
     const st = bxNodeState(n);
-    return (st && st.image) ? "image" : bxDim(n.din);
+    return (st && st.text != null) ? "text"
+         : (st && st.image) ? "image" : bxDim(n.din);
   }
   if (n.kind === "sample")
     return n.temperature != null ? "t " + n.temperature : "greedy";
