@@ -318,7 +318,7 @@ def _spawn_detached(cmd, log, slug):
         unit = "nnstudio-%s-%d" % ((slug or "job")[:40], int(time.time()))
         runner = ["systemd-run", "--user", "--collect", "--quiet",
                   "--unit", unit, "--working-directory", HERE,
-                  "--property=StandardOutput=null",
+                  "--property=StandardOutput=append:%s" % log,
                   "--property=StandardError=append:%s" % log]
         for key in ("NNSTUDIO_REVERSE_AGENT", "NNSTUDIO_REVERSE_MODEL",
                     "NNSTUDIO_REVERSE_BASE_URL", "NNSTUDIO_REVERSE_API_KEY",

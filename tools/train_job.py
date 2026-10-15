@@ -20,6 +20,27 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "agent"))
 sys.path.insert(0, HERE)
 sys.path.insert(0, ROOT)
+import nn_tasks  # noqa: E402  — the task row is the run's front door
+
+
+def mirror(task_id, **cols):
+    """Keep the task row's live progress honest; never die over the list."""
+    try:
+        nn_tasks.update(task_id, **cols)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def land(task_id, ok, detail):
+    """The run is over: the outcome is decided here, not by a poll."""
+    task = None
+    try:
+        task = nn_tasks.get(task_id)
+    except Exception:  # noqa: BLE001
+        pass
+    mirror(task_id, status="done", outcome=None if ok else "failed",
+           phase="done", finished=time.time(),
+           meta=dict(((task or {}).get("meta") or {}), detail=detail))
 
 
 def main():
@@ -41,7 +62,13 @@ def main():
     ap.add_argument("--max-tokens", type=int, default=0)
     ap.add_argument("--n-samples", type=int, default=0)
     a = ap.parse_args()
+    mirror(a.task, pid=os.getpid(), phase="training")   # a poll reads us alive
+    err = run(a)
+    land(a.task, not err, err or "finished")
+    return 0 if not err else 1
 
+
+def run(a):
     import nn_torch
 
     with open(a.design, encoding="utf-8") as fh:
@@ -112,7 +139,7 @@ def main():
     except Exception as e:  # noqa: BLE001
         write_state(error=str(e))
         print("training failed to start: %s" % e)
-        return 1
+        return "training failed to start: %s" % e
 
     def on_event(ev):
         if ev.get("type") == "loss":
@@ -164,8 +191,8 @@ def main():
                     loss=tr.history[-1] if tr.history else None,
                     error=str(e))
         print("training failed: %s" % e)
-        return 1
-    return 0
+        return "training failed: %s" % e
+    return None
 
 
 if __name__ == "__main__":
