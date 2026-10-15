@@ -439,8 +439,8 @@ check("the right-click menus: three add items, or remove", () => {
   eql(__t.bxKindLabel("layer"), "Fully Connected", "a layer box is labelled Fully Connected");
   eql(__t.bxKindLabel("custom"), "Nested", "…and a custom box is called Nested");
   eql(__t.bxKindLabel("input"), "input", "…the others keep their names");
-  eql(__t.bxKindLabel("train"), "Train", "…the train kind is labelled Train");
-  eql(__t.bxDefaultName("train"), "train 1", "…and a fresh one is named train 1");
+  eql(__t.bxKindLabel("train"), "Server config", "…the train kind is the server config");
+  eql(__t.bxDefaultName("train"), "server config 1", "…and a fresh one is named server config 1");
   const tmp = __t.bxAdd("layer", 0, 0, {});
   ok(/^fully connected \d+$/.test(tmp.name), "a new one is named like: " + tmp.name);
   __t.bxRemove(tmp.id);
@@ -1054,17 +1054,17 @@ check("the Train door: in the Backend menu, the box on and off the canvas", () =
   ok(trainCount() === 0, "the canvas starts with no Train box");
   ok(__t.bxtRunEnabled() === false, "…and no backend is connected");
   ok(String(btn.className).indexOf("off") >= 0, "…so the row reads dim");
-  ok(btn.textContent === "show the Train box" && btn.title === "show the Train box",
+  ok(btn.textContent === "show the server config" && btn.title === "show the server config",
      "…saying what a press will do: " + btn.textContent);
   ok(__t.bxtRunToggle() === true, "the row shows the box");
   const hub = __t.bxTrainHub();
-  ok(hub && hub.name === "train 1", "…a fresh Train box named train 1");
+  ok(hub && hub.name === "server config 1", "…a fresh server config named server config 1");
   ok(panes().indexOf(hub.id) >= 0, "…drawn on the canvas");
-  ok(String(btn.className).indexOf("off") < 0 && btn.textContent === "hide the Train box",
+  ok(String(btn.className).indexOf("off") < 0 && btn.textContent === "hide the server config",
      "…and the row now offers to hide it: " + btn.textContent);
   ok(__t.bxtRunToggle() === false && hub.hidden === true, "a second press hides the box");
   ok(panes().indexOf(hub.id) < 0, "…the box leaves the canvas");
-  ok(String(btn.className).indexOf("off") >= 0 && btn.textContent === "show the Train box",
+  ok(String(btn.className).indexOf("off") >= 0 && btn.textContent === "show the server config",
      "…and the row offers to show it again: " + btn.textContent);
   ok(__t.bxTrainHub() && __t.bxTrainHub().id === hub.id, "…hidden, it is still the hub");
   ok(__t.bxAdd("train", 200, 0, {}) === null, "…so a second one stays refused");
@@ -1088,8 +1088,8 @@ check("the Train door: in the Backend menu, the box on and off the canvas", () =
   if (!firstOpen()) heads()[0].click();
   const pane = bm.children.find(c => c.className === "bxbpane");
   const hint = pane.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
-  ok(hint.indexOf("connected") >= 0 && hint.indexOf("live usage are in the Train box") >= 0,
-     "Backend → Local keeps the connection and points at the Train box");
+  ok(hint.indexOf("connected") >= 0 && hint.indexOf("live usage are in the server config") >= 0,
+     "Backend → Local keeps the connection and points at the server config");
   __t.bxtBackendToggle();
   // a saved Modal key still counts as a backend (the run action's readiness)
   __t.BX_BACKEND.mode = "remote";
@@ -1104,32 +1104,30 @@ check("the Train door: in the Backend menu, the box on and off the canvas", () =
   __t.bxtRunRefresh();
 });
 
-check("the Train box carries the machine; the input carries the run", () => {
+check("the server config carries the machine; the input carries the run", () => {
   const tr = __t.bxAdd("train", 0, 0, {});
   const ib = __t.bxAdd("input", 0, 320, { values: "1 2" });
   ok(!!tr && !!ib, "the boxes exist");
-  const fill = (tab) => {
+  const fill = () => {
     const d = document.createElement("div");
-    if (tab) tr.panel = Object.assign({}, tr.panel, { tab });
     __t.bxTrainFill(d, tr);
     return d;
   };
   const ifill = () => { const d = document.createElement("div"); __t.bxInputFill(d, ib); return d; };
-  const bstate = () => fill("spec").querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
-  const bchips = () => fill("spec").querySelectorAll(".chip").map(e => e.textContent);
+  const bstate = () => fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
+  const bchips = () => fill().querySelectorAll(".chip").map(e => e.textContent);
   const specsIn = (root) => root.querySelectorAll(".bxbspec")
     .map(r => r.children.map(c => c.textContent).join(" ")).join(" | ");
-  eql(fill("exec").querySelectorAll(".runmi").map(e => e.textContent), ["Execute", "Spec"],
-      "the Train box's own menu: Execute and Spec");
-  ok(fill("exec").querySelectorAll(".mseg").length === 0,
-     "…no mode switch — the box is the training");
-  const ctrl = fill("exec").querySelectorAll(".chip").map(e => e.textContent).join(" | ");
-  ok(ctrl.indexOf("set up the training") >= 0 && ctrl.indexOf("start") >= 0,
-     "…and the controls that drive it: " + ctrl);
-  ok(fill("exec").querySelectorAll(".bxbspec").length === 0,
-     "…the machine stays out of Execute");
-  ok(fill("spec").querySelectorAll(".chip").map(c => c.textContent)
-       .indexOf("run the design") < 0, "…and the run action stays out of Spec");
+  eql(fill().querySelectorAll(".runmi").length, 0,
+      "the server config has no tabs — only what the spec holds");
+  eql(fill().querySelectorAll(".mseg").length, 0, "…and no mode switch");
+  ok(fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ")
+       .indexOf("no backend connected") >= 0, "…it shows the machine's state");
+  const ctrl = fill().querySelectorAll(".chip").map(e => e.textContent).join(" | ");
+  ok(ctrl.indexOf("set up the training") < 0 && ctrl.indexOf("start") < 0,
+     "…the training is not this box's business any more: " + ctrl);
+  ok(fill().querySelectorAll(".chip").map(c => c.textContent)
+       .indexOf("run the design") < 0, "…and the run action stays out of it");
   // the run action lives on the input box now
   const goOff = ifill().querySelectorAll(".chip")
     .find(c => c.textContent.indexOf("run the design") >= 0);
@@ -1152,15 +1150,6 @@ check("the Train box carries the machine; the input carries the run", () => {
   __t.BXRUN.last = null;
   __t.bxRunValues = {};
   ok(ifill().querySelectorAll(".bxbhint").length === 0, "…and an edit clears the verdict");
-  // the menu switches views, and the choice sticks to the box
-  fill("exec").querySelectorAll(".runmi").find(b => b.textContent === "Spec").click();
-  eql(tr.panel.tab, "spec", "…Spec is a press away");
-  ok(fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ")
-       .indexOf("no backend connected") >= 0, "…and shows the machine's state");
-  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(tr)).panel.tab, "spec",
-     "…and the design carries the open view");
-  fill("spec").querySelectorAll(".runmi").find(b => b.textContent === "Execute").click();
-  eql(tr.panel.tab, "exec", "…and back to Execute");
   // a connected backend lights the input's run button
   __t.BX_BACKEND.mode = "local";
   __t.BX_BACKEND.key = "";
@@ -1177,7 +1166,7 @@ check("the Train box carries the machine; the input carries the run", () => {
   ok(goOn && String(goOn.className).indexOf("off") < 0, "…and it lights with the backend");
   ok(bstate().indexOf("gpu-box") >= 0 && bstate().indexOf("RTX 5090") >= 0 &&
      bstate().indexOf("cuda") >= 0, "Spec shows the backend machine");
-  const specs = specsIn(fill("spec"));
+  const specs = specsIn(fill());
   ok(specs.indexOf("Test CPU") >= 0 && specs.indexOf("16 cores") >= 0 &&
      specs.indexOf("RTX 5090") >= 0, "…the pc's specs");
   ok(specs.indexOf("14.2 / 64.0 GB") >= 0 && specs.indexOf("22%") >= 0,
@@ -4314,88 +4303,101 @@ check("a vision tower and its image input survive the design round trip", () => 
      "…and the box's window says what it is: " + rows.slice(0, 60));
 });
 
-check("the Train box: the hub of the training — data, columns, signal, parameters", () => {
-  const tr = __t.bxAdd("train", 0, 0, {});
-  const ds = __t.bxAdd("dataset", 0, 120, {});
+check("the output's training tab: the switch, the plan, and the dataset dot", () => {
   const out = __t.bxAdd("output", 0, 240, { din: 8 });
-  // the form: every hub field, in order
-  __t.bxForm("train", null, tr, "train");
-  const labels = Array.from(getEl("bxmenu").children[0].children)
-    .filter(c => c.textContent);   // the field labels (the chip row carries no text)
-  eql(labels.map(c => c.textContent),
-      ["data", "test data", "x col", "y col", "classes", "paradigm",
-       "target", "reward", "learning rate", "optimizer", "weight decay",
-       "batch", "steps", "grad clip", "save every", "eval every",
-       "temperature (rl)", "max tokens (rl)", "n samples (rl)"],
-      "the form names the data, the columns, the signal and every parameter");
-  const lab = (t) => labels.find(c => c.textContent === t);
-  ok(lab("reward").hidden, "the reward picker stays hidden while supervised");
-  ok(lab("temperature (rl)").hidden, "…and so do the rl sampling fields");
-  lab("paradigm").children[0].value = "rl";
-  lab("paradigm").children[0].dispatchEvent({ type: "change" });
-  ok(!lab("reward").hidden, "rl brings the reward picker back");
-  ok(!lab("n samples (rl)").hidden, "…and its sample fields");
-  __t.bxMenuClose();
-  // configuring lands the hub in the node
-  ok(__t.bxConfigure(tr.id, { name: "hub", dataset: ds.id, x_col: "a", y_col: "b",
-                                classes: "cat dog", paradigm: "supervised", target: out.id,
-                                lr: 0.01, batch: 8, steps: 40 }), "configuring lands");
-  eql([tr.name, tr.dataset, tr.x_col, tr.y_col, tr.paradigm, tr.target],
-      ["train 1", ds.id, "A", "B", "supervised", out.id],
-      "the node binds the data, the columns and the signal (the name is not ours to set)");
-  eql(tr.classes, ["cat", "dog"], "…and the classes land as a list");
-  eql([tr.lr, tr.batch, tr.steps], [0.01, 8, 40], "…and the parameters as numbers");
-  // and it all travels with the design
-  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(tr));
-  eql([back.dataset, back.x_col, back.y_col, back.paradigm, back.target],
-      [ds.id, "A", "B", "supervised", out.id], "the hub survives the JSON round trip");
-  eql(back.classes, ["cat", "dog"], "…so do the classes");
-  eql([back.lr, back.batch, back.steps], [0.01, 8, 40], "…and so do the parameters");
-  // the window opens on Execute: the training, with no mode switch
-  const tp = document.createElement("div");
-  __t.BXRUN = { local: { connected: false, agent: null }, inputs: {}, last: null,
-                loaded: null, loading: false, loadKey: null, msg: "", running: false };
-  __t.bxTrainFill(tp, tr);
-  eql(tp.querySelectorAll(".runmi").map(e => e.textContent), ["Execute", "Spec"],
-     "the Train box's own menu: Execute and Spec");
-  eql(tp.querySelectorAll(".mseg").length, 0, "…and no mode switch anywhere");
-  ok(tp.querySelectorAll(".chip").map(e => e.textContent).join(" | ")
-       .indexOf("set up the training") >= 0, "…just the training and its controls");
-  __t.bxRemove(tr.id);
+  const ds = __t.bxAdd("dataset", 120, 0, { text: "a\tb\nc\td", vocab: "abcd" });
+  const inp = __t.bxAdd("input", 0, 0, { dout: 8 });
+  const fill = (tab) => {
+    const d = document.createElement("div");
+    out.panel = Object.assign({}, out.panel, { tab: tab || "training" });
+    __t.bxOutputFill(d, out);
+    return d;
+  };
+  // two tabs; the training one starts as just the switch
+  eql(fill("output").querySelectorAll(".runmi").map(e => e.textContent), ["output", "training"],
+      "the output's own menu: output and training");
+  const d0 = fill();
+  const ck = d0.querySelectorAll(".bxtick")[0];
+  ok(ck && !ck.checked, "Enable Training is there, and off by default");
+  eql(d0.querySelectorAll("label.rf").map(l => l.children.map(c => c.textContent).join(" ").trim()),
+      ["Enable Training"], "\u2026and off, that is all there is");
+  ok(d0.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ")
+       .indexOf("just shows what arrived") >= 0, "\u2026with a hint at what turning it on does");
+  eql(__t.bxPortDefs(out, "in").length, 1, "and the box keeps its one dot");
+  // toggling it on: the parameters appear, and so does the dataset dot
+  ck.checked = true;
+  ck.dispatchEvent({ type: "change" });
+  eql(out.train, true, "\u2026and toggling it turns the training on");
+  eql(__t.bxPortDefs(out, "in").length, 2, "\u2026the box grows its dataset dot");
+  ok(String(__t.bxShape(out)).indexOf("training") >= 0,
+     "\u2026and the card says so: " + __t.bxShape(out));
+  eql(fill().querySelectorAll("label.rf").map(l => l.children.map(c => c.textContent).join(" ").trim()),
+      ["Enable Training", "data", "test data", "x col", "y col", "classes",
+       "training", "optimizer", "learning rate", "weight decay", "batch",
+       "steps", "grad clip", "save every", "eval every"],
+      "\u2026and the parameters show up, in order");
+  // a picker binds the rows; the plan follows
+  const sels = fill().querySelectorAll(".bxsel");
+  sels[0].value = ds.id;
+  sels[0].dispatchEvent({ type: "change" });
+  eql(out.dataset, ds.id, "the picker binds the data");
+  ok(fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
+       .indexOf("data \u00b7") >= 0, "\u2026and the plan reads the dataset back");
+  ok(fill().querySelectorAll(".chip").map(e => e.textContent).join(" | ")
+       .indexOf("start \u2014") >= 0, "\u2026with the controls that drive the run");
+  // the dataset dot is optional: bare it is no error, and a wire holds
+  eql(__t.bxConnect(inp.id, out.id, 0, 0), null, "the model wires into the output");
+  ok(!__t.bxErrorSet().has(out.id),
+     "a bare dataset dot is no error \u2014 it is optional until the flow is built");
+  eql(__t.bxConnect(ds.id, out.id, 0, 1), null, "a dataset wires into the dot");
+  ok(!__t.bxErrorSet().has(out.id), "\u2026and the design stays whole");
+  // every parameter lands on the node, and travels with the design
+  ok(__t.bxConfigure(out.id, { x_col: "a", y_col: "b", classes: "cat dog",
+                               optimizer: "sgd", lr: 0.01, batch: 8, steps: 40 }),
+     "the parameters land");
+  eql([out.x_col, out.y_col, out.optimizer, out.lr, out.batch, out.steps],
+      ["A", "B", "sgd", 0.01, 8, 40], "\u2026on the node");
+  eql(out.classes, ["cat", "dog"], "\u2026and the classes as a list");
+  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(out));
+  eql([back.train, back.dataset, back.optimizer, back.lr, back.batch, back.steps],
+      [true, ds.id, "sgd", 0.01, 8, 40], "\u2026and they survive the design's JSON");
+  // training off closes the dot, and its wire goes with it
+  __t.bxConfigure(out.id, { train: false });
+  eql(__t.bxPortDefs(out, "in").length, 1, "training off: the dot closes");
+  ok(__t.BX.edges.every(e => !(e.to === out.id && (e.toPort || 0) === 1)),
+     "\u2026and the dataset wire goes with it");
+  __t.bxRemove(inp.id);
   __t.bxRemove(ds.id);
   __t.bxRemove(out.id);
 });
 
-check("the Train box: one only, at the top level, and no rename", () => {
+check("the server config: one only, at the top level, and no rename", () => {
   const tr = __t.bxAdd("train", 0, 0, {});
-  ok(!!tr && tr.name === "train 1", "a Train box lands, named train 1");
+  ok(!!tr && tr.name === "server config 1", "a server config lands, named server config 1");
   ok(!__t.bxErrorSet().has(tr.id),
-     "…and a lone Train box is not an error — it takes no wires");
+     "…and a lone server config is not an error — it takes no wires");
   const ag = __t.bxAdd("agent", 0, 300, {});
   ok(!__t.bxErrorSet().has(ag.id), "…nor is a lone agent box");
   __t.bxRemove(ag.id);
   ok(__t.bxAdd("train", 200, 0, {}) === null, "…a second one is refused");
   ok(__t.bxDropPalette("train", null) === null, "…however it is dropped");
-  // the right-click menu: no rename; the hub's own setup form has no name field
+  // the right-click menu: no rename; the training is not this box's business
   __t.bxMenuBuild("box", tr.id, {});
   openCat(getEl("bxmenu"), "this box");
   const items = catItems(getEl("bxmenu"));
   ok(items.indexOf("rename this box") < 0, "…and it cannot be renamed");
-  ok(items.some(t => t.indexOf("set up the training") === 0),
-     "…while setting up the training stays one click away");
-  __t.bxForm("train", null, tr, "train");
-  const labels = Array.from(getEl("bxmenu").children[0].children).filter(c => c.textContent);
-  ok(labels.map(c => c.textContent).indexOf("name") < 0, "…its setup form has no name field");
+  ok(!items.some(t => t.indexOf("set up the training") === 0),
+     "…and the training setup is not offered here any more");
   __t.bxMenuClose();
   // a nested box never holds one
   const nest = __t.bxAdd("custom", 0, 300, {});
   __t.bxEnter(nest.id);
-  ok(__t.bxAdd("train", 0, 0, {}) === null, "inside a nested box a Train box is refused");
-  ok(__t.bxtRunToggle() === false, "…and the Train door shows no box here");
+  ok(__t.bxAdd("train", 0, 0, {}) === null, "inside a nested box a server config is refused");
+  ok(__t.bxtRunToggle() === false, "…and the server config door shows no box here");
   if (getEl("bxtBackendMenu").hidden) __t.bxtBackendToggle();
   __t.bxtRunRefresh();
   ok(getEl("bxtTrainBtn").title.indexOf("top level") >= 0,
-     "…and says the Train box lives at the top level");
+     "…and says the server config lives at the top level");
   __t.bxLeave();
   // it never moves into one, and a paste never makes a second
   ok(__t.bxMoveInto(tr.id, nest.id) === false, "it never moves into a nested box");

@@ -47,19 +47,9 @@ def main():
     with open(a.design, encoding="utf-8") as fh:
         canvas = json.load(fh)
 
-    # the train node is the hub — data, columns, signal, every parameter;
+    # the training host is the hub — data, columns, signal, every parameter;
     # the command-line flags only override it
-    hub = {}
-
-    def _hub(nodes):
-        for n in nodes or []:
-            if n.get("kind") == "train":
-                hub.update(n)
-                return
-            if isinstance(n.get("inner"), dict):
-                _hub((n.get("inner") or {}).get("nodes"))
-
-    _hub(canvas.get("nodes"))
+    hub = nn_torch.train_hub(canvas)
 
     cfg = {"name": a.name or a.task, "checkpoints": os.path.join(ROOT, "checkpoints")}
     for key in ("dataset", "test_dataset", "x_col", "y_col", "classes",

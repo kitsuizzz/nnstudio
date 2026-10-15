@@ -1810,7 +1810,7 @@ def the_run_menu_probes_the_setup():
         T.run(c4, {}, mode="training")
         raise AssertionError("no error for a hub pointing at a missing dataset")
     except T.CanvasError as e:
-        assert "the train box names" in str(e), e
+        assert "training needs a dataset" in str(e), e
     # the hub's dataset has no rows: the error names the box
     c5 = canvas([
         n("input", "tok", dout=1),
@@ -1832,6 +1832,60 @@ def the_run_menu_probes_the_setup():
 
 check("the run menu: the hub feeds the run, the probe scores both splits",
       the_run_menu_probes_the_setup)
+
+
+def training_under_an_output():
+    # the output box's training tab is a hub too: the fields ride the output
+    c = canvas([
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=8, din=1, dout=4),
+        n("layer", "l1", din=4, dout=4),
+        n("layer", "l2", din=4, dout=4),
+        n("dataset", "data", vocab="cdxyzabr",
+          text="c\tx\ta\nd\ty\tb\nc\tz\ta"),
+        n("output", "logits", din=4, train=True, dataset="data",
+          x_col="A", y_col="C", classes=["a", "b"], paradigm="supervised",
+          batch=2, steps=4, lr=0.05, eval_every=0, save_every=0),
+    ], [edge("tok", "emb"), edge("emb", "l1"), edge("l1", "l2"), edge("l2", "logits")])
+    hub = T.train_hub(c)
+    assert hub.get("kind") == "output" and hub.get("target") == "logits", hub
+    res = T.run(c, {}, mode="training")
+    probe = res.get("probe")
+    assert probe is not None and probe["loss"] is not None, probe
+    # an inference run of the same design: the bound dataset stands down
+    res0 = T.run(c, {"tok": torch.tensor([0, 1])}, mode="inference")
+    assert res0["values"]["logits"]["shape"] == [2, 4], res0["values"]["logits"]
+    # a dataset wired into the output's dot feeds the run, picker or no picker
+    c2 = canvas([
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=8, din=1, dout=4),
+        n("layer", "l2", din=4, dout=4),
+        n("dataset", "rows", vocab="cdxyzabr", text="c\tx\ta\nd\ty\tb"),
+        n("output", "logits", din=4, train=True, x_col="A", y_col="C",
+          classes=["a", "b"], batch=2, steps=2, lr=0.05, eval_every=0, save_every=0),
+    ], [edge("tok", "emb"), edge("emb", "l2"), edge("l2", "logits"),
+        edge("rows", "logits", 0, 1)])
+    hub2 = T.train_hub(c2)
+    assert hub2.get("dataset") == "rows", hub2
+    res2 = T.run(c2, {}, mode="training")
+    assert res2.get("probe") and res2["probe"]["loss"] is not None, res2.get("probe")
+    # …and an inference run of the same design stands the idle dataset down:
+    # the training dot is no part of an inference run
+    res3 = T.run(c2, {"tok": torch.tensor([0, 1])}, mode="inference")
+    assert res3["values"]["logits"]["shape"] == [2, 4], res3["values"]["logits"]
+    # an enabled output outranks the train node
+    c3 = canvas([
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=8, din=1, dout=4),
+        n("dataset", "data", vocab="abc", text="a\tb"),
+        n("output", "logits", din=4, train=True, dataset="data"),
+        n("train", "hub", name="train", dataset="data"),
+    ], [edge("tok", "emb"), edge("emb", "logits")])
+    assert T.train_hub(c3).get("kind") == "output", "the output host wins"
+
+
+check("training under an output: its tab is a hub, its dot feeds, inference stands down",
+      training_under_an_output)
 
 # ------------------------------------------------- the rl paradigm -------------
 

@@ -119,7 +119,7 @@ code (git-ignored) is the default.
 
 | file | role |
 |---|---|
-| `ui/index.html` | the whole app — the canvas, the toolbar (Files · Palette · Backend — the Train box's door, up top of that menu — · VRAM), the right-click menus; one self-contained page |
+| `ui/index.html` | the whole app — the canvas, the toolbar (Files · Palette · Backend — the server config's door, up top of that menu — · VRAM), the right-click menus; one self-contained page |
 | `nn_engine.py` | the GGUF/HF → canvas builder (`build_canvas` is pure; `gguf_canvas`/`hf_canvas` read real headers) — extracted from next-token's engine |
 | `nn_server.py` | the stdlib server: the UI, the GGUF list, the builder endpoint, the GPU badge, the agents' control listener and the run dispatch |
 | `nn_users.py` | accounts for saving designs: sealed names/designs, keyed tags, the auth hash, the Turnstile check (`users.db`, git-ignored — ciphertext only) |
@@ -157,7 +157,7 @@ in the browser):
   The agent needs `python3`, `torch` (the CUDA build to use the GPU) and
   `numpy`; `gguf` is optional (only designs bound to real GGUF files need it,
   and the file must sit at the same path on that machine). As soon as it
-  connects, the section says **connected** and the **Train box's door** —
+  connects, the section says **connected** and the **server config's door** —
   the menu's first row — turns live. The box itself is where the machine
   shows up: its specs, its live RAM/VRAM, and the load controls.
 
@@ -175,7 +175,7 @@ in the browser):
 - **Remote — Modal (BYOK)** — paste a Modal token (it stays in this browser,
   never in the design) and jobs will run on your own Modal account; the
   section points at `modal.com → Settings → Tokens`. The transport is not
-  wired yet: the Train box enables with a saved key, and says so.
+  wired yet: the server config's door enables with a saved key, and says so.
 
 The section in use wears an orange dot, and the choice survives a reload.
 A caveat: the control port trusts whoever connects — keep it on a network you
@@ -183,20 +183,19 @@ control.
 
 ## Run — the whole design, on your backend
 
-**Train** opens from the **Backend** menu — its door is that menu's first
-row — and is **disabled until a backend is established** (an agent connected
-under Local, or a saved Modal key under Remote); the box says *connect a
-backend first* until then. Open it and it is the one place that shows:
+**the server config** opens from the **Backend** menu — its door is that
+menu's first row — and is the machine's window; with no backend connected it
+says so. Open it and it is the one place that shows:
 
 - **the machine** — the agent's specs (CPU and cores, RAM, GPU and VRAM,
   torch/CUDA, OS) and **what it is using right now**: `ram now 14.2 / 30 GB ·
   47%` and `vram now 6.1 / 15.5 GB · 39%`, pushed by the agent every few
   seconds so the numbers stay live;
-- **the weights** — two buttons, **load all on vram** and **load all on
-  system**: they pin every weight box in the design (nested boxes included) to
-  that device and then **pre-load the whole design on the agent** — compiled
-  there, every weight materialised where it was told, and kept warm for the
-  next run. The bytes come from the JSON first: a design that **cannot fit**
+- **the weights** — a **cpu offload** bar sets the ratio (the first layers
+  stay on the gpu, the rest on the system's ram), then **load weights** pins
+  every weight box in the design (nested boxes included) and **pre-loads the
+  whole design on the agent** — compiled there, every weight materialised where
+  it was told, and kept warm for the next run. The bytes come from the JSON first: a design that **cannot fit**
   is refused *instantly* (`its weights need 50.8 GB on the gpu, but only
   15.2 GB is free — put layers on the system, or use load all on system`)
   instead of dequantising for minutes and then failing; while a load *is*
@@ -215,11 +214,10 @@ backend first* until then. Open it and it is the one place that shows:
   · 4012 ms` — which is what *offload* clears. A run right after says *using
   the loaded weights*; change the design and the next run transparently
   recompiles;
-- **the inputs** — one value field per top-level `input` box (numbers, space-
-  or comma-separated — they become that input's tensor), then `run the design`
-  runs one forward pass over the whole canvas on that machine and shows what
-  came back: the time and device, and every box's value — shape and mean, by
-  name.
+- **the run's own numbers** — the run action lives on the `input` box
+  (**▶ run the design**) and its window keeps the clocks: **run → result** (the
+  browser's wall clock) and **input → output** (the engine's own sweeps), plus
+  every box's value after the run — shape and mean, by name.
 
 A single layer's placement is its own business: right-click any weight box →
 **load this layer on** → `the gpu — video memory` or `the system — this

@@ -1556,6 +1556,29 @@ class Graph(nn.Module):
             incoming.setdefault(e["to"], []).append(e)
         self.incoming = {k: sorted(v, key=lambda e: e.get("toPort") or 0)
                          for k, v in incoming.items()}
+        # a dataset wired only into training dots (an output's training tab), or
+        # one that only a training host names: its rows are for a training run —
+        # an inference run stands it down
+        self.idle_datasets = set()
+        if not train:
+            outs, by_id = {}, {n.get("id"): n for n in nodes}
+            bound = set()
+            for n in nodes:
+                if (n.get("kind") == "train"
+                        or (n.get("kind") == "output" and n.get("train"))):
+                    for key in ("dataset", "test_dataset"):
+                        if n.get(key):
+                            bound.add(n[key])
+            for e in edges:
+                outs.setdefault(e.get("from"), []).append(e)
+            for n in nodes:
+                if n.get("kind") != "dataset":
+                    continue
+                es = outs.get(n.get("id")) or []
+                if es and all(self._train_dot(by_id, e) for e in es):
+                    self.idle_datasets.add(n.get("id"))
+                elif not es and n.get("id") in bound:
+                    self.idle_datasets.add(n.get("id"))
         self.order = self._topo(nodes)
 
         # a norm with no size takes the size flowing into it
@@ -1696,6 +1719,13 @@ class Graph(nn.Module):
                                 requires_grad=False, device="cpu").reshape(-1)[0])
         return out
 
+    @staticmethod
+    def _train_dot(by_id, e):
+        """The edge lands on an output box's training dot (its dataset port)."""
+        dst = by_id.get(e.get("to")) or {}
+        return (dst.get("kind") == "output" and bool(dst.get("train"))
+                and int(e.get("toPort") or 0) >= 1)
+
     def _incoming_sizes(self, nodes, edges):
         by_id = {n["id"]: n for n in nodes}
         out = {}
@@ -1765,7 +1795,8 @@ class Graph(nn.Module):
         vals = {}
         for nid in self.order:
             box = self.boxes[nid]
-            if box.loose or box.off or box.kind in ("agent", "reward", "train"):
+            if box.loose or box.off or box.kind in ("agent", "reward", "train") \
+                    or nid in self.idle_datasets:
                 vals[nid] = None               # drawn, not run / off / a config box
                 continue
             ins = []
@@ -1774,6 +1805,8 @@ class Graph(nn.Module):
                 if v is None:
                     if self.boxes[e["from"]].loose:
                         continue                 # an unmapped tensor: ignore its wire
+                    if e["from"] in self.idle_datasets:
+                        continue                 # a training dot's dataset: not this run's
                     self._fail(nid, "it is fed by a box that did not run")
                 ins.append(self._port_val(v, e.get("fromPort") or 0))
             dev = box.device or "cpu"            # each box runs where it was placed
@@ -2526,9 +2559,9 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                           if n.get("name") == e.box), None)
         raise
     if train:
-        # the train node is the hub: it names the dataset that feeds the run
+        # a training host is the hub: it names the dataset that feeds the run
         # — the test split stays idle in the run, the trainer scores it.
-        # Without a train node the first dataset box feeds, as before.
+        # Without one the first dataset box feeds, as before.
         def _all(nodes):
             for n in nodes or []:
                 yield n
@@ -2537,7 +2570,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                         yield m
 
         all_nodes = list(_all(canvas.get("nodes")))
-        hub = next((n for n in all_nodes if n.get("kind") == "train"), None) or {}
+        hub = train_hub(canvas)
         test_id = hub.get("test_dataset")
         if hub.get("dataset"):
             train_dn = next((n for n in all_nodes
@@ -2549,8 +2582,9 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
         test_dn = (next((n for n in all_nodes if n.get("id") == test_id), None)
                    if test_id else None)
         if train_dn is None and any(n.get("kind") == "dataset" for n in all_nodes):
-            raise CanvasError("run", "training mode needs a dataset with rows — "
-                                  "the train box names which one feeds the run")
+            raise CanvasError("run", "training needs a dataset with rows — bind one "
+                                  "in the training tab, or wire a dataset into the "
+                                  "output's dot")
         paradigm = str(hub.get("paradigm") or "supervised")
         x_col = col_index(hub.get("x_col")) if hub.get("x_col") else 0
         y_col = col_index(hub.get("y_col")) if hub.get("y_col") else 1
@@ -3178,6 +3212,34 @@ def _edge_pairs(canvas):
 
     walk(canvas)
     return pairs
+
+
+def train_hub(canvas):
+    """The node that carries a training run's setup. An output box with
+    `train` set — its training tab — wins: it trains on its own signal, and a
+    dataset wired into its dot feeds the run. The train node stays the hub of
+    the older designs. Returns the node's fields (with `target` always set
+    for an output host), or {} when the design carries no training setup."""
+    def _all(nodes):
+        for n in nodes or []:
+            yield n
+            if isinstance(n.get("inner"), dict):
+                for m in _all((n.get("inner") or {}).get("nodes")):
+                    yield m
+
+    nodes = list(_all((canvas or {}).get("nodes")))
+    host = next((n for n in nodes
+                 if n.get("kind") == "output" and n.get("train")), None)
+    if host is not None:
+        hub = dict(host)
+        hub["target"] = host.get("id")          # an output trains on itself
+        if not hub.get("dataset"):              # a dataset wired into its dot
+            for src, dst in _edge_pairs(canvas):    # beats the picker
+                if dst.get("id") == host.get("id") and src.get("kind") == "dataset":
+                    hub["dataset"] = src.get("id")
+                    break
+        return hub
+    return next((n for n in nodes if n.get("kind") == "train"), None) or {}
 
 
 def training_setup(canvas, hub):

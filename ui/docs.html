@@ -200,8 +200,8 @@
     <span class="pill grey">Files ▾</span> <span class="pill grey">Palette ▾</span>
     <span class="pill grey">Import ▾</span> <span class="pill grey">Backend ▾</span>
     <span class="pill grey">VRAM ▾</span> — the
-    <span class="pill">Train</span> box's door is the <b>first row of the
-    Backend menu</b> (<i>show the Train box</i>).
+    <span class="pill">server config</span>'s door is the <b>first row of the
+    Backend menu</b> (<i>show the server config</i>).
   </p>
 
   <h2>Moving around</h2>
@@ -235,8 +235,8 @@
         <span class="pill">custom</span> box shows the input/output boxes its dots
         stand for (hover one dot to read just that box). Right-click a wire to
         reshape or remove it.</li>
-    <li><b>Edit a box</b> — right-click it. Its menu renames it (the Train box
-        excepted), changes its settings (the activation, the operation, the embedding…),
+    <li><b>Edit a box</b> — right-click it. Its menu renames it (the server
+        config excepted), changes its settings (the activation, the operation, the embedding…),
         and offers <b>freeze</b> (keep its weights fixed) and <b>off</b> (skip it on runs).</li>
     <li><b>Step inside a nested box</b> — double-click a
         <span class="pill">custom</span> box. A nested box is a whole network of
@@ -253,21 +253,21 @@
         <span class="pill">output</span> shows its own). A run is
         <b>inference</b>: no gradients are kept (the lightest run — dataset boxes
         stay idle).</li>
-    <li><b>Train it</b> — the <span class="pill grey">Backend ▾</span>
-        menu's first row (<i>show the Train box</i>) puts the
-        <span class="pill">Train</span> box on the canvas (press again to hide it;
-        the design runs either way). It is the <b>hub of the training</b>: it owns
-        the data (the <code>dataset</code> that feeds the run, and an optional test
-        split), the columns (<b>x</b>/<b>y</b>), the classes, the signal (the
-        <b>target</b> output it scores, or in <b>rl</b> the reward box) and every
-        parameter of the run. Its window has its own <b>Execute | Spec</b> menu:
-        <b>Execute</b> carries the training's controls (<b>start</b>, <b>save
-        now</b>, <b>hold</b>, <b>detach</b>, <b>resume</b>, <b>load last
-        checkpoint</b>) and the loss/accuracy curves; <b>Spec</b> holds the backend
-        machine, its live usage and how the weights sit on it. Training keeps
-        gradients on the non-frozen weights, and the run reports the loss (and
-        accuracy) on the hub's rows. Each run leaves its numbers on the boxes
-        (click a box to see the values that passed through it).</li>
+    <li><b>Train it</b> — training lives on the <b>output box</b> it scores.
+        Open an <span class="pill">output</span> box, switch its window to the
+        <b>training</b> tab and tick <b>Enable Training</b>: its parameters show
+        up (the <code>dataset</code> that feeds the run and an optional test
+        split, the columns, the classes, the paradigm, and every knob — learning
+        rate, optimizer, batch, steps…), a <b>dataset dot</b> opens on the box —
+        wire a dataset into it, or bind one in the tab — and the controls
+        (<b>start</b>, <b>save now</b>, <b>hold</b>, <b>detach</b>,
+        <b>resume</b>, <b>load last checkpoint</b>) sit under them, with the
+        plan's summary, the step/loss strip and the live curves. The output is
+        what the training scores; in <b>rl</b> it is the policy the run samples
+        from. Training keeps gradients on the non-frozen weights, and the run
+        reports the loss (and accuracy) on the dataset's rows. Each run leaves
+        its numbers on the boxes (click a box to see the values that passed
+        through it).</li>
     <li><b>Price it</b> — <span class="pill grey">VRAM ▾</span> shows how much
         memory the design's weights need and where they will live (GPU or system).
         Freeze nothing, move everything, see it change.</li>
@@ -611,8 +611,26 @@
       produced — and says <i>no data yet</i> until a run. Name
       outputs after what they are (<code>logits</code>, <code>hidden</code>) — runs
       report per output name. Double-click the box to grow or shrink the window.</p>
-      <p class="bfields"><b>Fields:</b> <code>din</code>, its name, display
-      <code>box</code> size.</p>
+      <p>Its window has two tabs: <b>output</b> (the readout) and
+      <b>training</b>. Tick <b>Enable Training</b> and this output becomes the
+      <b>hub of a training run</b>: the parameters show up in the tab (the
+      dataset, the test split, the columns, the classes, the paradigm, the
+      optimizer, the learning rate, the batch, the steps, the save/eval cadence
+      — and in <b>rl</b> the reward box with the sampling knobs), the controls
+      and the live curves follow, and the box grows a <b>dataset dot</b> — its
+      second input — for the rows the run trains on. A dataset wired into that
+      dot beats the tab's picker. Inference stands the dataset down: a training
+      dot is no part of run-the-design.</p>
+      <p class="bfields"><b>Fields:</b> <code>din</code>, its name,
+      <code>train</code> (the training tab), the training's own fields
+      (<code>dataset</code>, <code>test_dataset</code>, <code>x_col</code>,
+      <code>y_col</code>, <code>classes</code>, <code>paradigm</code>,
+      <code>reward</code>, <code>lr</code>, <code>optimizer</code>,
+      <code>weight_decay</code>, <code>batch</code>, <code>steps</code>,
+      <code>clip</code>, <code>save_every</code>, <code>eval_every</code>,
+      <code>temperature</code>, <code>max_tokens</code>, <code>n_samples</code>,
+      <code>task_id</code>), display <code>box</code> size,
+      <code>panel.tab</code>.</p>
     </div>
   </div>
 
@@ -712,34 +730,20 @@
 
   <div class="boxref">
     <div>
-      <div class="bname">Train</div>
-      <div class="bwires">none — the hub, not maths</div>
+      <div class="bname">server config</div>
+      <div class="bwires">none — the machine's window, not maths</div>
     </div>
     <div class="bdet">
-      <p>The <b>hub of the training</b>: it owns the data (which dataset feeds the
-      run, which is the held-out test split — idle in rl), the columns (<b>x</b>
-      conditions; <b>y</b> is what the model is scored on, in supervised), the
-      classes (when y is a label), the signal — the <b>target</b> output box it
-      scores, or, in <b>rl</b>, the reward box — and every parameter of the run.
-      There is only ever one, it cannot be renamed, and it lives at the top level.
-      Its window has its own <b>Execute | Spec</b> menu. <b>Execute</b> carries
-      the training's controls — <b>start</b>, <b>save now</b>, <b>hold</b>,
-      <b>detach</b>, <b>resume</b>, <b>load last checkpoint</b> — with the setup's
-      summary, the step/loss strip and the live curves. <b>Spec</b> carries the
-      backend machine and its live usage, the model's provenance, and the weights —
-      the offload ratio, <b>load weights</b> / <b>offload</b>, and where the layers
-      sit. The toolbar's <b>Train</b> button shows it and hides it — the design
-      keeps training from it either way. There is no mode switch: the input box
-      runs the design, the Train box trains it.
-      Right-click → <b>set up the training …</b> to edit it.</p>
-      <p class="bfields"><b>Fields:</b> <code>dataset</code>,
-      <code>test_dataset</code>, <code>x_col</code>, <code>y_col</code>,
-      <code>classes</code>, <code>paradigm</code> (supervised | rl),
-      <code>target</code>, <code>reward</code>, <code>lr</code>,
-      <code>optimizer</code>, <code>weight_decay</code>, <code>batch</code>,
-      <code>steps</code>, <code>clip</code>, <code>save_every</code>,
-      <code>eval_every</code>, <code>temperature</code>, <code>max_tokens</code>,
-      <code>n_samples</code>, <code>task_id</code>, display <code>box</code> size,
+      <p>The backend machine's window: the agent's specs and its live RAM/VRAM,
+      the model's provenance, and the weights — the offload ratio, <b>load
+      weights</b> / <b>offload</b>, and where the layers sit. Its door is the
+      first row of the <span class="pill grey">Backend ▾</span> menu (<i>show the
+      server config</i>); press again to hide it — the design runs either way.
+      There is only ever one, it cannot be renamed, and it lives at the top
+      level. <b>Training does not live here</b> any more: it is the training tab
+      of an <span class="pill">output</span> box. Designs that still carry an
+      older train node keep working — the engine reads it as the hub.</p>
+      <p class="bfields"><b>Fields:</b> display <code>box</code> size,
       <code>panel</code> options.</p>
     </div>
   </div>
@@ -789,19 +793,16 @@
         the <span class="pill">dataset</span> box; give it rows
         (<code>prompt&lt;TAB&gt;completion</code> or JSONL). A second dataset box
         is the held-out test split, if you have one.</li>
-    <li>Press <span class="pill grey">Train</span> to show the
-        <span class="pill">Train</span> box — the <b>hub of the training</b> (not
-        the Palette). There is only one, and it lives at the top level; the same
-        button hides it again when you want the canvas clear.
-        Right-click it → <b>set up the training …</b>: bind the dataset (and the
-        test split), name the <b>x</b> column (the model's input) and the
-        <b>y</b> column (what the model is scored on), pick the <b>target</b> —
-        the output box the training scores — and set the parameters (learning
-        rate, optimizer, batch, steps…).</li>
-    <li>Start the training from the box's <b>start</b> chip (its Execute
-        window): the full training runs as a task — its progress, curves and
-        <b>detach</b> / <b>resume</b> live there (or via
-        <code>POST /api/tasks</code> below).</li>
+    <li>Open the <span class="pill">output</span> box's window on its
+        <b>training</b> tab and tick <b>Enable Training</b> — the output is the
+        hub now: its parameters show up there. Bind the dataset (and the test
+        split), name the <b>x</b> column (the model's input) and the <b>y</b>
+        column (what the model is scored on), and set the parameters (learning
+        rate, optimizer, batch, steps…). A dataset wired into the box's new
+        <b>dataset dot</b> feeds the run too — the wire beats the picker.</li>
+    <li>Start the training from the tab's <b>start</b> chip: the full training
+        runs as a task — its progress, curves and <b>detach</b> / <b>resume</b>
+        live there (or via <code>POST /api/tasks</code> below).</li>
     <li>Let it run. <b>Detach</b> whenever — the run checkpoints itself and the GPU
         is free. Days later, <b>resume</b>: same step, same learning rate, same
         place in the data. This is how you train on monthly GPU credits. Loading
@@ -828,7 +829,8 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         column A, the label is column B. Held-out rows get a second dataset box.</li>
     <li>The network as in the recipe above, ending in a layer sized to the number
         of classes.</li>
-    <li>The Train box: bind the dataset, <b>x</b> → A, <b>y</b> → B, and list the
+    <li>The output box's training tab: tick <b>Enable Training</b>, bind the
+        dataset, <b>x</b> → A, <b>y</b> → B, and list the
         classes — <code>cat dog bird</code>. With classes set, y is a label: the
         run reports <b>accuracy</b> (the share of rows the model gets right)
         alongside the loss, on the train split and the test split.</li>
@@ -849,9 +851,9 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         so runs are reproducible. Keep it partly soft (a little reward even for
         imperfect outputs), or the policy can starve on a row that keeps scoring
         zero.</li>
-    <li>The Train box: set the <b>paradigm</b> to <b>rl</b>, bind the dataset, name
-        the <b>x</b> column, pick the <b>target</b> — the output box the policy
-        samples from — and bind the <b>reward</b> box. Set <code>temperature</code>,
+    <li>The output box's training tab: tick <b>Enable Training</b>, set the
+        <b>paradigm</b> to <b>rl</b>, bind the dataset and the <b>reward</b> box —
+        the policy samples from this output itself. Set <code>temperature</code>,
         <code>max_tokens</code> and <code>n_samples</code> — how the sampling goes,
         and how many samples one row of the dataset earns per step.</li>
     <li>Start it and watch the <b>reward</b> climb: solid — the mean reward, dashed
@@ -980,23 +982,30 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     <div class="cap">Predict, score, nudge, repeat — the whole of training.</div>
   </div>
 
-  <h2>The hub: the Train box</h2>
+  <h2>The hub: the output's training tab</h2>
   <p>
     Training needs one place to say <i>what</i> the model learns from and
-    <i>how</i>. That place is the <span class="pill">Train</span> box — the hub.
-    There is only ever one Train box, it cannot be renamed, and it lives at the
-    top level of the design; a nested box never holds one. The toolbar's
-    <span class="pill grey">Train</span> button shows it and hides it —
-    the design trains from it either way. There is no mode switch: running the
-    design is the <span class="pill">input</span> box's <b>▶ run</b> (inference),
-    training it is this box.
+    <i>how</i>. That place is the <span class="pill">output</span> box's
+    <b>training</b> tab: tick <b>Enable Training</b> and the parameters appear —
+    every knob of the run in one window, on the box the training scores. An
+    output trains on its own signal, and a <b>dataset dot</b> opens on the box
+    for the rows that feed the run (a wire into it beats the tab's picker).
+    There is no mode switch: running the design is the
+    <span class="pill">input</span> box's <b>▶ run</b> (inference — an
+    inference run stands the dataset box down), training it is this tab.
+  </p>
+  <p>
     It owns the data (the <code>dataset</code> that feeds the run, and an optional
     <code>test_dataset</code> the trainer scores but never trains on), the columns
     (<code>x_col</code> conditions, <code>y_col</code> is the target), the
-    <code>classes</code> (when y is a label) and the signal — the
-    <code>target</code> output box it scores, or, in <b>rl</b>, the
-    <code>reward</code> box that scores the model's samples. It also holds every
-    parameter of the run.
+    <code>classes</code> (when y is a label), the <code>paradigm</code>
+    (supervised | rl), and in <b>rl</b> the <code>reward</code> box that scores
+    the model's samples (the policy samples from the output itself). It also
+    holds every parameter of the run. The
+    <span class="pill">server config</span> box — the
+    <span class="pill grey">Backend ▾</span> menu's first row — stays the
+    machine's window; older designs that carry a train node as the hub keep
+    working.
   </p>
   <p>
     One exception, for the veterans: wire a <span class="pill">loss</span> box
@@ -1013,16 +1022,17 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
   <ul>
     <li><b>Loss</b> — one number saying how wrong the model was on this batch:
         compare the model's output with what the <span class="pill">dataset</span>
-        box's <b>y</b> column says <i>should</i> have come out. The Train box's
-        built-in score does that against its <b>target</b>; a wired
-        <span class="pill">loss</span> box computes its own.</li>
+        box's <b>y</b> column says <i>should</i> have come out. The training
+        tab's built-in score (cross entropy, the one so far) does that against the
+        output it trains on; a wired <span class="pill">loss</span> box computes
+        its own.</li>
     <li><b>Gradient</b> — for every weight: if this weight were a little higher,
         would the loss go up or down, and by how much? Computed automatically
         (backpropagation) from the loss.</li>
     <li><b>Step</b> — nudge every weight in the direction that lowers the loss.
         The <b>learning rate</b> (<code>lr</code>) is the size of the nudge: too
-        small crawls, too large thrashes. Step counts on the Train box are literally
-        this.</li>
+        small crawls, too large thrashes. Step counts in the training tab are
+        literally this.</li>
     <li><b>Batch</b> — the handful of rows scored per step. Bigger batches give
         steadier nudges; smaller ones move faster per wall-clock minute.</li>
   </ul>
@@ -1095,16 +1105,17 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
 
   <h2>Three ways to train</h2>
   <ul>
-    <li><b>Supervised</b> — you hold the answers: the Train box names the
-        dataset, the <b>x</b>/<b>y</b> columns and the target the model is scored
-        on, and the loss measures the distance from your answers. The paradigm's
-        default — simplest, and the right first thing to try.</li>
-    <li><b>Reinforcement (RL)</b> — no answers, only a score. The Train box's
-        paradigm is <b>rl</b>: the model samples outputs from its target, the
-        <span class="pill">reward</span> box it names scores them, and training
-        nudges the model toward higher scores. Use it when "good" is easy to check
-        but hard to write out (passes the tests, ends with a period, matches the
-        schema).</li>
+    <li><b>Supervised</b> — you hold the answers: the output's training tab
+        names the dataset and the <b>x</b>/<b>y</b> columns; the output itself is
+        what the model is scored on, and the loss measures the distance from your
+        answers. The paradigm's default — simplest, and the right first thing to
+        try.</li>
+    <li><b>Reinforcement (RL)</b> — no answers, only a score. The training
+        tab's paradigm is <b>rl</b>: the model samples outputs from the output it
+        trains on, the <span class="pill">reward</span> box it names scores them,
+        and training nudges the model toward higher scores. Use it when "good" is
+        easy to check but hard to write out (passes the tests, ends with a
+        period, matches the schema).</li>
     <li><b>RLHF</b> — reinforcement learning from <i>human</i> feedback: people
         compare outputs (this one better than that one), and training treats those
         comparisons as the reward. The same <b>rl</b> paradigm — today the score
@@ -1152,12 +1163,10 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         <code>vocab</code> <code>abcd</code>.</li>
     <li><b>Add the loss</b> — a <span class="pill">loss</span> box; wire the
         layer's output into dot one, the dataset into dot two.</li>
-    <li><b>Watch it learn</b> — press <span class="pill grey">Train</span> to show the <span class="pill">Train</span> box, then
-        start a training task with the design (ask the agent box:
-        "train the current design"). The training task's readout should show the
-        loss falling within
-        seconds — the network has learned that <code>a</code> is followed by
-        <code>c</code>.</li>
+    <li><b>Watch it learn</b> — open the output box's <b>training</b> tab,
+        tick <b>Enable Training</b>, then start it from the <b>start</b> chip.
+        The task's readout should show the loss falling within seconds — the
+        network has learned that <code>a</code> is followed by <code>c</code>.</li>
     <li><b>Detach, then resume</b> — press <b>detach</b>; watch it checkpoint and
         stop. Press <b>resume</b>; the step counter continues where it stopped.</li>
   </ol>
