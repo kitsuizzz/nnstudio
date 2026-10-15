@@ -1161,9 +1161,12 @@ check("the server config carries the machine; the input carries the run", () => 
                vram_used_gb: 6.1, vram_total_gb: 32, vram_pct: 19 } } },
       inputs: {}, last: null, loaded: null, loading: false, loadKey: null,
       msg: "", running: false };
-  const goOn = ifill().querySelectorAll(".chip")
+  const pane2 = ifill();
+  const goOn = pane2.querySelectorAll(".chip")
     .find(c => c.textContent.indexOf("run the design") >= 0);
   ok(goOn && String(goOn.className).indexOf("off") < 0, "…and it lights with the backend");
+  const foot = pane2.querySelectorAll(".runfoot")[0];
+  ok(foot && foot.contains(goOn), "…the button sits in the window's own footer");
   ok(bstate().indexOf("gpu-box") >= 0 && bstate().indexOf("RTX 5090") >= 0 &&
      bstate().indexOf("cuda") >= 0, "Spec shows the backend machine");
   const specs = specsIn(fill());

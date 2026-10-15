@@ -833,7 +833,12 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 .bxbcode { margin: 0; font: 11px/1.5 var(--mono); color: var(--ink);
            background: rgba(0,0,0,.3); border: 1px solid var(--panel-brd);
            border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; }
-.bxtdrop .rrow, .bxrunbody .rrow { display: flex; gap: 6px; align-items: center; }
+.bxtdrop .rrow, .bxrunbody .rrow, .runfoot .rrow { display: flex; gap: 6px;
+                                                     align-items: center; }
+/* the input's run action: a footer with air under it, so the button never
+   touches the box's bottom edge (the corner grip keeps its room too) */
+.bxlogpane .runfoot { display: flex; flex-direction: column; align-items: flex-start;
+                      gap: 4px; padding: 6px 0 12px; }
 .bxtdrop .bxbin, .bxrunbody .bxbin { flex: 1 1 120px; min-width: 0; background: rgba(0,0,0,.3); color: var(--ink);
                   border: 1px solid var(--panel-brd); border-radius: 6px;
                   padding: 4px 7px; font: 12px var(--mono); }
@@ -3952,7 +3957,9 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
           (v) => save({ input_mode: "image", image_size: v }));
   }
   sel.addEventListener("change", () => save({ input_mode: sel.value }));
-  // the run action lives here now: where the data is, the way to run it
+  // the run action lives here now: where the data is, the way to run it —
+  // in a footer of its own, so the button never sits on the box's edge
+  const foot = mk("div", { class: "runfoot" });
   const runbar = mk("div", { class: "rrow" });
   const go = mk("span", { class: "chip tiny play" + (bxtRunEnabled() ? "" : " off"),
                           text: BXRUN.running ? "running\u2026"
@@ -3964,11 +3971,12 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
     if (bxtRunEnabled() && !BXRUN.running && !BXRUN.loading) bxtRunGo();
   });
   runbar.appendChild(go);
-  pane.appendChild(runbar);
+  foot.appendChild(runbar);
+  pane.appendChild(foot);
   const outcome = bxRunOutcome();
   if (outcome)
-    pane.appendChild(mk("div", { class: "bxbhint " + (outcome.ok ? "runok" : "runbad"),
-                                 text: outcome.text }));
+    foot.appendChild(mk("div", { class: "bxbhint " + (outcome.ok ? "runok" : "runbad"),
+                                text: outcome.text }));
   const clock = [];                            // the two clocks, side by side
   if (BXRUN.full_ms != null)
     clock.push("run \u2192 result " + bxMs(BXRUN.full_ms));
@@ -3980,7 +3988,7 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
     clock.push(line);
   }
   if (clock.length)
-    pane.appendChild(mk("div", { class: "bxbhint bxclock", text: clock.join(" \u00b7 ") }));
+    foot.appendChild(mk("div", { class: "bxbhint bxclock", text: clock.join(" \u00b7 ") }));
 }
 function bxImageAttach(n, f, zone) {           // a file -> the media store -> the box
   if (!f) return false;
