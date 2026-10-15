@@ -227,7 +227,8 @@ globalThis.__t = {
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
   bxSelectFill, bxConfigFill, bxTrainWired, bxInputLink, bxMatrixTell, bxTrainSummary,
-  bxTrainAddConfig, bxTrainWireConfig,
+  bxTrainAddConfig, bxTrainWireConfig, bxBoundary, bxModelFill, bxWeightsBox, bxWrapModel,
+  bxHasPane,
   bxRunFeeds, bxInputFill, bxInputExpand, bxOutputFill, bxOutputExpand, bxPaneFill,
   bxHotSet, bxHotMove, bxTipHide, bxRunSet, bxRunCanvas, bxFeedsItself,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
@@ -431,8 +432,9 @@ check("the right-click menus: three add items, or remove", () => {
     ["this box", "weights", "flow", "remove this box"],
     "a sized box: its categories, and remove");
   openCat(bmenu, "this box");
-  eql(catItems(bmenu), ["rename this box", "copy this box", "resize this box"],
-    "this box holds rename, copy and resize");
+  eql(catItems(bmenu), ["rename this box", "copy this box", "resize this box",
+                        "wrap the weights into a model"],
+    "this box holds rename, copy, resize \u2014 and the wrap for a weights box");
   openCat(bmenu, "weights");
   eql(catItems(bmenu), ["set the dtype", "\u25cf load on the gpu \u2014 video memory",
                         "\u00a0\u00a0 load on the system \u2014 this machine's ram",
@@ -1083,12 +1085,16 @@ check("a Palette card: a click drops it in the middle, a drag lands where you le
   const menu = getEl("bxtPalMenu");
   menu.children.find(c => c.textContent === "weights").click();      // show some cards
   const before = __t.BX.nodes.length;
-  // a press that does not move: the box lands in the middle of the view
+  // weights are locked at the top level: the click places nothing
   __t.bxPalDown({ button: 0, clientX: 60, clientY: 60, preventDefault() {}, stopPropagation() {} }, "layer");
+  __t.bxPalUp({ clientX: 60, clientY: 60 });
+  eql(__t.BX.nodes.length, before, "a weights card is locked at the top level");
+  // a press that does not move: the box lands in the middle of the view
+  __t.bxPalDown({ button: 0, clientX: 60, clientY: 60, preventDefault() {}, stopPropagation() {} }, "act");
   __t.bxPalUp({ clientX: 60, clientY: 60 });
   eql(__t.BX.nodes.length, before + 1, "a click places a box");
   eql([__t.BX.nodes[before].kind, __t.BX.nodes[before].din, __t.BX.nodes[before].dout],
-    ["layer", null, null], "…empty and unconfigured");
+    ["act", null, null], "…empty and unconfigured");
   eql(__t.bxSelBox(__t.BX.nodes[before].id), true, "…and selected, ready to configure");
   // the drag gesture: press, move over the canvas, release there
   const n1 = __t.BX.nodes.length;
@@ -3001,8 +3007,9 @@ check("the atomic boxes: norm stays a kind, the op atoms are all there", () => {
   __t.bxMenuBuild("box", norm.id, {});
   const nmenu2 = getEl("bxmenu");
   openCat(nmenu2, "this box");
-  eql(catItems(nmenu2), ["rename this box", "copy this box", "set the norm"],
-    "a norm box's menu: this box first");
+  eql(catItems(nmenu2), ["rename this box", "copy this box", "set the norm",
+                         "wrap the weights into a model"],
+    "a norm box's menu: this box first, and the wrap for its weights");
   openCat(nmenu2, "weights");
   eql(catItems(nmenu2), ["set the dtype", "\u25cf load on the gpu \u2014 video memory",
                          "\u00a0\u00a0 load on the system \u2014 this machine's ram",
@@ -4172,8 +4179,9 @@ check("the embedding box: an index in, a vector out — not a matmul", () => {
   eql(em.children.map(c => c.textContent),
     ["this box", "weights", "flow", "remove this box"], "an embedding box's menu categories");
   openCat(em, "this box");
-  eql(catItems(em), ["rename this box", "copy this box", "set the embedding"],
-    "…this box holds the table");
+  eql(catItems(em), ["rename this box", "copy this box", "set the embedding",
+                     "wrap the weights into a model"],
+    "…this box holds the table, and the wrap for its weights");
   openCat(em, "weights");
   eql(catItems(em), ["set the dtype", "\u25cf load on the gpu \u2014 video memory",
                      "\u00a0\u00a0 load on the system \u2014 this machine's ram",
@@ -4556,6 +4564,9 @@ check("the output's training tab: the switch, the plan, and the input's dots", (
   const inp = __t.bxAdd("input", 0, 0, { dout: 8 });
   const ds = __t.bxAdd("dataset", 120, 320, { vocab: "abcd" });
   __t.bxTableWrite(ds, { cols: ["a", "b"], rows: [["1", "2"], ["3", "4"]] });
+  // a flat design, the way they were built before models: the weights live at
+  // the top level, so the output's training tab keeps the old flow alive
+  const l1 = __t.bxAdd("layer", 0, 240, { din: 8, dout: 8 });
   const fill = (tab) => {
     const d = document.createElement("div");
     out.panel = Object.assign({}, out.panel, { tab: tab || "training" });
@@ -4717,8 +4728,158 @@ check("the output's training tab: the switch, the plan, and the input's dots", (
   __t.bxRemove(inp.id);
   __t.bxRemove(ds.id);
   __t.bxRemove(out.id);
+  __t.bxRemove(l1.id);
   __t.bxRemove(cfg.id);
   __t.bxRemove(sel.id);
+});
+
+check("wrapping the weights: a flat design becomes a model, wired the same", () => {
+  for (const n of __t.BX.nodes.slice()) __t.bxRemove(n.id);
+  const i = __t.bxAdd("input", 0, 0, { dout: 4 });
+  const l1 = __t.bxAdd("layer", 200, 0, { din: 4, dout: 8 });
+  const l2 = __t.bxAdd("layer", 400, 0, { din: 8, dout: 4 });
+  const o = __t.bxAdd("output", 600, 0, { din: 4 });
+  __t.bxConnect(i.id, l1.id);
+  __t.bxConnect(l1.id, l2.id);
+  __t.bxConnect(l2.id, o.id);
+  ok(__t.bxWeightsBox(l1) && __t.bxWeightsBox(l2), "the layers hold weights");
+  // the old training wiring, folded along the way
+  o.train = true;                                            // the dots open
+  const cfg = __t.bxAdd("config", 0, 300, {});
+  const ds = __t.bxAdd("dataset", 200, 300, {});
+  __t.bxTableWrite(ds, { cols: ["a", "b"], rows: [["1", "2"], ["3", "4"]] });
+  eql(__t.bxConnect(cfg.id, i.id, 0, 0), null, "an old config boxed into the input");
+  eql(__t.bxConnect(ds.id, i.id, 0, 1), null, "\u2026with the data on the input's dot");
+  const m = __t.bxWrapModel();
+  ok(!!m && m.model === true, "the wrap lands one model");
+  eql(__t.BX.nodes.filter(n => n.kind === "layer").length, 0,
+      "\u2026and the flat layers are gone");
+  eql([__t.bxBoundary(m, "in").length, __t.bxBoundary(m, "out").length], [1, 1],
+      "\u2026with the boundary the crossings made");
+  eql(((m.inner || {}).nodes || []).map(n => n.kind).sort(),
+      ["input", "layer", "layer", "output"], "\u2026the layers inside");
+  eql(__t.bxShape(m), "model \u00b7 1 in \u00b7 1 out \u00b7 64 params",
+      "\u2026and its weights counted");
+  const edge = (from, to) => __t.BX.edges.find(e => e.from === from && e.to === to);
+  ok(edge(i.id, m.id) && edge(m.id, o.id), "the outer wires land on the model");
+  eql(__t.bxErrorSet().size, 0, "\u2026and the design is whole");
+  // the fold: the config names the model, the data moved to its own dot
+  eql(cfg.model, m.id, "the old config names the wrapped model");
+  eql([cfg.train, o.train], [undefined, false], "\u2026and the output's tab retired");
+  ok(__t.BX.edges.some(e => e.from === ds.id && e.to === cfg.id
+                            && (e.toPort || 0) === 0), "\u2026the data on the config");
+  {
+    const sum = __t.bxTrainSummary(cfg);
+    ok(sum.lines.join(" | ").indexOf("signal \u00b7 " + cfg.name) < 0, "the plan reads it");
+    ok(sum.lines.join(" | ").indexOf("signal \u00b7 " + m.name) >= 0,
+       "\u2026and scores the model: " + sum.lines.join(" | "));
+  }
+  __t.bxRemove(m.id);
+  __t.bxRemove(i.id);
+  __t.bxRemove(o.id);
+  __t.bxRemove(cfg.id);
+  __t.bxRemove(ds.id);
+});
+
+check("a model and its config: the architecture nested, the training named", () => {
+  const m = __t.bxAddTemplate("model", 0, 0, "net");
+  ok(!!m && m.model === true, "a model box lands, marked as one");
+  eql([__t.bxBoundary(m, "in").length, __t.bxBoundary(m, "out").length], [1, 1],
+      "\u2026with the skeleton's one in and one out");
+  ok(__t.bxHasPane(m), "\u2026and a window of its own");
+  {
+    const d = document.createElement("div");
+    __t.bxModelFill(d, m);
+    const txt = d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
+    ok(txt.indexOf("in ") === 0 && txt.indexOf("out ") > 0,
+       "its ports read back: " + txt);
+    ok(txt.indexOf("no weights inside yet") >= 0, "\u2026its weights");
+    ok(txt.indexOf("no train config") >= 0, "\u2026and who trains it");
+  }
+  // a config names it; its data dot is its own
+  const cfg = __t.bxAdd("config", 480, 0, {});
+  eql([__t.bxPortDefs(cfg, "in").length, __t.bxPortDefs(cfg, "out").length], [0, 1],
+      "a fresh config: the old settings dot, no data dot");
+  // the architecture: a layer inside, wired between the skeleton's boxes
+  __t.bxEnter(m.id);
+  {
+    const bin = __t.bxBoundary(m, "in")[0], bout = __t.bxBoundary(m, "out")[0];
+    const l1 = __t.bxAdd("layer", 160, 40, { din: 4, dout: 4 });
+    eql(__t.bxConnect(bin.id, l1.id, 0, 0), null, "the boundary feeds the layer");
+    eql(__t.bxConnect(l1.id, bout.id, 0, 0), null, "\u2026and the layer the out box");
+    __t.bxLeave();
+    const d = document.createElement("div");
+    __t.bxModelFill(d, m);
+    ok(d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
+         .indexOf("16 params") >= 0, "the model counts its weights");
+  }
+  ok(__t.bxConfigure(cfg.id, { model: m.id, paradigm: "supervised" }),
+     "the model lands on the config");
+  eql(cfg.model, m.id, "\u2026on the config");
+  eql([__t.bxPortDefs(cfg, "in").length, __t.bxPortDefs(cfg, "out").length], [1, 0],
+      "\u2026and it grows its data dot, losing the settings one");
+  {
+    const d = document.createElement("div");
+    __t.bxConfigFill(d, cfg);
+    const labels = d.querySelectorAll("label.rf")
+      .map(l => l.children.map(c => c.textContent).join(" ").trim());
+    eql(labels.slice(0, 3), ["model", "training", "x col"],
+        "the config's window leads with the model: " + labels.join(","));
+    const txt = d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
+    ok(txt.indexOf("no data") >= 0, "\u2026and asks for the data: " + txt);
+  }
+  // the data wires in and the columns are picked there
+  const ds = __t.bxAdd("dataset", 200, 320, {});
+  __t.bxTableWrite(ds, { cols: ["x0", "y0"], rows: [["1", "2"], ["3", "4"]] });
+  eql(__t.bxConnect(ds.id, cfg.id, 0, 0), null,
+      "the dataset wires into the config's data dot");
+  {
+    const sum = __t.bxTrainSummary(cfg);
+    const txt = sum.lines.join(" | ");
+    ok(txt.indexOf("signal \u00b7 net") >= 0, "the plan scores the model: " + txt);
+    ok(txt.indexOf("data \u00b7 dataset") >= 0 && txt.indexOf("x x0 \u2192 y y0") >= 0,
+       "\u2026and reads the pair back: " + txt);
+    ok(sum.missing.length === 0, "nothing missing: " + sum.missing.join(" | "));
+  }
+  {
+    const d = document.createElement("div");
+    __t.bxConfigFill(d, cfg);
+    const txt = d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
+    ok(txt.indexOf("step ") >= 0, "\u2026and the experiment's strip is in the pane: " + txt);
+  }
+  // the model's window says who trains it now
+  {
+    const d = document.createElement("div");
+    __t.bxModelFill(d, m);
+    const txt = d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
+    ok(txt.indexOf("training \u00b7 " + cfg.name) >= 0,
+       "\u2026the model knows its config: " + txt);
+  }
+  // the run the job receives keeps them all
+  {
+    const view = __t.bxRunCanvas({ type: "canvas", version: 1,
+                                   nodes: __t.BX.nodes, edges: __t.BX.edges });
+    const kinds = (view.nodes || []).map(n => n.kind);
+    ok(kinds.indexOf("custom") >= 0 && kinds.indexOf("config") >= 0
+       && kinds.indexOf("dataset") >= 0,
+       "the training run keeps the model, the config and the data: " + kinds.join(","));
+  }
+  // the output's training tab is a readout now, with the chip to start one
+  {
+    const out = __t.bxAdd("output", 640, 320, { din: 2 });
+    const d = document.createElement("div");
+    out.panel = { tab: "training" };
+    __t.bxOutputFill(d, out);
+    ok(d.querySelectorAll(".bxtick").length === 0, "no Enable Training in the model world");
+    ok(d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
+         .indexOf("readout") >= 0, "\u2026just the readout");
+    ok(d.querySelectorAll(".chip").map(e => e.textContent).join(" | ")
+         .indexOf("add a train config") >= 0, "\u2026and the chip that makes one");
+    __t.bxRemove(out.id);
+  }
+  __t.bxRemove(m.id);
+  __t.bxRemove(cfg.id);
+  __t.bxRemove(ds.id);
 });
 
 check("the veterans' way plans too: a wired dataset→loss needs no config", () => {
