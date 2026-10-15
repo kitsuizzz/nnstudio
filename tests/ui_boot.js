@@ -298,8 +298,12 @@ check("three boxes: input (out dot only), layer (both), output (in dot only)", (
   eql([l.din, l.dout], [5120, 256], "a layer box has both sides");
   eql(__t.BX.nodes.length, 3);
   eql(__t.bxShape(a), "5120", "input shows its size only");
-  eql(__t.bxShape(o), "256", "output shows its size only");
+  eql(__t.bxShape(o), "?", "an unwired output expects nothing yet — just a ?");
   eql(__t.bxShape(l), "in 5120 → out 256", "layer shows in → out");
+  // …and a wire makes it speak: the source's own type and shape
+  eql(__t.bxConnect(l.id, o.id), null, "the layer wires into the output");
+  eql(__t.bxShape(o), "matrix [? × 256]", "…the expectation follows the wire");
+  __t.bxRemoveEdge(l.id, o.id);
 });
 
 check("every box keeps the same fields (and is configured, not retyped)", () => {
@@ -709,7 +713,23 @@ check("hovering an output box says what it expects", () => {
   __t.bxHotMove({ target: __t.bxCard(o), clientX: 140, clientY: 90 });
   eql(line("who"), "output", "the card names the kind");
   eql(line("what"), o.name, "…and the box's name");
-  eql(line("shp"), "expects matrix [? × 128]", "…and what it takes");
+  eql(line("shp"), "expects ?", "…and with nothing wired it expects nothing yet");
+  // wired: the expectation is the wire's own type and shape
+  const l = __t.bxAdd("layer", 200, 0, { din: 128, dout: 128 });
+  __t.bxConnect(l.id, o.id);
+  __t.bxHotSet(null);
+  __t.bxHotMove({ target: __t.bxCard(o), clientX: 140, clientY: 90 });
+  eql(line("shp"), "expects matrix [? × 128]", "…a wire brings its shape");
+  // a text wire needs no shape at all
+  const d = __t.bxAdd("detokenize", 200, 200, { vocab: "ab" });
+  __t.bxRemoveEdge(l.id, o.id);
+  __t.bxConnect(d.id, o.id);
+  __t.bxHotSet(null);
+  __t.bxHotMove({ target: __t.bxCard(o), clientX: 140, clientY: 90 });
+  eql(line("shp"), "expects text", "…a text wire reads as text");
+  eql(__t.bxShape(o), "text", "…and the card line says the same");
+  __t.bxRemove(d.id);
+  __t.bxRemove(l.id);
   __t.bxRunValues = { [o.id]: { shape: [64, 64, 3], dtype: "f32",
                                 image: { w: 64, h: 64, blob: "" } } };
   __t.bxHotSet(null);
@@ -747,13 +767,15 @@ check("a nested box's dots and body read as its own i/o boxes", () => {
   eql(line("who"), "nested box", "the body lists its dots");
   eql(line("what"), "Inner-Model", "…under the box's name");
   eql(tip.querySelectorAll(".row").map(r => String(r.textContent)),
-      ["in  tokens · matrix [? × 12]", "out head · matrix [? × 128]"],
-      "…one row per dot, the inner boxes' own metadata");
+      ["in  tokens · matrix [? × 12]", "out head · matrix [? × 12]"],
+      "…one row per dot, the inner boxes' own metadata — the head's row " +
+      "follows its own wire");
   const outDot = g.querySelectorAll(".dport").find(d => String(d.className).indexOf(" out") >= 0);
   __t.bxHotSet(null);
   __t.bxHotMove({ target: outDot, clientX: 120, clientY: 80 });
   eql(line("who"), "output", "an out dot reads as the inner output box");
-  eql(line("shp"), "expects matrix [? × 128]", "…and what it takes");
+  eql(line("shp"), "expects matrix [? × 12]",
+     "…and what it takes is its inner wire's shape");
   eql(line("note"), "port 1 of Inner-Model", "…port 1 of the nested box");
   // the real DOM hands an SVG dot's .className as an SVGAnimatedString object,
   // and closest() reads the class attribute — emulate that exactly
@@ -766,7 +788,7 @@ check("a nested box's dots and body read as its own i/o boxes", () => {
   __t.bxHotSet(null);
   __t.bxHotMove({ target: svgDot, clientX: 120, clientY: 80 });
   eql(line("who"), "output", "…even when the DOM hands .className as an object");
-  eql(line("shp"), "expects matrix [? × 128]", "…still that box's own shape");
+  eql(line("shp"), "expects matrix [? × 12]", "…still that box's own wiring");
   __t.bxHotSet(null);
   __t.bxRemove(c.id);
 });

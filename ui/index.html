@@ -1404,11 +1404,12 @@ function bxShape(n) {
   if (n.kind === "input") return n.input_mode === "text" ? "text"
                                : n.input_mode === "image" ? "image"
                                : (bxMatrixShape(n.values) || bxDim(n.dout));
-  if (n.kind === "output") {                             // what arrived: text, a picture…
-    const st = bxNodeState(n);
-    const what = (st && st.text != null) ? "text"
-               : (st && st.image) ? "image" : bxDim(n.din);
-    return what + (n.train ? " \u00b7 training" : "");    // its second tab is on
+  if (n.kind === "output") {                             // what arrived, or what the
+    const st = bxNodeState(n);                             // wire will bring — an
+    const tag = n.train ? " \u00b7 training" : "";          // unwired output shows
+    if (st && st.text != null) return "text" + tag;        // neither, so it asks
+    if (st && st.image) return "image" + tag;
+    return (bxTypeText(bxOutputExpect(n)) || "?") + tag;
   }
   if (n.kind === "heatmap") {                            // one vector → one picture
     const st = bxNodeState(n);
@@ -5626,6 +5627,27 @@ function bxPortType(n, dir, i) {               // what a dot is built to carry
   if (size == null) return { kind: "matrix", shape: null };
   return { kind: "matrix", shape: "[? \u00d7 " + size + "]" };
 }
+function bxOutputFeed(n, edges) {              // the box wired into an output's dot.
+  // `edges` names the level the box lives at — the canvas by default, a nested
+  // box's own wiring when one of its dots is the one being read
+  const inner = !!edges && edges !== BX.edges;
+  let byId = null;
+  if (inner) {                                 // inner levels resolve their own boxes
+    byId = {};
+    bxEveryBox(x => { byId[x.id] = x; });
+  }
+  for (const e of (edges || BX.edges || [])) {
+    if (e.to !== n.id || (e.toPort || 0) !== 0) continue;   // port 0: the model's
+    const src = inner ? byId[e.from] : bxNode(e.from);      // (port 1 is the dataset)
+    if (src) return src;
+  }
+  return null;
+}
+function bxOutputExpect(n, edges) {            // what an output expects: its wire's
+  const src = bxOutputFeed(n, edges);          // own type and shape — never a stale
+  if (!src) return null;                       // declared size; nothing connected,
+  return bxPortType(src, "out", 0);            // nothing expected
+}
 function bxTypeText(pt) {                      // "matrix [5120]" / "image [768\u00d7768\u00d73]"
   if (!pt) return null;
   if (pt.kind === "text" || pt.kind === "ids") return pt.kind;
@@ -5689,8 +5711,9 @@ function bxTipNode(target, ev) {               // a box: its name, and what it c
     bxTipAdd(tip, "who", "nested box");
     bxTipAdd(tip, "what", n.name || bxKindLabel(n.kind));
     const rows = [];
+    const inner = (n.inner || {}).edges || [];
     for (const k of bxBoundary(n, "in")) rows.push(["in", k, bxPortType(k, "out", 0)]);
-    for (const k of bxBoundary(n, "out")) rows.push(["out", k, bxPortType(k, "in", 0)]);
+    for (const k of bxBoundary(n, "out")) rows.push(["out", k, bxOutputExpect(k, inner)]);
     for (const r of rows.slice(0, 10))
       bxTipAdd(tip, "row", r[0].padEnd(4) + bxClip(r[1].name || bxKindLabel(r[1].kind), 18) +
                              (r[2] ? " \u00b7 " + bxTypeText(r[2]) : ""));
@@ -5705,8 +5728,10 @@ function bxTipNode(target, ev) {               // a box: its name, and what it c
       if (!box) { bxTipHide(); return; }
       prefix = n.id;
     }
-    const takes = box.kind === "output";       // an output takes, an input emits
-    const pt = bxPortType(box, takes ? "in" : "out", 0);
+    const takes = box.kind === "output";       // an output takes, an input emits —
+    const innerEdges = box !== n ? ((n.inner || {}).edges || []) : null;
+    const pt = takes ? bxOutputExpect(box, innerEdges)   // what an output takes is
+                    : bxPortType(box, "out", 0);         // its wire's own type and shape
     const dead = target.part === "port"
       ? (bxBoxOff(n) || (target.dir === "out" && bxPortOff(n, "out", target.port || 0)))
       : bxBoxOff(n);
@@ -5990,7 +6015,7 @@ function bxCard(n) {
   const unset = (n.kind === "layer") ? (n.din == null || n.dout == null)
               : (n.kind === "embed") ? (n.vocab == null || n.dout == null)
               : (n.kind === "input") ? n.dout == null
-              : (n.kind === "output") ? n.din == null : false;
+              : (n.kind === "output") ? !bxOutputFeed(n) : false;   // nothing wired
   const vcls = n.kind === "act" ? " fn" : n.kind === "op" ? " opfn"
              : n.kind === "script" ? " fn"
              : (unset ? " unset" : "");
