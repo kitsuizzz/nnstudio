@@ -647,6 +647,8 @@ def image_view(v):
     return {"w": w, "h": h, "blob": "", "thumb": _thumb(x)}
 
 
+_HEAT_SIGMAS = 2.0                               # the ramp covers +/- 2 robust sigmas
+_HEAT_FLOOR_ULPS = 32.0                          # …and never scales below 32 ulps
 _HEAT_STOPS = ((0.00, 0.03, 0.02, 0.22),     # deep blue
                (0.25, 0.05, 0.52, 0.76),     # cyan
                (0.50, 0.10, 0.72, 0.34),     # green
@@ -670,17 +672,29 @@ def _heat_grid(n):
 
 
 def _heatmap(x, box=""):
-    """A vector drawn as one picture: the values flattened, stretched to 0..1
-    by their own min and max, and laid out on the most square grid their count
-    allows, through a five-stop colour ramp. Returns [h, w, 3] in 0..1 — a
-    padded tail reads as neutral gray, never an invented value."""
+    """A vector drawn as one picture: the values flattened and mapped through
+    a five-stop colour ramp, centred on their median and spread by their
+    robust deviation (1.4826 x the median absolute deviation — the ramp then
+    covers +/- two of those). One value moving moves one cell, never the whole
+    picture, and a far outlier clips to the ramp's end instead of squashing
+    everything else flat. Returns [h, w, 3] in 0..1 — a padded tail reads as
+    neutral gray, and a (near-)constant vector as one mid colour."""
     x = torch.nan_to_num(x.float()).reshape(-1)
     n = int(x.numel())
     if n == 0:
         raise CanvasError(box or "heatmap", "the vector is empty - nothing to draw")
     rows, cols, _pad = _heat_grid(n)
-    lo, hi = x.min(), x.max()
-    v = ((x - lo) / (hi - lo).clamp(min=1e-12)).clamp(0.0, 1.0)
+    c = x.median()
+    spread = float((x - c).abs().median()) * 1.4826
+    # the scale is floored a few dozen ulps under the vector's own magnitude:
+    # float dust reads flat instead of stretching into a rainbow
+    anchor = float(x.abs().max())
+    floor = _HEAT_FLOOR_ULPS * float(torch.finfo(x.dtype).eps) * anchor
+    scale = _HEAT_SIGMAS * max(spread, floor)
+    if scale <= 0.0:
+        v = x.new_full((n,), 0.5)                # the all-zero vector: one flat colour
+    else:
+        v = (((x - c) / scale).clamp(-1.0, 1.0) + 1.0) * 0.5
     pos = v * (len(_HEAT_STOPS) - 1)
     idx = pos.floor().clamp(0, len(_HEAT_STOPS) - 2).long()
     t = (pos - idx.to(pos.dtype)).unsqueeze(-1)

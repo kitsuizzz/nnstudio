@@ -615,9 +615,14 @@
     </div>
     <div class="bdet">
       <p>Draws a vector as <b>one picture</b>: whatever reaches it is flattened,
-      stretched to 0..1 by its own min and max, and laid out on the <b>most
+      centred on its <b>median</b> and spread by its <b>robust deviation</b>
+      (1.48 × the median absolute deviation — the ramp then covers ±2 of
+      those, and anything beyond clips to its ends), and laid out on the <b>most
       square grid its count allows</b> (96 values → 12×8), through a five-stop
-      colour ramp — blue (lowest) → cyan → green → yellow → red (highest). A
+      colour ramp — blue (low) → cyan → green → yellow → red (high), so the
+      <b>middle colour is the vector's typical value</b>. One value moving
+      moves one cell, never the whole picture — similar vectors draw similar
+      pictures. A
       length with no square-ish factor pair (a prime) gets a near-square grid
       whose padded tail reads neutral gray — never an invented value. The
       picture is an ordinary RGB matrix in 0..1, so it <b>reads as an image

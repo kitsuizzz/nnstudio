@@ -2273,6 +2273,34 @@ def heatmap_draws_a_vector():
     first, last = img.reshape(-1, 3)[0], img.reshape(-1, 3)[-1]
     assert float(first[2]) > float(first[0]), ("the low end is blue", first.tolist())
     assert float(last[0]) > float(last[2]), ("the high end is red", last.tolist())
+    # similar vectors draw similar pictures: the map is median-centred and
+    # robust-scaled, so one value moving moves one cell — not the picture
+    def moved(a, b):
+        return float((a - b).abs().mean())
+    bump = x.clone()
+    bump[int(x.argmax())] += 0.1                 # the element min/max used to rescale
+    b_img = T._heatmap(bump)
+    assert moved(img, b_img) < 0.02, "one cell moves, not the picture"
+    assert float((b_img.reshape(-1, 3)[:-1] - img.reshape(-1, 3)[:-1]).abs().max()) == 0.0, \
+        "…and every other cell is untouched"
+    assert moved(img, T._heatmap(x + 0.1)) < 1e-4, "a shift is invisible"
+    assert moved(img, T._heatmap(x * 1.05)) < 1e-4, "…and so is a scale"
+    far = x.clone()
+    far[int(x.argmin())] = 50.0                  # an outlier clips: it does not squash the rest
+    assert moved(img, T._heatmap(far)) < 0.02, \
+        "an outlier saturates its own cell, not the picture"
+    narrow = 0.5 + torch.randn(5120) * 0.002     # a tight band: used to rescale wholesale
+    n1 = T._heatmap(narrow)
+    n2 = narrow.clone()
+    n2[int(narrow.argmax())] += 0.1
+    assert moved(n1, T._heatmap(n2)) < 0.02, "a tight band is not rescaled by one bump"
+    # float dust around a constant: one nearly flat colour, stable between draws
+    d1 = torch.ones(5120) + torch.randn(5120) * 1e-7
+    d2 = torch.ones(5120) + torch.randn(5120) * 1e-7
+    f1 = T._heatmap(d1)
+    assert float((f1.reshape(-1, 3)[:5120] - f1.reshape(-1, 3)[0]).abs().max()) < 0.1, \
+        "dust reads as one (nearly) flat colour"
+    assert moved(f1, T._heatmap(d2)) < 0.06, "…and two dust draws stay close"
     # a prime length still draws: a near-square grid with a neutral tail
     c2 = canvas([
         n("input", "vec", dout=127),

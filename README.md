@@ -271,9 +271,10 @@ same size and drawn by the same card renderer** as every other box in the app
 
 - **atomic (static) boxes** — they cannot be divided into anything simpler:
   `input`, `output` (the graph's boundaries), **`Heatmap`** (a vector drawn as
-  one picture: min-max stretched onto the most square grid its length allows,
-  through a colour ramp — it sits in the Palette's **analysis** category and
-  its picture reads as an image everywhere), `Activation`, `Operation` (one
+  one picture: centred on its median, spread by its robust deviation onto the
+  most square grid its length allows, through a colour ramp — it sits in the
+  Palette's **analysis** category and its picture reads as an image
+  everywhere), `Activation`, `Operation` (one
   tensor op each), `Norm` (a fused reduction: with no mean/root atoms to
   build it from, it stays whole), **`Script`** — a Python function you
   write (`def run(x): …`) that the backend runs **on the CPU** to prepare an
