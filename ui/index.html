@@ -1725,6 +1725,24 @@ const BX_TPL_WORD = { attn: "attention", ssm: "state space", moe: "mixture" };
 function bxTemplateName(tpl) {
   return BX_TPL_WORD[tpl] + " " + (BX.nodes.filter(n => n.name && n.name.indexOf(BX_TPL_WORD[tpl]) === 0).length + 1);
 }
+function bxAddTokenizerPair(x, y, v) {        // one repo, the pair that belongs
+  // together: the tokenizer (text -> ids) and the de-tokenizer (ids -> text)
+  v = v || {};
+  const repo = String(v.repo || "").trim();
+  const base = repo.split("/").filter(Boolean).pop() || "";
+  const tag = base ? " " + base.toLowerCase() : "";
+  bxUndoLock++;                               // one step for the pair
+  const tk = bxAdd("tokenize", x, y, { name: "tokenizer" + tag, repo: repo,
+                                       tokens: v.tokens });
+  const dt = bxAdd("detokenize", tk ? tk.x + bxNodeW(tk) + 80 : x, y,
+                   { name: "de-tokenizer" + tag, repo: repo, tokens: v.tokens });
+  bxSettleSizes();
+  bxRender();
+  bxUndoLock--;
+  if (tk && dt) bxSelectBoxes([tk.id, dt.id]);   // ready to move as a pair
+  bxCommit();
+  return [tk, dt];
+}
 function bxAddTemplate(tpl, x, y, name) {
   bxUndoLock++;                             // one step for the whole template
   const n = bxAdd("custom", x, y, { name: name || bxTemplateName(tpl) });
@@ -6209,8 +6227,7 @@ function bxMenuBuild(mode, id, ev) {
     ["norm box", () => bxForm("norm", ev, null)],
   ], again);
   section("text", "text", [                       // text <-> ids
-    ["tokenizer box", () => bxForm("tokenize", ev, null)],
-    ["de-tokenizer box", () => bxForm("detokenize", ev, null)],
+    ["load a tokenizer …", () => bxForm("tokenize", ev, null, "loadtok")],
     ["huggingface model box", () => bxForm("hf", ev, null)],
   ], again);
   section("tensor ops", "tensor ops", [           // stateless operations
@@ -9088,6 +9105,7 @@ function bxForm(kind, ev, node, mode) {
     return sel;
   };
   const f = {};                               // this mode's fields, by name
+  let hint = null;                            // a line some forms rewrite
   if (mode === "activation") {
     f.fn = actField(node ? node.act : "silu");
   } else if (mode === "operation") {
@@ -9160,6 +9178,12 @@ function bxForm(kind, ev, node, mode) {
     f.vocab = vocabField(node ? node.vocab || "" : "");
     f.repo = hfField(node ? node.repo || "" : "");
     if (kind === "tokenize") f.text = textField("text", node ? node.text || "" : "", "cab");
+  } else if (mode === "loadtok") {            // one repo: the tokenizer pair lands
+    hint = mk("div", { class: "panehint",
+      text: "one repo makes a pair: the tokenizer the text goes into, and the "
+          + "de-tokenizer the ids come back out of." });
+    wrap.appendChild(hint);
+    f.repo = hfField("");
   } else if (mode === "add" && kind === "sample") {
     f.name = nameField(bxDefaultName(kind));
     f.temp = numField("temperature", null);
@@ -9257,6 +9281,17 @@ function bxForm(kind, ev, node, mode) {
   };
   const commit = () => {
     const v = read();
+    if (mode === "loadtok") {                  // the pair needs the repo before it lands
+      if (!String(v.repo || "").trim()) {
+        if (hint)
+          hint.textContent = "paste a huggingface repo first \u2014 it gives "
+                           + "both boxes their vocabulary";
+        return;
+      }
+      bxMenuClose();
+      bxAddTokenizerPair(world.x, world.y, v);
+      return;
+    }
     bxMenuClose();
     if (node) bxConfigure(node.id, v); else bxAddKind(kind, world.x, world.y, v);
   };
@@ -9275,7 +9310,8 @@ function bxForm(kind, ev, node, mode) {
     });
     row.appendChild(w);
   }
-  const go = mk("span", { class: "chip tiny", text: node ? "save" : "add" });
+  const go = mk("span", { class: "chip tiny",
+                          text: node ? "save" : (mode === "loadtok" ? "load" : "add") });
   go.addEventListener("click", commit);
   row.appendChild(cancel);
   row.appendChild(go);

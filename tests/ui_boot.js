@@ -447,6 +447,50 @@ check("the right-click menus: three add items, or remove", () => {
   __t.bxMenuClose();
 });
 
+check("the canvas menu: load a tokenizer lands the pair, one repo for both", () => {
+  const nodes0 = __t.BX.nodes.length;
+  __t.bxMenuBuild("canvas", null, { clientX: 300, clientY: 200 });
+  const menu = getEl("bxmenu");
+  const heads = () => menu.children.filter(c => String(c.className).split(/\s+/).includes("drop"));
+  heads().find(c => c.textContent === "text").click();
+  eql(menu.children.filter(c => c.className === "mi").map(c => c.textContent),
+    ["load a tokenizer \u2026", "huggingface model box"],
+    "text offers the tokenizer pair, not the two lone boxes");
+  menu.children.find(c => c.className === "mi" &&
+                          c.textContent.indexOf("load a tokenizer") === 0).click();
+  const wrap = getEl("bxmenu").children[0];
+  ok(wrap.querySelectorAll(".wide").length === 1, "the form asks for the repo");
+  const input = wrap.querySelectorAll(".wide")[0];
+  const go = () => wrap.querySelectorAll(".chip").find(c => c.textContent === "load");
+  ok(go(), "…with a load button");
+  go().click();                                // no repo yet: refused, and why
+  ok(String(wrap.querySelectorAll(".panehint")[0].textContent)
+       .indexOf("paste a huggingface repo") >= 0,
+     "an empty repo is refused: " + wrap.querySelectorAll(".panehint")[0].textContent);
+  input.value = "Qwen/Qwen2.5-0.5B";
+  go().click();
+  const tk = __t.BX.nodes.find(n => n.kind === "tokenize");
+  const dt = __t.BX.nodes.find(n => n.kind === "detokenize");
+  ok(tk && dt, "the pair lands");
+  eql([tk.repo, dt.repo], ["Qwen/Qwen2.5-0.5B", "Qwen/Qwen2.5-0.5B"],
+      "…one repo bound to both");
+  eql([tk.name, dt.name], ["tokenizer qwen2.5-0.5b", "de-tokenizer qwen2.5-0.5b"],
+     "…named after it");
+  ok(dt.x > tk.x + __t.bxNodeW(tk), "…side by side, a clear gap between");
+  eql(__t.bxSelectedIds().length, 2, "…selected, ready to move as a pair");
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(tk)).repo, "Qwen/Qwen2.5-0.5B",
+     "…and the design carries the repo");
+  __t.bxUndoStep();
+  eql(__t.BX.nodes.length, nodes0, "one undo takes the whole pair back");
+  __t.bxRedoStep();
+  eql(__t.BX.nodes.length, nodes0 + 2, "…and redo brings it back");
+  __t.bxRemove(tk.id);
+  const dt2 = __t.BX.nodes.find(n => n.kind === "detokenize");
+  if (dt2) __t.bxRemove(dt2.id);
+  __t.bxSelect(null);
+  eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
+});
+
 check("the canvas view: fit, zoom, pan maths", () => {
   __t.bxFit();
   const v1 = __t.BX.view;

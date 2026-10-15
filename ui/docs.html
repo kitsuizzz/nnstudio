@@ -440,7 +440,11 @@
     </div>
     <div class="bdet">
       <p>Turns text into token ids — the numbers a network actually reads. With a
-      wire in, it tokenizes whatever arrives; without one, its own <code>text</code>.</p>
+      wire in, it tokenizes whatever arrives; without one, its own <code>text</code>.
+      Usually made as a pair: right-click the canvas →
+      <span class="pill grey">text</span> → <b>load a tokenizer …</b> asks for a
+      Hugging Face repo and lands <b>both</b> the tokenizer and its de-tokenizer,
+      the one repo bound to each.</p>
       <p class="bfields"><b>Fields:</b> <code>repo</code> (a Hugging Face tokenizer)
       or <code>vocab</code> (a simple one-character-per-token vocabulary, great for
       teaching); optional default <code>text</code>.</p>
@@ -677,7 +681,9 @@
     </div>
     <div class="bdet">
       <p>Token ids back into text — the inverse of the tokenize box. Put it after a
-      sample box to read what the model produced.</p>
+      sample box to read what the model produced. Usually made with its
+      tokenizer: right-click the canvas → <span class="pill grey">text</span> →
+      <b>load a tokenizer …</b> lands the pair, one repo for both.</p>
       <p class="bfields"><b>Fields:</b> <code>repo</code>/<code>vocab</code> — must
       match the tokenize box that fed the model.</p>
     </div>
