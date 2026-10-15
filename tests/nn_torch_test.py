@@ -1932,6 +1932,18 @@ def a_model_trains_through_its_node():
         assert err < 0.2, "the fitted error: %.3f" % err
     finally:
         shutil.rmtree(d, ignore_errors=True)
+    # inference flows through the model too: a source into its first port
+    c5 = canvas([
+        n("input", "vec", dout=3),
+        n("custom", "model", name="model", inner={
+            "nodes": [n("input", "min", dout=3),
+                      n("layer", "h", din=3, dout=2),
+                      n("output", "mout", din=2)],
+            "edges": [edge("min", "h"), edge("h", "mout")]}),
+        n("output", "view", din=2),
+    ], [edge("vec", "model", 0, 0), edge("model", "view", 0, 0)])
+    res2 = T.run(c5, {"vec": [[1.0, 0.0, 0.0]]})
+    assert res2["values"]["view"]["shape"] == [1, 2], res2["values"]["view"]
     # a model with no output box inside names the problem
     c2 = canvas([
         n("custom", "model", name="model", inner={

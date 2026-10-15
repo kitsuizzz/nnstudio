@@ -1642,6 +1642,22 @@ class Graph(nn.Module):
                     self.idle_datasets.add(n.get("id"))
                 elif not es and n.get("id") in bound:
                     self.idle_datasets.add(n.get("id"))
+        # a source that carries nothing is no source in a training run: the
+        # model's first port reads the batch, so an empty input box stands down
+        self.idle_inputs = set()
+        if train:
+            for n in nodes:
+                if n.get("kind") != "input":
+                    continue
+                mode = n.get("input_mode")
+                if mode == "image":
+                    empty = not n.get("image")
+                elif mode == "text":
+                    empty = not str(n.get("text") or "")
+                else:
+                    empty = not str(n.get("values") or "").strip()
+                if empty:
+                    self.idle_inputs.add(n.get("id"))
         self.order = self._topo(nodes)
 
         # a norm with no size takes the size flowing into it
@@ -1872,17 +1888,23 @@ class Graph(nn.Module):
         vals = {}
         for nid in self.order:
             box = self.boxes[nid]
-            if box.off or self._no_value(box) or nid in self.idle_datasets:
+            if box.off or self._no_value(box) or nid in self.idle_datasets \
+                    or (nid in self.idle_inputs and nid not in feeds):
                 vals[nid] = None               # drawn, not run / off / a config box
                 continue
             ins = []
             for e in self.incoming.get(nid, []):
+                if (nid in feeds and (e.get("toPort") or 0) == 0
+                        and self.boxes[nid].kind == "custom"):
+                    continue                     # a model's feed wins its first port
                 v = vals.get(e["from"])
                 if v is None:
                     if self._no_value(self.boxes[e["from"]]):
                         continue                 # an unmapped or drawn box: its wire is not data
                     if e["from"] in self.idle_datasets:
                         continue                 # a training dot's dataset: not this run's
+                    if e["from"] in self.idle_inputs:
+                        continue                 # an empty source: the batch feeds instead
                     self._fail(nid, "it is fed by a box that did not run")
                 ins.append(self._port_val(v, e.get("fromPort") or 0))
             dev = box.device or "cpu"            # each box runs where it was placed
