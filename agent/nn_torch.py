@@ -997,7 +997,7 @@ class Box(nn.Module):
             raise
 
     def forward(self, *xs):
-        if self.off or self.kind in ("agent", "train"):
+        if self.off or self.kind in ("agent", "train", "config", "select"):
             self.last = None               # a config box runs no maths of its own
             return None
         k = self.kind
@@ -1784,10 +1784,17 @@ class Graph(nn.Module):
 
     @staticmethod
     def _train_dot(by_id, e):
-        """The edge lands on an output box's training dot (its dataset port)."""
+        """The edge lands on a training dot: an output box's dataset port (the
+        older designs), a matrix box's dataset picker, or an input box's
+        training ports (its train config and its X/Y matrices)."""
         dst = by_id.get(e.get("to")) or {}
+        port = int(e.get("toPort") or 0)
+        if dst.get("kind") in ("select", "config"):
+            return True
+        if dst.get("kind") == "input":
+            return port >= 1               # port 0 is the train config itself
         return (dst.get("kind") == "output" and bool(dst.get("train"))
-                and int(e.get("toPort") or 0) >= 1)
+                and port >= 1)
 
     def _incoming_sizes(self, nodes, edges):
         by_id = {n["id"]: n for n in nodes}
@@ -1844,6 +1851,13 @@ class Graph(nn.Module):
             return vals[0] if vals else None
         return v
 
+    @staticmethod
+    def _no_value(box):
+        """A box that is drawn, not run: a loose box, a config box, a matrix
+        box — its outgoing wire carries no tensor."""
+        return box.loose or box.kind in ("agent", "reward", "train",
+                                         "config", "select")
+
     # ---- forward -----------------------------------------------------------
     def forward(self, *args, feeds=None, on_node=None):
         """`args` map to the graph's input boxes in port order (how a nested
@@ -1858,16 +1872,15 @@ class Graph(nn.Module):
         vals = {}
         for nid in self.order:
             box = self.boxes[nid]
-            if box.loose or box.off or box.kind in ("agent", "reward", "train") \
-                    or nid in self.idle_datasets:
+            if box.off or self._no_value(box) or nid in self.idle_datasets:
                 vals[nid] = None               # drawn, not run / off / a config box
                 continue
             ins = []
             for e in self.incoming.get(nid, []):
                 v = vals.get(e["from"])
                 if v is None:
-                    if self.boxes[e["from"]].loose:
-                        continue                 # an unmapped tensor: ignore its wire
+                    if self._no_value(self.boxes[e["from"]]):
+                        continue                 # an unmapped or drawn box: its wire is not data
                     if e["from"] in self.idle_datasets:
                         continue                 # a training dot's dataset: not this run's
                     self._fail(nid, "it is fed by a box that did not run")
@@ -2634,41 +2647,64 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
 
         all_nodes = list(_all(canvas.get("nodes")))
         hub = train_hub(canvas)
+        paradigm = str(hub.get("paradigm") or "supervised")
+        src = train_sources(canvas, hub)     # the wired matrices, or the hub's own
         test_id = hub.get("test_dataset")
-        if hub.get("dataset"):
-            train_dn = next((n for n in all_nodes
-                              if n.get("id") == hub.get("dataset")), None)
-        else:
-            train_dn = next((n for n in all_nodes
-                             if n.get("kind") == "dataset" and n.get("id") != test_id),
-                            None)
         test_dn = (next((n for n in all_nodes if n.get("id") == test_id), None)
                    if test_id else None)
-        if train_dn is None and any(n.get("kind") == "dataset" for n in all_nodes):
-            raise CanvasError("run", "training needs a dataset with rows — bind one "
-                                  "in the training tab, or wire a dataset into the "
-                                  "output's dot")
-        paradigm = str(hub.get("paradigm") or "supervised")
-        named = dataset_cols(train_dn) if train_dn is not None else []
-        x_col = col_indexes(hub.get("x_col"), named) if hub.get("x_col") else [0]
-        y_col = col_indexes(hub.get("y_col"), named) if hub.get("y_col") else [1]
-        if x_col is None or y_col is None:
-            raise CanvasError("run", "a column in the training tab's x or y is not "
-                                  "in the dataset \u2014 a name, or a letter like A")
-        vector = len(x_col) > 1 or len(y_col) > 1
+        if src["x"] is None and not src["wired"]:
+            # older designs: the hub names the dataset, else the first one that
+            # is not the test split
+            ds = (next((n for n in all_nodes if n.get("id") == hub.get("dataset")), None)
+                  if hub.get("dataset") else
+                  next((n for n in all_nodes if n.get("kind") == "dataset"
+                        and n.get("id") != test_id), None))
+            if ds is not None:
+                named = dataset_cols(ds)
+                xc = col_indexes(hub.get("x_col"), named) if hub.get("x_col") else [0]
+                yc = col_indexes(hub.get("y_col"), named) if hub.get("y_col") else [1]
+                if xc is None or yc is None:
+                    raise CanvasError("dataset", "a column in the training tab's x "
+                                           "or y is not in the dataset \u2014 a name, "
+                                           "or a letter like A")
+                src["x"] = {"node": ds, "cols": xc}
+                src["y"] = {"node": ds, "cols": yc}
+        x_src, y_src = src.get("x"), src.get("y")
+        train_dn = x_src["node"] if x_src else None
+        y_dn = y_src["node"] if y_src else None
+        x_col = x_src["cols"] if x_src else [0]
+        y_col = y_src["cols"] if y_src else [1]
+        if train_dn is None and (src["wired"]
+                                 or any(n.get("kind") == "dataset"
+                                        for n in all_nodes)):
+            # a design with data somewhere must hand the run some — a bare
+            # canvas just trains nothing (a forward that keeps its grads)
+            raise CanvasError("run", "training has no rows to read \u2014 wire a "
+                                  "dataset (or a select col box) into the input's X "
+                                  "dot" + ("" if src["wired"] else ", or bind one "
+                                  "in the output's training tab"))
+        x_only = paradigm in ("rl", "unsupervised")
+        if not x_only and train_dn is not None and y_src is None:
+            raise CanvasError("run", "supervised training needs a Y matrix \u2014 "
+                                  "wire one into the input's third dot")
+        vector = len(x_col) > 1 or (not x_only and len(y_col) > 1)
         if vector and paradigm == "rl":
-            raise CanvasError("run", "rl trains on prompt columns \u2014 a vector "
-                                  "target is a supervised thing")
+            raise CanvasError("run", "rl draws samples token by token \u2014 a "
+                                  "matrix X has no tokens to sample from")
         if vector and any(src2.get("kind") == "dataset" and dst.get("kind") == "loss"
                           for src2, dst in _edge_pairs(canvas)):
             raise CanvasError("loss", "a vector target scores with mean squared "
-                                  "error \u2014 a wired loss box computes cross entropy")
+                                  "error \u2014 a wired loss box computes cross "
+                                  "entropy")
         label_mode = bool(hub.get("y_class") or hub.get("classes"))
         legacy_classes = list(hub.get("classes") or []) if isinstance(
             hub.get("classes"), (list, tuple)) else []
         if vector and label_mode:
             raise CanvasError("run", "a class label wants a single y column, "
                                   "not a vector target")
+        if label_mode and paradigm == "unsupervised":
+            raise CanvasError("run", "unsupervised training has no labels \u2014 "
+                                  "the class switch is a supervised thing")
         classes = None
         train_labels = None
 
@@ -2684,26 +2720,31 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
             rows = dataset_rows(train_dn)
             if not rows:
                 raise CanvasError(train_dn.get("name") or "dataset",
-                                  "it has no rows to train on — paste some, "
+                                  "it has no rows to train on \u2014 paste some, "
                                   "or point it at a file")
+            y_rows = (dataset_rows(y_dn) if y_dn is not None and y_dn is not train_dn
+                      else None)
             size = max(1, int(train_dn.get("batch") or 4))
-            if label_mode and paradigm != "rl":
-                classes = dataset_classes([train_dn, test_dn], y_col,
+            if label_mode and not x_only:
+                classes = dataset_classes([y_dn or train_dn, test_dn], y_col,
                                           legacy_classes)
             if paradigm == "rl":
                 # the reward box is the signal in rl; a wired loss box is a
                 # supervised leftover, and its labels would not fit the
                 # growing samples the probe draws
-                if any(src.get("kind") == "dataset" and dst.get("kind") == "loss"
-                       for src, dst in _edge_pairs(canvas)):
+                if any(src2.get("kind") == "dataset" and dst.get("kind") == "loss"
+                       for src2, dst in _edge_pairs(canvas)):
                     raise CanvasError("loss",
-                                      "the reward is the signal in rl — a wired "
-                                      "loss box is a supervised leftover")
+                                      "the reward is the signal in rl \u2014 a "
+                                      "wired loss box is a supervised leftover")
+            if x_only:
                 ids, train_labels = dataset_batch(train_dn, rows, 0, size,
-                                                   x_col, x_only=True)
+                                                   x_col, x_only=True,
+                                                   y_node=y_dn, y_rows=y_rows)
             else:
                 ids, train_labels = dataset_batch(train_dn, rows, 0, size,
-                                                   x_col, y_col, classes)
+                                                   x_col, y_col, classes,
+                                                   y_node=y_dn, y_rows=y_rows)
             tbox = _dbox(train_dn)
             if tbox is None:
                 raise CanvasError(train_dn.get("name") or "dataset",
@@ -2806,7 +2847,8 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                     if trows:
                         tsize = max(1, int(test_dn.get("batch") or 4))
                         tids, tlabels = dataset_batch(test_dn, trows, 0, tsize,
-                                                       x_col, y_col, classes)
+                                                       x_col, y_col, classes,
+                                                       x_only=x_only)
                         tbox.batch = tlabels.to(tbox.device or "cpu")
                         tfeeds = dict(feeds)
                         iid = _find_kind(canvas, "input")
@@ -3240,19 +3282,31 @@ def col_index(letter):
 
 
 def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None,
-                  x_only=False):
+                  x_only=False, y_node=None, y_rows=None):
     """One batch: ids = X+Y, labels = the same ids with the X span masked to
     -100 (the loss reads Y only), padded right. `x_col`/`y_col` pick the
     conditioning and target columns (0-based; None keeps A/B). With `classes`,
     Y is a class label: the ids carry X only, left-padded so the class falls
     at the sequence's end, and the labels are the class indices (1-D) the
     model must pick at that position. With `x_only` there is no target column
-    at all (rl: the dataset hands out prompts, the reward box is the signal) —
-    the labels ride the prompt ids, so an idle loss box still reads in-range
-    ids."""
+    at all (rl and unsupervised: the labels ride the prompt ids — or, for a
+    numeric X, the matrix itself, so the model reconstructs it) — an idle loss
+    box still reads in-range values. `y_node`/`y_rows` pair the labels with a
+    second matrix (row i with row i); without them Y is read from `node`."""
     want = rows[start:start + size]
     if not want:
         want = rows[:size]
+    ynode = y_node if y_node is not None else node
+    if y_rows is None:
+        ywant = want
+    else:
+        ywant = y_rows[start:start + size]
+        if not ywant:
+            ywant = y_rows[:size]
+
+    def yitems():
+        for i, r in enumerate(want):
+            yield r, (ywant[i] if i < len(ywant) else {})
 
     def cell(r, col, default):
         return _cell(r, col, default)
@@ -3262,9 +3316,10 @@ def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None,
             return [d]
         return [int(c)] if not isinstance(c, (list, tuple)) else [int(x) for x in c]
     xs, ys = _cols(x_col, 0), _cols(y_col, 1)
-    if not x_only and (len(xs) > 1 or len(ys) > 1):
-        # a vector target: the selected cells are numbers — x becomes the
-        # batch's input matrix, y the batch's label matrix (mse downstream)
+    if len(xs) > 1 or (not x_only and len(ys) > 1):
+        # a vector: the selected cells are numbers — x becomes the batch's
+        # input matrix, y its label matrix (mse downstream). With x_only the
+        # labels are the input itself: the model reconstructs it.
         def num(r, col, side):
             s = cell(r, col, "").strip()
             try:
@@ -3275,8 +3330,10 @@ def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None,
                                   "vector: %r" % (col_letter(col), side, s))
         ids = torch.tensor([[num(r, c, "x") for c in xs] for r in want],
                            dtype=torch.float32)
-        labels = torch.tensor([[num(r, c, "y") for c in ys] for r in want],
-                              dtype=torch.float32)
+        if x_only:
+            return ids, ids
+        labels = torch.tensor([[num(y_r, c, "y") for c in ys]
+                               for _r, y_r in yitems()], dtype=torch.float32)
         return ids, labels
 
     if x_only:
@@ -3288,10 +3345,10 @@ def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None,
         return ids, ids
     if classes:
         seqs, cls = [], []
-        for r in want:
+        for r, y_r in yitems():
             seqs.append(_ds_encode(node, cell(r, xs[0], r.get("prompt"))))
-            y = cell(r, ys[0], r.get("completion") if r.get("completion") is not None
-                     else r.get("output"))
+            y = cell(y_r, ys[0], y_r.get("completion")
+                     if y_r.get("completion") is not None else y_r.get("output"))
             if y not in classes:
                 raise CanvasError(node.get("name") or "dataset",
                                   "class %r is not among the train node's classes %s"
@@ -3304,10 +3361,10 @@ def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None,
             ids[i, pad:pad + len(s)] = torch.tensor(s, dtype=torch.long)
         return ids, torch.tensor(cls, dtype=torch.long)
     seqs, labs = [], []
-    for r in want:
+    for r, y_r in yitems():
         prompt = cell(r, xs[0], r.get("prompt"))
-        comp = cell(r, ys[0], r.get("completion") if r.get("completion") is not None
-                    else r.get("output"))
+        comp = cell(y_r, ys[0], y_r.get("completion")
+                    if y_r.get("completion") is not None else y_r.get("output"))
         p = _ds_encode(node, prompt)
         c = _ds_encode(node, comp)
         seqs.append(p + c)
@@ -3391,10 +3448,10 @@ def _gather_logprobs(logits, ids):
     return out
 
 
-def _edge_pairs(canvas):
-    """Every (source, destination) box pair of every edge, at every nesting
-    level — the dataset->loss wiring the training signal rides on."""
-    pairs = []
+def _edges_full(canvas):
+    """Every edge of every nesting level, with its ports: (source, destination,
+    fromPort, toPort). The wiring every training/data check reads."""
+    out = []
 
     def walk(doc):
         nodes = (doc or {}).get("nodes") or []
@@ -3403,21 +3460,123 @@ def _edge_pairs(canvas):
             src = by_id.get(e.get("from"))
             dst = by_id.get(e.get("to"))
             if src is not None and dst is not None:
-                pairs.append((src, dst))
+                out.append((src, dst, int(e.get("fromPort") or 0),
+                            int(e.get("toPort") or 0)))
         for n in nodes:
             if isinstance(n.get("inner"), dict):
                 walk(n["inner"])
 
     walk(canvas)
-    return pairs
+    return out
+
+
+def _edge_pairs(canvas):
+    """Every (source, destination) box pair of every edge, at every nesting
+    level — the dataset->loss wiring the training signal rides on."""
+    return [(src, dst) for src, dst, _fp, _tp in _edges_full(canvas)]
+
+
+def dataset_width(node):
+    """A dataset's column count: its CSV header's names, else its widest row."""
+    names = dataset_cols(node)
+    if names:
+        return len(names)
+    rows = dataset_rows(node)
+    return max((len(r.get("cells") or []) for r in rows), default=1)
+
+
+def matrix_source(canvas, node):
+    """A training matrix's data: the dataset it watches and the columns it
+    selects. A `select` box wires (or names) the dataset and picks columns
+    ("x0 x1 x2"; blank = the whole sheet); a dataset box wired straight into a
+    training dot is its whole sheet. Returns {"node", "cols", "spec"} — cols
+    None when no columns were named (every one counts), spec the raw text so
+    an unmatched name can be told apart from a blank."""
+    if not node:
+        return {"node": None, "cols": None, "spec": ""}
+    kind = node.get("kind")
+    if kind == "dataset":
+        return {"node": node, "cols": None, "spec": ""}
+    if kind != "select":
+        return {"node": None, "cols": None, "spec": ""}
+    ds = None
+    for src, dst, _fp, _tp in _edges_full(canvas):
+        if dst.get("id") == node.get("id") and src.get("kind") == "dataset":
+            ds = src
+            break
+    if ds is None and node.get("dataset"):
+        ds = _node_by_id(canvas, node.get("dataset"))
+    if ds is None:
+        return {"node": None, "cols": None, "spec": ""}
+    spec = str(node.get("cols") or "").strip()
+    cols = col_indexes(spec, dataset_cols(ds)) if spec else None
+    return {"node": ds, "cols": cols, "spec": spec}
+
+
+def train_sources(canvas, hub):
+    """Where a training run's rows come from. A train config boxed into an
+    input names the settings, and the input's matrix dots name the data: the
+    first is X, the second is Y (read only when the paradigm is supervised).
+    Older designs stay as they were: the hub names a dataset and its x_col /
+    y_col pick the columns (A/B by default). Returns {"wired", "x", "y"} with
+    each side {"node", "cols"} (cols never None) or None."""
+    hub = hub or {}
+    out = {"wired": bool(hub.get("_config")), "x": None, "y": None}
+    if not out["wired"]:
+        ds = _node_by_id(canvas, hub.get("dataset")) if hub.get("dataset") else None
+        if ds is None:
+            return out
+        named = dataset_cols(ds)
+        xc = col_indexes(hub.get("x_col"), named) if hub.get("x_col") else [0]
+        yc = col_indexes(hub.get("y_col"), named) if hub.get("y_col") else [1]
+        if xc is None or yc is None:
+            raise CanvasError("dataset", "a column in the training tab's x or y "
+                                   "is not in the dataset — a name, or a "
+                                   "letter like A")
+        out["x"] = {"node": ds, "cols": xc}
+        out["y"] = {"node": ds, "cols": yc}
+        return out
+    inp = None
+    for src, dst, _fp, _tp in _edges_full(canvas):
+        if src.get("kind") == "config" and src.get("id") == hub.get("id") \
+                and dst.get("kind") == "input":
+            inp = dst
+            break
+    if inp is None:
+        return out
+    got = {}
+    for src, dst, _fp, to_port in _edges_full(canvas):
+        if dst.get("id") != inp.get("id") or to_port not in (1, 2):
+            continue
+        got[to_port] = src
+    for side, port in (("x", 1), ("y", 2)):
+        node = got.get(port)
+        if node is None:
+            continue
+        found = matrix_source(canvas, node)
+        ds = found["node"]
+        if ds is None:
+            raise CanvasError(node.get("name") or "matrix",
+                              "it carries no dataset — wire a dataset box "
+                              "into it, or bind one in its window")
+        cols = found["cols"]
+        if cols is None and found["spec"]:
+            raise CanvasError(node.get("name") or "matrix",
+                              "a column it names is not in the dataset's sheet: %r"
+                              % found["spec"])
+        if cols is None:
+            cols = list(range(dataset_width(ds)))
+        out[side] = {"node": ds, "cols": cols}
+    return out
 
 
 def train_hub(canvas):
-    """The node that carries a training run's setup. An output box with
-    `train` set — its training tab — wins: it trains on its own signal, and a
-    dataset wired into its dot feeds the run. The train node stays the hub of
-    the older designs. Returns the node's fields (with `target` always set
-    for an output host), or {} when the design carries no training setup."""
+    """The node that carries a training run's setup. A train config box wired
+    into an input box is the host now: it names every setting, and the input's
+    matrix dots name the data. An output box with `train` set — its training
+    tab — stays the host of the older designs, and the train node the host of
+    the oldest. Returns the node's fields (with `target` always set for an
+    output host), or {} when the design carries no training setup."""
     def _all(nodes):
         for n in nodes or []:
             yield n
@@ -3426,6 +3585,18 @@ def train_hub(canvas):
                     yield m
 
     nodes = list(_all((canvas or {}).get("nodes")))
+    cfg = next((n for n in nodes if n.get("kind") == "config"), None)
+    if cfg is not None and any(src.get("id") == cfg.get("id")
+                               and dst.get("kind") == "input"
+                               for src, dst, _fp, _tp in _edges_full(canvas)):
+        hub = dict(cfg)
+        hub["_config"] = True
+        outs = [n for n in nodes if n.get("kind") == "output"]
+        target = next((n for n in outs if n.get("train")), None) or \
+            (outs[0] if outs else None)
+        if target is not None:
+            hub["target"] = target.get("id")
+        return hub
     host = next((n for n in nodes
                  if n.get("kind") == "output" and n.get("train")), None)
     if host is not None:
@@ -3555,11 +3726,18 @@ class DesignTrainer:
     resume picks up exactly where it stopped."""
 
     def __init__(self, canvas, cfg=None, device="cpu", checkpoint=None):
-        cfg = dict(cfg or {})
+        # the canvas leads, the caller overrides: the hub's fields (the wired
+        # train config, or an older design's own) under the cfg that was passed
+        hub = train_hub(canvas) or {}
+        cfg = dict({**hub, **dict(cfg or {})})
         self.canvas = canvas
         self.cfg = cfg
         self.device = device
         self.paradigm = str(cfg.get("paradigm") or "supervised")
+        # the run's rows: the train config's matrix wires when it is wired in,
+        # the hub's own binding otherwise (resolved for the legacy layout below)
+        src = train_sources(canvas, cfg)
+        self.x_only = self.paradigm in ("rl", "unsupervised")
         self.graph = compile_canvas(canvas, device=device, native=False, train=True)
         self.graph.train()
         self.input_id = cfg.get("input") or _find_kind(canvas, "input")
@@ -3589,7 +3767,8 @@ class DesignTrainer:
             if self.reward_node is None:
                 raise CanvasError("", "the train node's reward box "
                                        "is not on the canvas")
-            ds_id = (cfg.get("dataset") or _find_kind(canvas, "dataset"))
+            ds_id = ((src["x"]["node"]["id"] if src.get("x") else None)
+                     or cfg.get("dataset") or _find_kind(canvas, "dataset"))
         else:
             self.loss_id = cfg.get("loss") or setup["loss_id"]
             self.target_id = setup["target_id"]
@@ -3599,7 +3778,8 @@ class DesignTrainer:
                                       "target in the train box, or wire a loss box")
             self.reward_id = cfg.get("reward") or None
             self.reward_node = None
-            ds_id = (setup["carrier_id"] or cfg.get("dataset")
+            ds_id = ((src["x"]["node"]["id"] if src.get("x") else None)
+                     or setup["carrier_id"] or cfg.get("dataset")
                      or _find_kind(canvas, "dataset"))
         if not self.input_id or not ds_id:
             raise CanvasError("", "training needs an input box the model reads, "
@@ -3612,18 +3792,33 @@ class DesignTrainer:
         if not self.rows:
             raise CanvasError("dataset", "it has no rows — paste some, "
                                    "or point it at a file")
-        # the hub's columns: a letter like a sheet (A/B as before), or a
-        # sequence of names — x0 x1 x2 feeds a 3-wide input vector
-        named = dataset_cols(self.dataset_box.node)
-        self.x_col = col_indexes(cfg.get("x_col"), named) if cfg.get("x_col") else [0]
-        self.y_col = col_indexes(cfg.get("y_col"), named) if cfg.get("y_col") else [1]
-        if self.x_col is None or self.y_col is None:
-            raise CanvasError("dataset", "a column in the training tab's x or y is "
-                                   "not in its rows \u2014 a name, or a letter like A")
-        self.vector = len(self.x_col) > 1 or len(self.y_col) > 1
+        # older designs: the hub's columns are a letter like a sheet (A/B by
+        # default), or a sequence of names — x0 x1 x2 feeds a 3-wide vector
+        if src.get("x") is None and not src.get("wired"):
+            named = dataset_cols(self.dataset_box.node)
+            xc = col_indexes(cfg.get("x_col"), named) if cfg.get("x_col") else [0]
+            yc = col_indexes(cfg.get("y_col"), named) if cfg.get("y_col") else [1]
+            if xc is None or yc is None:
+                raise CanvasError("dataset", "a column in the training tab's x or "
+                                       "y is not in its rows \u2014 a name, or a "
+                                       "letter like A")
+            src["x"] = {"node": self.dataset_box.node, "cols": xc}
+            src["y"] = {"node": self.dataset_box.node, "cols": yc}
+        x_src, y_src = src.get("x"), src.get("y")
+        if not self.x_only and y_src is None:
+            raise CanvasError("", "supervised training needs a Y matrix \u2014 "
+                                  "wire one into the input's third dot")
+        self.x_col = x_src["cols"] if x_src else [0]
+        self.y_col = y_src["cols"] if y_src else [1]
+        self.y_node = y_src["node"] if y_src else None
+        self.y_rows = (dataset_rows(self.y_node)
+                       if self.y_node is not None
+                       and self.y_node is not self.dataset_box.node else None)
+        self.vector = len(self.x_col) > 1 or (not self.x_only
+                                              and len(self.y_col) > 1)
         if self.vector and self.paradigm == "rl":
-            raise CanvasError("", "rl trains on prompt columns \u2014 a vector "
-                                  "target is a supervised thing")
+            raise CanvasError("", "rl draws samples token by token \u2014 a "
+                                  "matrix X has no tokens to sample from")
         # y is a class label: the values it takes are the classes, derived
         # from the column (a legacy list, if the design carries one, fixes
         # the order its checkpoints were trained with)
@@ -3634,6 +3829,9 @@ class DesignTrainer:
         if self.vector and self.label_mode:
             raise CanvasError("", "a class label wants a single y column, "
                                   "not a vector target")
+        if self.label_mode and self.paradigm == "unsupervised":
+            raise CanvasError("", "unsupervised training has no labels \u2014 "
+                                  "the class switch is a supervised thing")
         if self.vector and self.loss_id:
             raise CanvasError("loss", "a vector target scores with mean squared "
                                   "error \u2014 a wired loss box computes cross entropy")
@@ -3649,10 +3847,10 @@ class DesignTrainer:
                                        "is not on the canvas")
             self.test_rows = dataset_rows(self.test_box.node)
         self.classes = (dataset_classes(
-            [self.dataset_box.node,
+            [self.y_node or self.dataset_box.node,
              self.test_box.node if self.test_box else None],
             self.y_col, legacy)
-            if self.label_mode and self.paradigm != "rl" else None)
+            if self.label_mode and not self.x_only else None)
         self.class_mode = bool(self.classes)
         # every dataset box on the graph runs in the forward and each one
         # wants a batch — the carrier wears the split that is being scored,
@@ -3693,14 +3891,17 @@ class DesignTrainer:
     def _batch(self):
         ids, labels = dataset_batch(self.dataset_box.node, self.rows,
                                     self._pos, self.batch_size,
-                                    self.x_col, self.y_col, self.classes)
+                                    self.x_col, self.y_col, self.classes,
+                                    x_only=self.x_only,
+                                    y_node=self.y_node, y_rows=self.y_rows)
         self._pos = (self._pos + self.batch_size) % max(len(self.rows), 1)
         return ids.to(self.device), labels.to(self.device)
 
     def _test_batch(self):
         ids, labels = dataset_batch(self.test_box.node, self.test_rows,
                                     self._tpos, self.batch_size,
-                                    self.x_col, self.y_col, self.classes)
+                                    self.x_col, self.y_col, self.classes,
+                                    x_only=self.x_only)
         self._tpos = (self._tpos + self.batch_size) % max(len(self.test_rows), 1)
         return ids.to(self.device), labels.to(self.device)
 
