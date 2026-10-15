@@ -4172,7 +4172,9 @@ function bxTrainStart(n) {                        // the run button, for trainin
   fetch("/api/tasks", { method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ type: "train",
-                                                name: n.name || "training",
+                                                // a config trains a model: its
+                                                name: (n.model && (bxFindBox(n.model) || {}).name)
+                                                      || n.name || "training",
                                                 design: bxRunCanvas(canvas) }) })
     .then(r => r.json())
     .then(d => {
