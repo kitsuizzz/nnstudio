@@ -2724,7 +2724,10 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                                   "or point it at a file")
             y_rows = (dataset_rows(y_dn) if y_dn is not None and y_dn is not train_dn
                       else None)
-            size = max(1, int(train_dn.get("batch") or 4))
+            # the config's batch, when the training is wired; the dataset's own
+            # field rides the older designs
+            size = max(1, int((hub.get("batch") if src["wired"] else None)
+                              or train_dn.get("batch") or 4))
             if label_mode and not x_only:
                 classes = dataset_classes([y_dn or train_dn, test_dn], y_col,
                                           legacy_classes)
@@ -2845,7 +2848,9 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                     tbox = _dbox(test_dn)
                     trows = dataset_rows(test_dn) if tbox is not None else []
                     if trows:
-                        tsize = max(1, int(test_dn.get("batch") or 4))
+                        tsize = max(1, int((hub.get("batch") if src["wired"]
+                                            else None)
+                                           or test_dn.get("batch") or 4))
                         tids, tlabels = dataset_batch(test_dn, trows, 0, tsize,
                                                        x_col, y_col, classes,
                                                        x_only=x_only)

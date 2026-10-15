@@ -226,6 +226,8 @@ globalThis.__t = {
   bxTasksFetch, bxTaskLogFetch, bxTasksApply, bxLogApply, bxLogState,
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
+  bxSelectFill, bxConfigFill, bxTrainWired, bxInputLink, bxMatrixTell, bxTrainSummary,
+  bxTrainAddConfig, bxTrainWireConfig,
   bxRunFeeds, bxInputFill, bxInputExpand, bxOutputFill, bxOutputExpand, bxPaneFill,
   bxHotSet, bxHotMove, bxTipHide, bxRunSet, bxRunCanvas, bxFeedsItself,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
@@ -874,8 +876,8 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(top.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output"], "Input and Output are the first cards, not a category");
   eql(menu.children.filter(c => c.className === "bxtcat").map(c => c.textContent),
-    ["AI", "weights", "text", "Dataset", "tensor ops", "blocks", "analysis",
-     "containers"],
+    ["AI", "weights", "text", "Dataset", "training", "tensor ops", "blocks",
+     "analysis", "containers"],
     "and only the categories are listed below");
   // the AI category holds the agent box
   menu.children.find(c => c.textContent === "AI").click();
@@ -899,8 +901,12 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   // own button up top
   menu.children.find(c => c.textContent === "Dataset").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
-    ["input", "output", "dataset"],
-    "Dataset holds only the dataset box (the Train box has its own button)");
+    ["input", "output", "dataset", "select"],
+    "Dataset holds the sheet and the select col box");
+  menu.children.find(c => c.textContent === "training").click();
+  eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
+    ["input", "output", "config"],
+    "…and training holds the train config box");
   // one category at a time: opening another closes the first
   menu.children.find(c => c.textContent === "tensor ops").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
@@ -4545,10 +4551,11 @@ check("a vision tower and its image input survive the design round trip", () => 
      "…and the box's window says what it is: " + rows.slice(0, 60));
 });
 
-check("the output's training tab: the switch, the plan, and the dataset dot", () => {
-  const out = __t.bxAdd("output", 0, 240, { din: 8 });
-  const ds = __t.bxAdd("dataset", 120, 0, { text: "a\tb\nc\td", vocab: "abcd" });
+check("the output's training tab: the switch, the plan, and the input's dots", () => {
+  const out = __t.bxAdd("output", 320, 240, { din: 8 });
   const inp = __t.bxAdd("input", 0, 0, { dout: 8 });
+  const ds = __t.bxAdd("dataset", 120, 320, { vocab: "abcd" });
+  __t.bxTableWrite(ds, { cols: ["a", "b"], rows: [["1", "2"], ["3", "4"]] });
   const fill = (tab) => {
     const d = document.createElement("div");
     out.panel = Object.assign({}, out.panel, { tab: tab || "training" });
@@ -4565,81 +4572,132 @@ check("the output's training tab: the switch, the plan, and the dataset dot", ()
       ["Enable Training"], "\u2026and off, that is all there is");
   ok(d0.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ")
        .indexOf("just shows what arrived") >= 0, "\u2026with a hint at what turning it on does");
-  eql(__t.bxPortDefs(out, "in").length, 1, "and the box keeps its one dot");
-  // toggling it on: the parameters appear, and so does the dataset dot
+  eql(__t.bxPortDefs(out, "in").length, 1, "the output keeps its one dot \u2014 no dataset dot");
+  eql(__t.bxPortDefs(inp, "in").length, 0, "\u2026and the input has no dots while training is off");
+  // turning it on: the INPUT grows ONE dot \u2014 the train config's
   ck.checked = true;
   ck.dispatchEvent({ type: "change" });
   eql(out.train, true, "\u2026and toggling it turns the training on");
-  eql(__t.bxPortDefs(out, "in").length, 2, "\u2026the box grows its dataset dot");
+  eql(__t.bxPortDefs(out, "in").length, 1, "\u2026the output's dots do not change");
+  eql(__t.bxPortDefs(inp, "in").length, 1, "\u2026the INPUT grows one dot: the train config's");
   ok(String(__t.bxShape(out)).indexOf("training") >= 0,
      "\u2026and the card says so: " + __t.bxShape(out));
   eql(fill().querySelectorAll("label.rf").map(l => l.children.map(c => c.textContent).join(" ").trim()),
-      ["Enable Training", "data", "test data", "x col", "y col",
-       "y is a class label", "training", "optimizer", "learning rate",
-       "weight decay", "batch", "steps", "grad clip", "save every",
-       "eval every"],
-      "\u2026and the parameters show up, in order");
-  // a picker binds the rows; the plan follows
-  const sels = fill().querySelectorAll(".bxsel");
-  sels[0].value = ds.id;
-  sels[0].dispatchEvent({ type: "change" });
-  eql(out.dataset, ds.id, "the picker binds the data");
-  ok(fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
-       .indexOf("data \u00b7") >= 0, "\u2026and the plan reads the dataset back");
-  ok(fill().querySelectorAll(".chip").map(e => e.textContent).join(" | ")
-       .indexOf("start \u2014") >= 0, "\u2026with the controls that drive the run");
-  // the dataset dot is optional: bare it is no error, and a wire holds
-  eql(__t.bxConnect(inp.id, out.id, 0, 0), null, "the model wires into the output");
-  ok(!__t.bxErrorSet().has(out.id),
-     "a bare dataset dot is no error \u2014 it is optional until the flow is built");
-  eql(__t.bxConnect(ds.id, out.id, 0, 1), null, "a dataset wires into the dot");
-  ok(!__t.bxErrorSet().has(out.id), "\u2026and the design stays whole");
-  // every parameter lands on the node, and travels with the design
-  ok(__t.bxConfigure(out.id, { x_col: "a", y_col: "b", y_class: true,
-                               optimizer: "sgd", lr: 0.01, batch: 8, steps: 40 }),
-     "the parameters land");
-  // a sequence of columns is a vector: x0 x1 x2 in, y0 y1 out
-  ok(__t.bxConfigure(out.id, { x_col: "x0 x1 x2, y0", y_col: "y0 y1" }),
-     "a sequence of columns lands too");
-  eql([out.x_col, out.y_col], ["X0 X1 X2 Y0", "Y0 Y1"],
-      "\u2026split on spaces and commas, uppercased, in order");
-  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(out)).x_col, "X0 X1 X2 Y0",
-      "\u2026and the sequence travels with the design");
-  ok(fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
-       .indexOf("mean squared error") >= 0,
-     "\u2026the plan says which loss that trains with");
-  ok(__t.bxConfigure(out.id, { x_col: "a", y_col: "b" }), "back to single columns");
-  eql([out.x_col, out.y_col], ["A", "B"], "\u2026stored as letters, as before");
-  ok(fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
-       .indexOf("cross entropy") >= 0, "\u2026and the loss line follows back");
-  eql([out.x_col, out.y_col, out.optimizer, out.lr, out.batch, out.steps],
-      ["A", "B", "sgd", 0.01, 8, 40], "\u2026on the node");
-  ok(!out.classes, "\u2026no list of classes to type any more");
-  const cks = fill().querySelectorAll(".bxtick");
-  ok(cks.length === 2 && cks[1].checked, "\u2026the switch shows it, checked");
-  ok(fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
-       .indexOf("the values it takes are the classes") >= 0,
-     "\u2026and the plan says where the classes come from");
-  cks[1].checked = false;
-  cks[1].dispatchEvent({ type: "change" });
-  eql(out.y_class, false, "\u2026the checkbox drives it");
-  ok(__t.bxConfigure(out.id, { y_class: true }), "\u2026and back on");
-  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(out));
-  eql([back.train, back.dataset, back.optimizer, back.lr, back.batch, back.steps],
-      [true, ds.id, "sgd", 0.01, 8, 40], "\u2026and they survive the design's JSON");
-  eql(back.y_class, true, "\u2026the switch with them");
-  // an older design keeps its list, and the order its checkpoints know
-  const leg = __t.bxJSONNode({ kind: "output", name: "legacy", train: true,
-                               y_col: "B", classes: ["cat", "dog"] });
-  eql(leg.classes, ["cat", "dog"], "a legacy design keeps its class list");
-  // training off closes the dot, and its wire goes with it
-  __t.bxConfigure(out.id, { train: false });
-  eql(__t.bxPortDefs(out, "in").length, 1, "training off: the dot closes");
-  ok(__t.BX.edges.every(e => !(e.to === out.id && (e.toPort || 0) === 1)),
-     "\u2026and the dataset wire goes with it");
+      ["Enable Training"], "\u2026the settings live on the config box now, not here");
+  ok(fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ")
+       .indexOf("train config box") >= 0, "\u2026and the plan asks for one");
+  // the config box wires into the first dot
+  const cfg = __t.bxAdd("config", 0, 320, {});
+  ok(!!cfg && cfg.name === "train config 1", "a train config box lands, named train config 1");
+  eql(__t.bxPortDefs(cfg, "out").length, 1, "\u2026with one settings dot");
+  eql(__t.bxConnect(cfg.id, inp.id, 0, 0), null, "it wires into the input's first dot");
+  eql(__t.bxPortDefs(inp, "in").length, 3, "\u2026and supervised opens X and Y");
+  {
+    const d = document.createElement("div");
+    __t.bxInputFill(d, inp);
+    ok(d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
+         .indexOf("config \u00b7") >= 0, "\u2026the input's own window says so");
+  }
+  // unsupervised closes Y, and takes its wire with it
+  const ys = __t.bxAdd("select", 0, 520, {});
+  eql(__t.bxConnect(ys.id, inp.id, 0, 2), null, "a matrix wires into Y");
+  ok(__t.bxConfigure(cfg.id, { paradigm: "unsupervised" }), "a flip to unsupervised");
+  eql(__t.bxPortDefs(inp, "in").length, 2, "\u2026closes the Y dot");
+  ok(__t.BX.edges.every(e => !(e.to === inp.id && (e.toPort || 0) === 2)),
+     "\u2026and its wire goes with it");
+  ok(__t.bxConfigure(cfg.id, { paradigm: "supervised" }), "\u2026and back to supervised");
+  // the matrices: a select col box reads the sheet, the input reads the matrix
+  const xs = __t.bxAdd("select", 160, 520, {});
+  eql(__t.bxConnect(ds.id, xs.id, 0, 0), null, "the dataset feeds the X matrix");
+  eql(__t.bxConnect(xs.id, inp.id, 0, 1), null, "the matrix wires into X");
+  eql(__t.bxConnect(ds.id, ys.id, 0, 0), null, "\u2026and the Y matrix reads the sheet too");
+  ok(String(__t.bxShape(xs)).indexOf("col") >= 0,
+     "the matrix card says its columns: " + __t.bxShape(xs));
+  {
+    const hint = fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
+    ok(hint.indexOf("data \u00b7 X ") >= 0 && hint.indexOf("columns") >= 0,
+       "\u2026and the plan reads the pair: " + hint);
+    const asked = fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
+    ok(asked.indexOf("Y matrix") >= 0, "\u2026still asking for the Y matrix: " + asked);
+  }
+  // the columns: names or letters, a sequence is a vector
+  ok(__t.bxConfigure(xs.id, { cols: "a b", dataset: ds.id }),
+     "the select's columns land");
+  eql([xs.cols, xs.dataset], ["A B", ds.id],
+      "\u2026uppercased, with the dataset it reads kept");
+  {
+    const d = document.createElement("div");
+    __t.bxSelectFill(d, xs);
+    const hint = d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
+    ok(hint.indexOf("2 rows") >= 0 && hint.indexOf("matrix") >= 0,
+       "\u2026and its window reads the sheet back: " + hint);
+  }
+  {
+    const d = document.createElement("div");
+    __t.bxConfigFill(d, cfg);
+    eql(d.querySelectorAll("label.rf").map(l => l.children.map(c => c.textContent).join(" ").trim())
+         .slice(0, 5),
+        ["training", "test data", "y is a class label", "optimizer", "learning rate"],
+        "the config's window: every setting, in order");
+  }
+  // the plan follows the settings
+  ok(__t.bxConfigure(cfg.id, { y_class: true, lr: 0.02, batch: 8, optimizer: "sgd" }),
+     "the settings land");
+  {
+    const hint = fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
+    ok(hint.indexOf("class label") >= 0 && hint.indexOf("lr 0.02") >= 0,
+       "\u2026the plan says which loss, and the knobs: " + hint);
+    ok(hint.indexOf("mean squared error") >= 0,
+       "\u2026a two-column X is a vector: mse, this target: " + hint);
+    const asked = fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
+    ok(asked.indexOf("do not mix") >= 0,
+       "\u2026and the class switch over a vector says so: " + asked);
+  }
+  // one column on each side: cross entropy again
+  ok(__t.bxConfigure(xs.id, { cols: "a" }), "the X matrix narrows to one column");
+  {
+    const hint = fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
+    ok(hint.indexOf("cross entropy") >= 0 && hint.indexOf("mean squared") < 0,
+       "\u2026and the loss line follows: " + hint);
+  }
+  // the design's JSON carries both boxes
+  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(cfg));
+  eql([back.paradigm, back.y_class, back.lr, back.batch, back.optimizer],
+      ["supervised", true, 0.02, 8, "sgd"], "the config rides the design's JSON");
+  const backSel = __t.bxJSONNodeFrom(__t.bxJSONNode(xs));
+  eql([backSel.dataset, backSel.cols], [ds.id, "A"],
+      "\u2026and the matrix, with its columns");
+  // a training run carries the wiring with it (the payload the job gets)
+  {
+    const view = __t.bxRunCanvas({ type: "canvas", version: 1,
+                                   nodes: __t.BX.nodes, edges: __t.BX.edges });
+    const kinds = (view.nodes || []).map(n => n.kind);
+    ok(kinds.indexOf("config") >= 0 && kinds.indexOf("select") >= 0,
+       "\u2026and a training run carries the config and the matrices: "
+       + kinds.join(","));
+  }
+  // an older design's dataset dot lands as the output's stored dataset
+  const doc = __t.bxJSONDocFrom({ type: "canvas", version: 1, nodes: [
+      { id: "o", kind: "output", name: "out", x: 0, y: 0, din: 4, train: true },
+      { id: "d", kind: "dataset", name: "rows", x: 0, y: 200, text: "a\tb" }],
+    edges: [{ from: "d", to: "o", fromPort: 0, toPort: 1 }] }, "canvas");
+  eql([doc.edges.length, doc.nodes.find(n => n.id === "o").dataset], [0, "d"],
+      "an old dataset dot loads as the stored dataset, and the stale wire goes");
+  // the one-click migration: a config box, made and wired
+  const out2 = __t.bxAdd("output", 700, 240, { din: 8, train: true });
+  __t.bxTrainAddConfig(out2);
+  const made = __t.BX.nodes.filter(n => n.kind === "config")[0];
+  ok(!!made && __t.BX.edges.some(e => e.from === made.id && e.to === inp.id
+                                      && (e.toPort || 0) === 0),
+     "\u2026the chip drops a config box and wires it in");
+  __t.bxRemove(out2.id);
+  __t.bxRemove(made.id);
   __t.bxRemove(inp.id);
   __t.bxRemove(ds.id);
   __t.bxRemove(out.id);
+  __t.bxRemove(cfg.id);
+  __t.bxRemove(xs.id);
+  __t.bxRemove(ys.id);
 });
 
 check("the server config: one only, at the top level, and no rename", () => {

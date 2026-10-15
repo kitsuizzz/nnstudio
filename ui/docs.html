@@ -265,13 +265,18 @@
         <span class="pill">output</span> shows its own). A run is
         <b>inference</b>: no gradients are kept (the lightest run — dataset boxes
         stay idle).</li>
-    <li><b>Train it</b> — training lives on the <b>output box</b> it scores.
-        Open an <span class="pill">output</span> box, switch its window to the
-        <b>training</b> tab and tick <b>Enable Training</b>: its parameters show
-        up (the <code>dataset</code> that feeds the run and an optional test
-        split, the columns, whether y is a class label, the paradigm, and every knob — learning
-        rate, optimizer, batch, steps…), a <b>dataset dot</b> opens on the box —
-        wire a dataset into it, or bind one in the tab — and the controls
+    <li><b>Train it</b> — training is scored on the <b>output box</b> and
+        wired through the <b>input box</b>. Open the
+        <span class="pill">output</span>, switch its window to the
+        <b>training</b> tab and tick <b>Enable Training</b>: the input opens its
+        training dots — the first takes a <span class="pill">train
+        config</span> box (palette → <b>training</b>), which carries every
+        knob of the run (the paradigm, the optimizer, the learning rate, the
+        batch, the steps, the save/eval cadence, the optional test split), and
+        the config's paradigm opens the next dots: <b>X</b> for the rows the
+        model reads, and — when <b>supervised</b> — <b>Y</b> for the
+        targets. Wire <span class="pill">select col</span> boxes (a dataset's
+        columns, as a matrix) or plain datasets into them. The controls
         (<b>start</b>, <b>save now</b>, <b>hold</b>, <b>detach</b>,
         <b>resume</b>, <b>load last checkpoint</b>) sit under them, with the
         plan's summary, the step/loss strip and the live curves. The output is
@@ -432,6 +437,14 @@
       where the data is — with the run's verdict line under it.
       The editor opens roomy (its content has the space); double-click the box
       for the compact size, or drag the corner to size it yourself.</p>
+      <p>Training on, the input box grows its <b>training dots</b>: the first
+      takes the <span class="pill">train config</span> box (the run's settings),
+      the second the <b>X</b> matrix (the rows the model reads) and —
+      supervised — the third the <b>Y</b> matrix (the targets). The
+      matrices are <span class="pill">select col</span> boxes (a dataset's
+      columns) or datasets wired straight in; the run reads them and feeds the
+      input box, so inference is untouched. Unsupervised and rl take X alone.
+      Its window shows the wiring live.</p>
       <p class="bfields"><b>Fields:</b> width <code>dout</code> (a matrix's
       columns — what a layer reads); data type <code>input_mode</code> —
       <code>matrix</code> (the numbers it carries, one row per line),
@@ -498,6 +511,28 @@
       JSON like <code>{"prompt": "…", "completion": "…"}</code>, or
       <code>prompt&lt;TAB&gt;completion</code>. The sheet keeps both formats
       verbatim — JSON rows keep their extra keys.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">select col</div>
+      <div class="bwires">1 in (a dataset) · 1 out (a matrix)</div>
+    </div>
+    <div class="bdet">
+      <p>A <b>dataset's columns, as a matrix</b>: the select col box reads one
+      sheet — wired in, or bound in its window — and hands out
+      <code>[rows × columns]</code>, the shape a training dot takes. Wire it
+      into an input's <b>X</b> (or <b>Y</b>) dot and the run reads those cells,
+      row by row. A blank column list takes every column; a single column of
+      text tokenizes as usual; several columns are a numeric <b>vector</b> per
+      row (<code>x0 x1 x2</code> — three columns are a 3-wide input).
+      Columns are named from the sheet's header, or by letter
+      (<code>A</code>, <code>B</code>, … = position); the window shows the
+      shape it hands out, and says when a name is not in the sheet.</p>
+      <p class="bfields"><b>Fields:</b> <code>dataset</code> (the sheet it reads),
+      <code>cols</code> (the columns it selects — names or letters, a
+      sequence is a vector, blank = every column).</p>
     </div>
   </div>
 
@@ -672,28 +707,21 @@
       report per output name. The window opens roomy; double-click the box for
       the compact size, or drag its corner to size it yourself.</p>
       <p>Its window has two tabs: <b>output</b> (the readout) and
-      <b>training</b>. Tick <b>Enable Training</b> and this output becomes the
-      <b>hub of a training run</b>: the parameters show up in the tab (the
-      dataset, the test split, the columns, whether y is a class label, the
-      paradigm, the optimizer, the learning rate, the batch, the steps, the
-      save/eval cadence
-      — and in <b>rl</b> the reward box with the sampling knobs), the controls
-      and the live curves follow, and the box grows a <b>dataset dot</b> — its
-      second input — for the rows the run trains on. A dataset wired into that
-      dot beats the tab's picker. Inference stands the dataset down: a training
-      dot is no part of run-the-design.</p>
+      <b>training</b>. Tick <b>Enable Training</b> and this output is what the
+      run <b>scores</b>: the input box opens its training dots, the plan reads
+      the wiring back (which matrices feed X and Y, what the loss will be, what
+      the test split is), and the controls — <b>start</b>, <b>save now</b>,
+      <b>hold</b>, <b>detach</b>, <b>resume</b>, <b>load last checkpoint</b> —
+      sit under the step/loss strip and the live curves. The settings themselves
+      live on the <span class="pill">train config</span> box wired into the
+      input. Inference stands the matrices down: a training dot is no part of
+      run-the-design.</p>
       <p class="bfields"><b>Fields:</b> <code>din</code>, its name,
-      <code>train</code> (the training tab), the training's own fields
-      (<code>dataset</code>, <code>test_dataset</code>, <code>x_col</code>,
-      <code>y_col</code>, <code>y_class</code> — y is a class label, and the
-      values the column takes are the classes; a legacy <code>classes</code>
-      list still fixes their order — <code>paradigm</code>,
-      <code>reward</code>, <code>lr</code>, <code>optimizer</code>,
-      <code>weight_decay</code>, <code>batch</code>, <code>steps</code>,
-      <code>clip</code>, <code>save_every</code>, <code>eval_every</code>,
-      <code>temperature</code>, <code>max_tokens</code>, <code>n_samples</code>,
-      <code>task_id</code>), display <code>box</code> size,
-      <code>panel.tab</code>.</p>
+      <code>train</code> (the training tab), <code>task_id</code> (the live
+      task), display <code>box</code> size, <code>panel.tab</code>. Older
+      designs keep their stored training fields (<code>dataset</code>,
+      <code>x_col</code>, <code>y_col</code>, …) — the engine reads
+      them, and a train config box moves the settings forward.</p>
     </div>
   </div>
 
@@ -859,12 +887,15 @@
         (<code>prompt&lt;TAB&gt;completion</code> or JSONL). A second dataset box
         is the held-out test split, if you have one.</li>
     <li>Open the <span class="pill">output</span> box's window on its
-        <b>training</b> tab and tick <b>Enable Training</b> — the output is the
-        hub now: its parameters show up there. Bind the dataset (and the test
-        split), name the <b>x</b> column (the model's input) and the <b>y</b>
-        column (what the model is scored on), and set the parameters (learning
-        rate, optimizer, batch, steps…). A dataset wired into the box's new
-        <b>dataset dot</b> feeds the run too — the wire beats the picker.</li>
+        <b>training</b> tab and tick <b>Enable Training</b> — the input opens
+        its training dots. Drop a <span class="pill">train config</span> box
+        (palette → <b>training</b>) and wire it into the input's first dot:
+        that is where every knob lives now — the paradigm, the learning
+        rate, the optimizer, the batch, the steps, the optional test split.
+        Then two <span class="pill">select col</span> boxes (or the dataset boxes
+        themselves) into the input's <b>X</b> and <b>Y</b> dots: X reads the
+        prompt column, Y the completion column. The plan under the switch reads
+        the wiring back.</li>
     <li>Start the training from the tab's <b>start</b> chip: the full training
         runs as a task — its progress, curves and <b>detach</b> / <b>resume</b>
         live there (or via <code>POST /api/tasks</code> below).</li>
@@ -894,12 +925,15 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         column A, the label is column B. Held-out rows get a second dataset box.</li>
     <li>The network as in the recipe above, ending in a layer sized to the number
         of classes.</li>
-    <li>The output box's training tab: tick <b>Enable Training</b>, bind the
-        dataset, <b>x</b> → A, <b>y</b> → B, and tick <b>y is a
-        class label</b>. The values y takes are the classes — no list to
-        type; the run reports <b>accuracy</b> (the share of rows the model
-        gets right) alongside the loss, on the train split and the test
-        split.</li>
+    <li>The output box's training tab: tick <b>Enable Training</b>, wire a
+        <span class="pill">train config</span> box into the input's first dot,
+        and tick <b>y is a class label</b> in the config's window. Wire the
+        dataset (through a <span class="pill">select col</span> box choosing the
+        text column) into <b>X</b>, and the labels — one column, names like
+        <code>cat</code>/<code>dog</code> — into <b>Y</b>. The values y
+        takes are the classes: no list to type, and the run reports
+        <b>accuracy</b> (the share of rows the model gets right) alongside the
+        loss, on the train split and the test split.</li>
     <li>Start it; watch the accuracy climb to the ceiling the data allows. Freeze
         the boxes you trust, train the rest.</li>
   </ol>
@@ -917,11 +951,14 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         so runs are reproducible. Keep it partly soft (a little reward even for
         imperfect outputs), or the policy can starve on a row that keeps scoring
         zero.</li>
-    <li>The output box's training tab: tick <b>Enable Training</b>, set the
-        <b>paradigm</b> to <b>rl</b>, bind the dataset and the <b>reward</b> box —
-        the policy samples from this output itself. Set <code>temperature</code>,
-        <code>max_tokens</code> and <code>n_samples</code> — how the sampling goes,
-        and how many samples one row of the dataset earns per step.</li>
+    <li>The output box's training tab: tick <b>Enable Training</b>, wire a
+        <span class="pill">train config</span> box into the input's first dot,
+        set its <b>paradigm</b> to <b>rl</b> and bind the <b>reward</b> box; wire
+        the prompts (a <span class="pill">select col</span> box or the dataset)
+        into <b>X</b> — rl takes X alone, and the policy samples from this
+        output itself. Set <code>temperature</code>, <code>max_tokens</code> and
+        <code>n_samples</code> — how the sampling goes, and how many samples
+        one row of the dataset earns per step.</li>
     <li>Start it and watch the <b>reward</b> climb: solid — the mean reward, dashed
         — its baseline, the policy's decaying average of past rewards. Each step
         draws <code>n_samples</code> samples from one row, scores each with the
@@ -1048,47 +1085,61 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     <div class="cap">Predict, score, nudge, repeat — the whole of training.</div>
   </div>
 
-  <h2>The hub: the output's training tab</h2>
+  <h2>The hub: the train config box, wired through the input</h2>
   <p>
     Training needs one place to say <i>what</i> the model learns from and
-    <i>how</i>. That place is the <span class="pill">output</span> box's
-    <b>training</b> tab: tick <b>Enable Training</b> and the parameters appear —
-    every knob of the run in one window, on the box the training scores. An
-    output trains on its own signal, and a <b>dataset dot</b> opens on the box
-    for the rows that feed the run (a wire into it beats the tab's picker).
-    There is no mode switch: running the design is the
-    <span class="pill">input</span> box's <b>▶ run</b> (inference — an
-    inference run stands the dataset box down), training it is this tab.
+    <i>how</i>. The <i>how</i> is a <span class="pill">train config</span> box
+    (palette → <b>training</b>): its window holds every knob of the run —
+    the <b>paradigm</b> (<code>supervised</code> | <code>unsupervised</code> |
+    <code>rl</code>), the optimizer, the learning rate, the batch, the steps,
+    the grad clip, the save/eval cadence, the optional <code>test_dataset</code>,
+    whether y is a class label, and in <b>rl</b> the reward box with the
+    sampling knobs.
   </p>
   <p>
-    It owns the data (the <code>dataset</code> that feeds the run, and an optional
-    <code>test_dataset</code> the trainer scores but never trains on), the columns
-    (<code>x_col</code> conditions, <code>y_col</code> is the target), the
-    <code>y_class</code> switch (when y is a class label — the values the
-    column takes are the classes), the <code>paradigm</code>
-    (supervised | rl), and in <b>rl</b> the <code>reward</code> box that scores
-    the model's samples (the policy samples from the output itself). A column
-    spec may be a <b>sequence</b>: <code>x0 x1 x2</code> feeds the model a
-    <b>3-wide input vector</b> (the cells as numbers) and <code>y0 y1</code> a
-    <b>2-wide target</b>, scored with <b>mean squared error</b> instead of
-    cross entropy — names come from the CSV header, letters like
-    <code>A</code>/<code>B</code> stand for positions, and both sides are
-    numbers in that mode. It also
-    holds every parameter of the run. The
-    <span class="pill">server config</span> box — the
-    <span class="pill grey">Backend ▾</span> menu's first row — stays the
-    machine's window; older designs that carry a train node as the hub keep
-    working.
+    The <i>what</i> rides the <span class="pill">input</span> box's training
+    dots. Tick <b>Enable Training</b> on the output box the run scores and the
+    input opens <b>one</b> dot — the train config's. Wire the config in and
+    its paradigm opens the rest: the second dot takes <b>X</b>, the rows fed to
+    the model; the third takes <b>Y</b>, the targets — and only when
+    <b>supervised</b>. Unsupervised and rl take X alone. The matrices are
+    <span class="pill">select col</span> boxes (a dataset's columns, as
+    <code>[rows × columns]</code>) or dataset boxes wired straight in; the
+    trainer pairs row <i>i</i> of X with row <i>i</i> of Y, and an optional
+    test split (bound in the config) is read with the same columns.
+  </p>
+  <p>
+    What the paradigm means for the signal: <b>supervised</b> scores the model
+    against Y (cross entropy — or, when a column spec is a sequence like
+    <code>y0 y1</code>, mean squared error over a vector target);
+    <b>unsupervised</b> needs no Y — the model rebuilds the X rows
+    themselves (next-token over their text, or the numbers); <b>rl</b> draws
+    samples from the output and scores them with the reward box. The
+    <span class="pill">output</span> box keeps the plan, the controls and the
+    curves — there is no mode switch: running the design is the
+    <span class="pill">input</span> box's <b>▶ run</b> (inference — an
+    inference run stands the matrix boxes down), training it is this wiring.
+  </p>
+  <p>
+    A <b>column sequence is a vector</b>: <code>x0 x1 x2</code> on the X matrix
+    feeds the model a <b>3-wide input</b> (the cells as numbers) and
+    <code>y0 y1</code> on Y a <b>2-wide target</b>, scored with mean squared
+    error — names come from the sheet's CSV header, letters like
+    <code>A</code>/<code>B</code> stand for positions, and a blank list takes
+    every column. The <span class="pill">server config</span> box — the
+    <span class="pill grey">Backend ▾</span> menu's first row — stays
+    the machine's window; older designs that carry the training fields on the
+    output (or a train node as the hub) keep working.
   </p>
   <p>
     One exception, for the veterans: wire a <span class="pill">loss</span> box
-    from a dataset the way the old designs did, and that wire beats the hub —
+    from a dataset the way the old designs did, and that wire beats the config —
     that dataset and that loss run the training.
   </p>
   <p>
-    While a training task runs, the canvas shows the dataset the training reads
-    from, the target it scores (or samples, in rl) and — in rl — the reward box
-    that does the scoring.
+    While a training task runs, the canvas shows the config, the matrices the
+    training reads from, the target it scores (or samples, in rl) and — in
+    rl — the reward box that does the scoring.
   </p>
 
   <h2>The vocabulary of training</h2>
