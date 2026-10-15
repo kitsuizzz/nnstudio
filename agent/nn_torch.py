@@ -647,8 +647,53 @@ def image_view(v):
     return {"w": w, "h": h, "blob": "", "thumb": _thumb(x)}
 
 
-def output_paths(canvas):
-    """Every output box's path — the viewable nodes, nested levels included."""
+_HEAT_STOPS = ((0.00, 0.03, 0.02, 0.22),     # deep blue
+               (0.25, 0.05, 0.52, 0.76),     # cyan
+               (0.50, 0.10, 0.72, 0.34),     # green
+               (0.75, 0.95, 0.84, 0.16),     # yellow
+               (1.00, 0.82, 0.10, 0.10))     # red
+
+
+def _heat_grid(n):
+    """(rows, cols, pad) for n values: the exact factor pair closest to square
+    when one exists, a near-square grid with a padded tail otherwise (a prime
+    has no pair, and a picture wants at least 2x2)."""
+    r = int(math.isqrt(n))
+    while r > 1 and n % r:
+        r -= 1
+    rows, cols = n // r, r
+    if rows >= 2 and cols >= 2:
+        return rows, cols, 0
+    cols = max(2, int(math.ceil(math.sqrt(n))))
+    rows = max(2, int(math.ceil(n / float(cols))))
+    return rows, cols, rows * cols - n
+
+
+def _heatmap(x, box=""):
+    """A vector drawn as one picture: the values flattened, stretched to 0..1
+    by their own min and max, and laid out on the most square grid their count
+    allows, through a five-stop colour ramp. Returns [h, w, 3] in 0..1 — a
+    padded tail reads as neutral gray, never an invented value."""
+    x = torch.nan_to_num(x.float()).reshape(-1)
+    n = int(x.numel())
+    if n == 0:
+        raise CanvasError(box or "heatmap", "the vector is empty - nothing to draw")
+    rows, cols, _pad = _heat_grid(n)
+    lo, hi = x.min(), x.max()
+    v = ((x - lo) / (hi - lo).clamp(min=1e-12)).clamp(0.0, 1.0)
+    pos = v * (len(_HEAT_STOPS) - 1)
+    idx = pos.floor().clamp(0, len(_HEAT_STOPS) - 2).long()
+    t = (pos - idx.to(pos.dtype)).unsqueeze(-1)
+    rgb = torch.tensor([s[1:] for s in _HEAT_STOPS], device=x.device, dtype=x.dtype)
+    col = rgb[idx] + (rgb[idx + 1] - rgb[idx]) * t
+    img = x.new_full((rows * cols, 3), 0.16)   # the padded cells: neutral gray
+    img[:n] = col
+    return img.reshape(rows, cols, 3)
+
+
+def view_paths(canvas):
+    """Every viewable node's path — an output box, or a box that draws a
+    picture of its own (the heatmap) — nested levels included."""
     out = set()
 
     def walk(nodes, prefix):
@@ -657,7 +702,7 @@ def output_paths(canvas):
             if n.get("kind") == "custom":
                 walk((n.get("inner") or {}).get("nodes"), path + "/")
                 continue
-            if n.get("kind") == "output":
+            if n.get("kind") in ("output", "heatmap"):
                 out.add(path)
 
     walk((canvas or {}).get("nodes"), "")
@@ -1065,6 +1110,10 @@ class Box(nn.Module):
             if src is None:
                 src = self.node.get("text") or ""   # its own prompt, when no wire
             out = hf_next_token(self.node, src, self.device)
+        elif k == "heatmap":
+            if not xs:
+                raise CanvasError(self.name, "an input dot is not wired")
+            out = _heatmap(xs[0], self.name)
         elif k == "vision":
             if not xs:
                 raise CanvasError(self.name, "an input dot is not wired")
@@ -2673,7 +2722,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
             vals = passes()
     collected = graph.collect()
     story = image_story(canvas, collected)
-    outs = output_paths(canvas)                  # the viewable nodes
+    outs = view_paths(canvas)                    # the viewable nodes
     values = {}
     texts = {}
     for path, v in collected.items():

@@ -208,7 +208,9 @@
   <ul>
     <li><b>Add a box</b> — open <span class="pill grey">Palette ▾</span>, expand a
         category, and drag a card onto the canvas. Categories follow the boxes'
-        jobs: containers, data, compute, results, system.</li>
+        jobs: <b>AI</b>, <b>weights</b>, <b>text</b>, <b>Dataset</b>,
+        <b>tensor ops</b>, <b>blocks</b>, <b>analysis</b> (the heatmap), and
+        <b>containers</b>.</li>
     <li><b>Bring a model in</b> — <span class="pill grey">Import ▾</span> →
         <b>GGUF model …</b> opens one pop-up with the machine's
         <code>.gguf</code> files, each recognized by its own header. Importing
@@ -605,6 +607,28 @@
   </div>
 
   <h2>Result boxes — getting things out</h2>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">heatmap</div>
+      <div class="bwires">1 in (a vector) · 1 out (a picture)</div>
+    </div>
+    <div class="bdet">
+      <p>Draws a vector as <b>one picture</b>: whatever reaches it is flattened,
+      stretched to 0..1 by its own min and max, and laid out on the <b>most
+      square grid its count allows</b> (96 values → 12×8), through a five-stop
+      colour ramp — blue (lowest) → cyan → green → yellow → red (highest). A
+      length with no square-ish factor pair (a prime) gets a near-square grid
+      whose padded tail reads neutral gray — never an invented value. The
+      picture is an ordinary RGB matrix in 0..1, so it <b>reads as an image
+      everywhere</b>: its own window draws it after a run, and an
+      <span class="pill">output</span> box at the end of the wire shows it too.
+      Feeding it a bigger matrix? Everything is flattened — put a
+      <span class="pill">slice</span> in front to picture one row.</p>
+      <p class="bfields"><b>Fields:</b> width <code>din</code> (the vector's
+      length — a wire settles it), display <code>box</code> size.</p>
+    </div>
+  </div>
 
   <div class="boxref">
     <div>

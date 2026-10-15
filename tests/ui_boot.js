@@ -806,7 +806,8 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(top.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output"], "Input and Output are the first cards, not a category");
   eql(menu.children.filter(c => c.className === "bxtcat").map(c => c.textContent),
-    ["AI", "weights", "text", "Dataset", "tensor ops", "blocks", "containers"],
+    ["AI", "weights", "text", "Dataset", "tensor ops", "blocks", "analysis",
+     "containers"],
     "and only the categories are listed below");
   // the AI category holds the agent box
   menu.children.find(c => c.textContent === "AI").click();
@@ -840,6 +841,45 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   menu.children.find(c => c.textContent === "tensor ops").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output"], "…and clicking it again collapses");
+  // analysis holds the heatmap: a vector in, one picture out
+  menu.children.find(c => c.textContent === "analysis").click();
+  eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
+    ["input", "output", "heatmap"], "analysis holds the heatmap");
+  menu.children.find(c => c.textContent === "analysis").click();
+});
+
+check("the heatmap: a vector in, a picture out, drawn in its own window", () => {
+  const nodes0 = __t.BX.nodes.length;
+  const ib = __t.bxAdd("input", 0, 0, { dout: 8 });
+  const hm = __t.bxAdd("heatmap", 0, 200, {});
+  const ob = __t.bxAdd("output", 0, 400, { din: 8 });
+  ok(!!hm && hm.kind === "heatmap", "a heatmap box lands");
+  eql(__t.bxKindLabel("heatmap"), "Heatmap", "…labelled Heatmap");
+  ok(/^heatmap \d+$/.test(hm.name), "…named heatmap N: " + hm.name);
+  eql([__t.bxPortDefs(hm, "in").length, __t.bxPortDefs(hm, "out").length], [1, 1],
+     "one dot each way");
+  eql(__t.bxShape(hm), "vector → image", "…until a vector arrives");
+  eql(__t.bxConnect(ib.id, hm.id), null, "the vector wires in");
+  eql(__t.bxConnect(hm.id, ob.id), null, "…and on to an output");
+  eql(hm.din, 8, "the wire taught it the width");
+  ok(!__t.bxErrorSet().has(hm.id), "a wired heatmap is no error");
+  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(hm));
+  eql([back.kind, back.din], ["heatmap", 8], "…and the design carries it");
+  // its window: the picture once a run has handed it one
+  const pane = () => { const d = document.createElement("div"); __t.bxPaneFill(d, hm); return d; };
+  ok(pane().querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
+       .indexOf("no picture yet") >= 0, "before a run its window says so");
+  const rgb = Buffer.from(new Uint8Array(4 * 2 * 3)).toString("base64");
+  __t.bxRunValues[hm.id] = { shape: [2, 4, 3], min: 0, max: 1,
+                             image: { w: 4, h: 2, blob: "", thumb: { w: 4, h: 2, rgb } } };
+  const d = pane();
+  ok(d.querySelectorAll(".bxoutimg").length === 1, "…and after one it draws the picture");
+  ok(d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
+       .indexOf("4×2 px") >= 0, "…with its size under it");
+  ok(String(__t.bxShape(hm)).indexOf("image 4×2") >= 0, "…and the card says so");
+  delete __t.bxRunValues[hm.id];
+  __t.bxRemove(ob.id); __t.bxRemove(hm.id); __t.bxRemove(ib.id);
+  eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
 });
 
 check("no GGUF card in the Palette — a model comes in through Import", () => {

@@ -2256,6 +2256,48 @@ check("a matrix that reads as a picture is drawn as one (thumbnail and all)",
       image_matrix_determination)
 
 
+def heatmap_draws_a_vector():
+    c = canvas([
+        n("input", "vec", dout=96),
+        n("heatmap", "heat", din=96),
+        n("output", "pic", din=96),
+    ], [edge("vec", "heat"), edge("heat", "pic")])
+    x = torch.linspace(-1.0, 1.0, 96)            # 96 = 8 x 12: the exact pair
+    img = T.compile_canvas(c)(feeds={"vec": x})["heat"]
+    assert tuple(img.shape) == (12, 8, 3), img.shape
+    assert float(img.min()) >= 0.0 and float(img.max()) <= 1.0, "pixels live in 0..1"
+    assert bool(torch.isfinite(img).all()), "a picture never carries nan or inf"
+    iv = T.image_view(img)
+    assert iv and [iv["w"], iv["h"]] == [8, 12], "it reads as a picture"
+    # the ends of the ramp: the smallest value reads blue, the largest red
+    first, last = img.reshape(-1, 3)[0], img.reshape(-1, 3)[-1]
+    assert float(first[2]) > float(first[0]), ("the low end is blue", first.tolist())
+    assert float(last[0]) > float(last[2]), ("the high end is red", last.tolist())
+    # a prime length still draws: a near-square grid with a neutral tail
+    c2 = canvas([
+        n("input", "vec", dout=127),
+        n("heatmap", "heat", din=127),
+        n("output", "pic", din=127),
+    ], [edge("vec", "heat"), edge("heat", "pic")])
+    g2 = T.compile_canvas(c2)
+    img2 = g2(feeds={"vec": torch.arange(127).float()})["heat"]
+    assert tuple(img2.shape) == (11, 12, 3), img2.shape   # 127 -> 11x12, five pads
+    assert bool(torch.isfinite(img2).all()) and T.image_view(img2) is not None
+    img3 = g2(feeds={"vec": torch.ones(127)})["heat"]     # a constant vector: no divide
+    flat = img3.reshape(-1, 3)[:127]                      # the five pads read gray
+    assert bool((flat == flat[0]).all()), "one flat colour, no nan"
+    assert bool(torch.isfinite(img3).all())
+    # the run reports it with the picture attached \u2014 a viewable node
+    res = T.run(c, {"vec": x}, mode="inference")
+    st = (res.get("values") or {}).get("heat")
+    assert st and st.get("image") and st["shape"] == [12, 8, 3], st
+    assert ((st.get("image") or {}).get("thumb") or {}).get("rgb"), "the thumbnail rides"
+    json.dumps(res)                              # the boundary: nothing NaN or inf
+
+
+check("the heatmap: a vector in, one picture out", heatmap_draws_a_vector)
+
+
 def vision_refuses_unknown_projectors():
     try:
         T.VisionTower({"kind": "vision", "name": "tower", "file": "x.gguf",

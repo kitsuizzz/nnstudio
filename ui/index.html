@@ -1266,6 +1266,7 @@ function bxKindLabel(kind) {
        : kind === "hf" ? "HF model"
        : kind === "agent" ? "Agent"
        : kind === "train" ? "Server config"
+       : kind === "heatmap" ? "Heatmap"
        : kind === "custom" ? "Nested"
        : kind === "vision" ? "Vision tower"
        : kind;
@@ -1372,6 +1373,12 @@ function bxShape(n) {
     const what = (st && st.text != null) ? "text"
                : (st && st.image) ? "image" : bxDim(n.din);
     return what + (n.train ? " \u00b7 training" : "");    // its second tab is on
+  }
+  if (n.kind === "heatmap") {                            // one vector → one picture
+    const st = bxNodeState(n);
+    if (st && st.image)
+      return "image " + (st.image.w || "?") + "\u00d7" + (st.image.h || "?");
+    return n.din != null ? n.din + " \u2192 image" : "vector \u2192 image";
   }
   if (n.kind === "sample")
     return n.temperature != null ? "t " + n.temperature : "greedy";
@@ -1528,6 +1535,7 @@ function bxDefaultName(kind) {
              : kind === "hf" ? "hf model"
              : kind === "agent" ? "agent"
              : kind === "train" ? "server config"
+             : kind === "heatmap" ? "heatmap"
              : kind === "custom" ? "nested"
              : kind === "vision" ? "vision tower" : kind;
   return word + " " + n;
@@ -1549,6 +1557,9 @@ function bxPortDefs(n, dir, seen) {
   if (seen.has(n.id)) return [];                 // a loop of pass-throughs stops here
   seen.add(n.id);
   if (n.kind === "input") return dir === "out" ? [{ size: n.dout, node: n, field: "dout" }] : [];
+  if (n.kind === "heatmap")                  // one vector in, one picture out
+    return dir === "in" ? [{ size: n.din, node: n, field: "din" }]
+                        : [{ size: null, node: n, field: "dout", act: true }];
   if (n.kind === "output") {                 // its data, plus — training on — its dataset
     if (dir !== "in") return [];
     const ports = [{ size: n.din, node: n, field: "din" }];
@@ -4231,6 +4242,31 @@ function bxOutputTrain(body, n) {              // the training tab: the switch, 
   }
   bxTrainPlan(body, n);
 }
+function bxHeatFill(pane, n) {                 // the heatmap's window: the picture
+  // it drew, once a run has handed it a vector
+  pane.innerHTML = "";
+  bxBehaveInside(pane);
+  const st = bxNodeState(n);
+  const body = mk("div", { class: "bxinputbody" });
+  pane.appendChild(body);
+  if (!st || !st.image) {
+    body.appendChild(mk("div", { class: "panehint",
+      text: "no picture yet \u2014 run the design and the vector it receives draws here" }));
+    return;
+  }
+  const drew = bxImageDraw(body, st);
+  if (!drew)
+    body.appendChild(mk("div", { class: "panehint",
+      text: "an image arrived (" + (st.image.w || "?") + "\u00d7"
+            + (st.image.h || "?") + ")" }));
+  const bits = [];
+  if (st.image.w && st.image.h) bits.push(st.image.w + "\u00d7" + st.image.h + " px");
+  if (st.shape && st.shape.length)
+    bits.push("from " + st.shape.reduce((a, b) => a * b, 1) + " values");
+  if (st.min != null && st.max != null)
+    bits.push("min " + bxNumText(st.min) + " \u00b7 max " + bxNumText(st.max));
+  if (bits.length) body.appendChild(mk("div", { class: "panehint", text: bits.join(" \u00b7 ") }));
+}
 function bxRunOutcome() {                       // the run's verdict, in one line
   if (BXRUN.running) return { ok: true, text: "\u2026 running the design" };
   if (BXRUN.loading) return { ok: true, text: "\u2026 loading the weights" };
@@ -4591,7 +4627,7 @@ function bxApplyOffload(key) {                 // write the plan into the places
 const BX_JSON_VERSION = 1;
 const BX_KINDS = ["input", "embed", "layer", "act", "op", "norm", "script",
                   "tokenize", "detokenize", "sample", "hf", "agent", "custom", "output",
-                  "dataset", "loss", "reward", "train", "vision"];
+                  "dataset", "loss", "reward", "train", "vision", "heatmap"];
 function bxTrainDoc(o, n) {                    // the training a host carries, out
   if (n.task_id) o.task_id = n.task_id;
   for (const k of ["dataset", "test_dataset", "target", "reward"])
@@ -4646,6 +4682,9 @@ function bxJSONNode(n) {
                                   if (n.panel) o.panel = n.panel;
                                   if (n.train) o.train = true;
                                   bxTrainDoc(o, n); }
+  else if (n.kind === "heatmap") { o.din = n.din == null ? null : n.din;
+                                   if (n.box) o.box = { w: Math.round(n.box.w || 360),
+                                                        h: Math.round(n.box.h || 320) }; }
   else if (n.kind === "layer") { o.din = n.din == null ? null : n.din;
                                  o.dout = n.dout == null ? null : n.dout; }
   else if (n.kind === "act") {
@@ -4997,6 +5036,11 @@ function bxJSONNodeFrom(o) {
     if (o.train) n.train = true;         // the training tab carries the run's setup
     bxTrainNode(o, n);
   }
+  else if (o.kind === "heatmap") {
+    n.din = bxSize(o.din);
+    if (o.box && typeof o.box === "object")
+      n.box = { w: bxSize(o.box.w, 360), h: bxSize(o.box.h, 320) };
+  }
   else if (o.kind === "layer") { n.din = bxSize(o.din); n.dout = bxSize(o.dout); }
   else if (o.kind === "act") {
     n.act = BX_ACTS.indexOf(o.act) >= 0 ? o.act : "silu";
@@ -5312,6 +5356,8 @@ function bxNodeW(n) {
     return Math.max(240, Number((n.box || {}).w) || 420);   // by default, so its
   if (n && n.kind === "output")            // content fits; the corner adjusts it
     return Math.max(240, Number((n.box || {}).w) || 420);
+  if (n && n.kind === "heatmap")           // a window for the picture it draws
+    return Math.max(220, Number((n.box || {}).w) || 360);
   return BXW;
 }
 function bxNodeH(n) {
@@ -5323,6 +5369,8 @@ function bxNodeH(n) {
     return Math.max(120, Number((n.box || {}).h) || 280);
   if (n && n.kind === "output")
     return Math.max(120, Number((n.box || {}).h) || 280);
+  if (n && n.kind === "heatmap")
+    return Math.max(140, Number((n.box || {}).h) || 320);
   const p = Math.max(bxPortDefs(n, "in").length, bxPortDefs(n, "out").length);
   return p > 2 ? 40 * Math.ceil((30 + 16 * p) / 40) : BXH;   // whole cells, always
 }
@@ -5708,7 +5756,7 @@ function bxNumText(v) {                        // a value, short enough for a ca
 function bxNodeState(n) {                      // what the last run left on this box
   if (bxDataState[n.id] != null) return bxDataState[n.id];
   if (n.kind !== "input" && n.kind !== "output" && n.kind !== "sample" &&
-      n.kind !== "detokenize" && n.kind !== "hf")
+      n.kind !== "detokenize" && n.kind !== "hf" && n.kind !== "heatmap")
     return null;                               // only the data boxes wear values
   const path = (bxCurrentPath() || []).concat(n.id).join("/");
   return bxRunValues[path] || null;            // keyed by full path: any level works
@@ -5732,7 +5780,8 @@ function bxStateText(st) {                     // the data a box carries, as con
 }
 function bxHasPane(n) {                        // a box whose card holds an editor
   return !!n && (n.kind === "agent" || n.kind === "train" ||
-                 n.kind === "dataset" || n.kind === "input" || n.kind === "output");
+                 n.kind === "dataset" || n.kind === "input" || n.kind === "output" ||
+                 n.kind === "heatmap");
 }
 function bxCard(n) {
   const preview = String(n.id || "").indexOf("pal-") === 0;   // palette chrome
@@ -8320,11 +8369,12 @@ function bxPaneFill(pane, n) {                 // one pane, filled by its kind �
   else if (n.kind === "train") bxTrainFill(pane, n);
   else if (n.kind === "input") bxInputFill(pane, n);
   else if (n.kind === "output") bxOutputFill(pane, n);
+  else if (n.kind === "heatmap") bxHeatFill(pane, n);
   else if (n.kind === "vision") bxVisionFill(pane, n);
   else bxAgentFill(pane, n);
   bxPaneErr(pane, n);
-  if (n.kind === "input" || n.kind === "output") {
-    // the i/o windows are the user's to size: drag the corner, the gesture
+  if (n.kind === "input" || n.kind === "output" || n.kind === "heatmap") {
+    // the display windows are the user's to size: drag the corner, the gesture
     // the agent's display takes
     const grip = mk("div", { class: "bxgrip", title: "drag to resize the box" });
     grip.addEventListener("mousedown", (ev) => bxAgentGrip(ev, n));
@@ -9287,6 +9337,7 @@ const BX_PALETTE = () => [
                   ["script", "script box"], ["sample", "sample box"]]],
   ["blocks", [["attn", "attention box"], ["ssm", "state space box"],
               ["moe", "mixture of experts box"]]],
+  ["analysis", [["heatmap", "heatmap box"]]],
   ["containers", [["custom", "nested box"]]],
 ];
 function bxPalCard(kind, label) {
