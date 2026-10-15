@@ -201,7 +201,8 @@ globalThis.__t = {
   bxMenuBuild, bxMenuClose, bxClip, bxShape, bxtExport, bxtImport, bxtForm, bxtRefresh,
   bxWeightsForm, bxWeightsApply, bxWeightsExportForm, bxWeightScore, bxTensorDims,
   bxTensorDtype, bxApplyManifest,
-  bxtFilesToggle, bxtFilesClose, bxtDropsClose, bxtPaletteToggle, bxtImportToggle,
+  bxtDropsClose, bxtPaletteToggle, bxtImportToggle, bxtabToggle,
+  bxTabsRender, bxTabNew, bxTabSave, bxTabSelect, bxTabOpenSaved, bxProject,
   bxGGUFImport, bxGGUFImportApply, bxtVramToggle,
   bxSecret, bxCryptoReady, bxAuthCred, bxNameTag, bxSeal, bxUnseal,
   bxTokenRemember, bxTokenRecall, bxAccountLoad, bxtAccountToggle, bxAccountBuild,
@@ -413,8 +414,9 @@ check("the right-click menus: three add items, or remove", () => {
   eql(openItems(), ["activation box", "operation box", "script box", "sample box"],
     "tensor ops replaces boundaries — one category at a time");
   heads().find(c => c.textContent === "the design").click();
-  eql(openItems(), ["export the canvas as JSON", "import JSON …"],
-    "the design drops down into its JSON items");
+  eql(openItems(),
+    ["export the canvas as JSON", "import JSON …", "export weights …"],
+    "the design drops down into its JSON items, weights and all");
   heads().find(c => c.textContent === "the design").click();
   ok(openItems().length === 0, "…and clicking it again collapses");
   __t.bxMenuBuild("box", __t.BX.nodes[1].id, {});
@@ -1022,26 +1024,26 @@ check("the Import menu: one pop-up, one file, no box spawned", () => {
 
 check("a toolbar menu opens under its own button, not the strip's left", () => {
   const strip = getEl("bxtools");
-  const files = getEl("bxtFiles"), imp = getEl("bxtImport"), men = getEl("bxtImportMenu");
-  const keep = { strip: strip.getBoundingClientRect, files: files.getBoundingClientRect,
+  const pal = getEl("bxtPalette"), imp = getEl("bxtImport"), men = getEl("bxtImportMenu");
+  const keep = { strip: strip.getBoundingClientRect, pal: pal.getBoundingClientRect,
                  imp: imp.getBoundingClientRect, w: men.offsetWidth };
   strip.getBoundingClientRect = () => ({ left: 0, top: 0, width: 900, height: 36 });
-  files.getBoundingClientRect = () => ({ left: 10, top: 0, width: 58, height: 26 });
+  pal.getBoundingClientRect = () => ({ left: 10, top: 0, width: 76, height: 26 });
   imp.getBoundingClientRect = () => ({ left: 210, top: 0, width: 70, height: 26 });
   men.offsetWidth = 180;
   __t.bxtDropsClose();
   __t.bxtImportToggle();
   eql(men.style.left, "210px", "Import's menu lines up with Import");
   __t.bxtDropsClose();
-  __t.bxtFilesToggle();
-  eql(getEl("bxtFilesMenu").style.left, "10px", "\u2026and Files' with Files");
+  __t.bxtPaletteToggle();
+  eql(getEl("bxtPalMenu").style.left, "10px", "\u2026and Palette's with Palette");
   __t.bxtDropsClose();
   getEl("bxtVramMenu").style.left = "";
   __t.bxtVramToggle();
   eql(getEl("bxtVramMenu").style.left, "", "the right-anchored VRAM menu is left alone");
   __t.bxtDropsClose();
   strip.getBoundingClientRect = keep.strip;    // the stubs go back untouched
-  files.getBoundingClientRect = keep.files;
+  pal.getBoundingClientRect = keep.pal;
   imp.getBoundingClientRect = keep.imp;
   men.offsetWidth = keep.w;
 });
@@ -4158,35 +4160,67 @@ check("the Script box: python on the card, pass-through sizes, no weights", () =
   __t.bxRemove(s.id);
 });
 
-check("the toolbar's Files menu exports/imports the design, top level only", () => {
-  const i = __t.bxAdd("input", 100, 80, { dout: 4 });
-  const fm = getEl("bxtFilesMenu");
-  ok(fm.hidden, "the Files menu starts closed");
-  ok(__t.bxtFilesToggle() === true, "Files opens it");
-  ok(!fm.hidden, "…and the menu is visible");
-  eql((fm.children || []).map(c => c.textContent), ["export", "import", "export weights …"],
-    "…holding export, import and the weights export");
-  fm.children.find(c => c.textContent === "export").click();
-  const m = getEl("bxmenu");
-  ok(!m.hidden, "export opens the JSON form");
-  const ta = (m.children[0].children || []).find(c => c.readOnly === true);
-  ok(ta && String(ta.value).indexOf('"type": "canvas"') >= 0, "…holding the design JSON");
-  ok(fm.hidden, "…and the Files menu closed behind it");
+check("the project tabs: named, starred, switched \u2014 and saved from the tab", () => {
+  const t1 = __t.bxProject();
+  ok(t1 && t1.name === "New Project 1", "the boot canvas is New Project 1");
+  t1.dirty = false;                            // earlier checks have drawn already
+  __t.bxTabsRender();
+  const strip = () => getEl("bxtabrail").querySelectorAll(".bxtab")
+    .map(t => t.querySelectorAll(".nm")[0].textContent +
+              (t.querySelectorAll(".star").length ? "*" : ""));
+  eql(strip(), ["New Project 1"], "the strip shows it, clean until something changes");
+  // a change stars the tab
+  const a = __t.bxAdd("input", 100, 80, { dout: 4 });
+  ok(t1.dirty, "an edit stars the tab");
+  eql(strip(), ["New Project 1*"], "\u2026and the star rides the name");
+  // the + : New Canvas and Saved Canvas
+  ok(__t.bxtabToggle() === true, "the + opens its menu");
+  eql(getEl("bxtabMenu").children.map(c => c.textContent),
+    ["New Canvas", "Saved Canvas \u2026"], "two ways in");
+  getEl("bxtabMenu").children.find(c => c.textContent === "New Canvas").click();
+  const t2 = __t.bxProject();
+  eql([t2.name, t2.dirty], ["New Project 2", false], "a new blank tab, nothing unsaved");
+  eql(__t.BX.nodes.filter(n => n.kind === "input").length, 1,
+     "\u2026with the blank skeleton");
+  eql(__t.BX.edges.length, 1, "\u2026wired input \u2192 output");
+  eql(strip(), ["New Project 1*", "New Project 2"], "both tabs listed, the second active");
+  // switching brings the other canvas back, with everything it held
+  getEl("bxtabrail").querySelectorAll(".bxtab")[0].click();
+  eql(__t.bxProject().name, "New Project 1", "clicking a tab brings it back");
+  ok(__t.BX.nodes.some(n => n.id === a.id), "\u2026with the box the first tab had");
+  ok(__t.bxProject().dirty, "\u2026and its star");
+  // saving without an account says so, in the strip's note
+  __t.BXACCT.user = null;
+  __t.BXACCT.locked = false;
+  __t.bxTabSave();
+  ok(String(getEl("bxtabnote").textContent).indexOf("saving takes an account") >= 0,
+     "Ctrl+S as a guest explains itself: " + getEl("bxtabnote").textContent);
+  // the + menu's saved view routes a guest to the account block
+  __t.bxtabToggle();
+  getEl("bxtabMenu").children.find(c => c.textContent.indexOf("Saved Canvas") === 0).click();
+  ok(getEl("bxtabMenu").children.map(c => c.textContent).join(" | ")
+       .indexOf("need an account") >= 0, "Saved Canvas tells a guest the same");
+  __t.bxtDropsClose();
+  // the Files menu is gone; the design section keeps export/import and weights
+  ok(typeof __t.bxtFilesToggle === "undefined" && typeof __t.bxtFilesClose === "undefined",
+     "the Files menu (and its toggles) are gone from the toolbar");
+  __t.bxMenuBuild("canvas", null, { clientX: 10, clientY: 10 });
+  openCat(getEl("bxmenu"), "the design");
+  const items = catItems(getEl("bxmenu"));
+  ok(items.indexOf("export the canvas as JSON") >= 0 &&
+     items.indexOf("import JSON \u2026") >= 0 &&
+     items.indexOf("export weights \u2026") >= 0,
+     "the right-click design section keeps export/import, weights included: " +
+     items.join(" | "));
   __t.bxMenuClose();
-  __t.bxtFilesToggle();
-  fm.children.find(c => c.textContent === "import").click();
-  ok(!getEl("bxmenu").hidden, "import opens its form");
-  ok(fm.hidden, "…and the Files menu closes");
-  __t.bxMenuClose();
-  // inside a nested box there is no canvas: Files dims and will not open
-  const nest = __t.bxAdd("custom", 400, 80, {});
-  __t.bxEnter(nest.id);
-  ok(String(getEl("bxtFiles").className).indexOf("off") >= 0, "inside a box Files dims");
-  ok(__t.bxtFilesToggle() === false && fm.hidden, "…and its menu will not open");
-  __t.bxLeave();
-  ok(String(getEl("bxtFiles").className).indexOf("off") < 0, "…and comes back at the top");
-  __t.bxRemove(nest.id);
-  __t.bxRemove(i.id);
+  // tidy: back to one tab, the boot canvas
+  const t1b = __t.BX.projects.find(p => p.name === "New Project 1");
+  __t.bxTabSelect(t1b.id);
+  __t.BX.projects = __t.BX.projects.filter(p => p.name === "New Project 1");
+  __t.bxTabsRender();
+  __t.bxRemove(a.id);
+  getEl("bxtabnote").textContent = "";
+  eql(strip(), ["New Project 1*"], "the strip is tidy again");
 });
 
 check("the view cannot be lost: a tight world around origin and design", () => {
@@ -4685,17 +4719,37 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
     return { ok: true, status: 200, json: async () => ({ ok: true }) };
   };
   __t.bxAdd("input", 40, 40, { dout: 8 });     // something worth keeping
-  __t.bxAccountSaveForm();
+  const tab = __t.bxProject();
+  ok(tab && tab.dirty, "the edit starred the project tab");
+  __t.bxTabSave();                             // Ctrl+S on a never-saved project
   const f2 = getEl("bxmenu");
+  ok(!f2.hidden && f2.querySelectorAll(".bxinp")[0].value === "design 1",
+     "\u2026asks what to save it as");
   f2.querySelectorAll(".bxinp")[0].value = "my canvas";
   f2.querySelectorAll(".chip").find(c => String(c.textContent) === "save").click();
   await saved;
+  await flush();                               // the sealed post's promise chain
+  eql([tab.name, tab.dirty], ["my canvas", false],
+     "\u2026and the tab takes the name, star gone");
   ok(save && save.design === undefined && !JSON.stringify(save).includes("my canvas"),
      "saving posts ciphertext only");
   eql(save.name_tag, await __t.bxNameTag(made, "my canvas"), "…under the keyed name tag");
   eql(await __t.bxUnseal(made, save.name_ct), "my canvas", "…with the name sealed");
   eql(((await __t.bxUnseal(made, save.blob)).nodes || []).length, nodes0 + 1,
       "…and the whole design sealed");
+  // saving again is silent: the tab knows its name now
+  __t.bxMenuClose();
+  __t.bxAdd("layer", 260, 40, {});
+  ok(tab.dirty, "a further edit stars the tab again");
+  save = null;
+  const saved2 = new Promise(r => { saveHit = r; });
+  __t.bxTabSave();
+  ok(getEl("bxmenu").hidden, "\u2026a saved project saves with no dialog");
+  await saved2;
+  await flush();                               // the silent save's promise chain
+  eql([tab.name, tab.dirty], ["my canvas", false], "\u2026straight to the server, star cleared");
+  eql(save.name_tag, await __t.bxNameTag(made, "my canvas"),
+      "\u2026under the same name tag \u2014 a save over the name");
   await flush();
   __t.bxMenuClose();
   while (__t.BX.nodes.length > nodes0) __t.bxRemove(__t.BX.nodes[__t.BX.nodes.length - 1].id);

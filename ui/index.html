@@ -929,6 +929,37 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
          font: 12px var(--mono); color: var(--ink); white-space: nowrap; }
 .bxtmi:hover { background: rgba(255,255,255,.07); }
 .bxtspace { flex: 1 1 auto; }
+/* the project tabs: a browser-style strip above the toolbar */
+.bxtabs { position: relative; display: flex; align-items: flex-end; gap: 6px;
+          padding: 0 2px; margin: 0 0 10px; border-bottom: 1px solid var(--panel-brd); }
+.bxtabrail { display: flex; align-items: flex-end; gap: 3px; min-width: 0;
+             overflow: hidden; }
+.bxtab { display: flex; align-items: center; gap: 7px; cursor: pointer;
+         font: 600 12px var(--mono); color: var(--ink-dim); max-width: 240px;
+         padding: 6px 14px 7px; border: 1px solid var(--panel-brd);
+         border-bottom: none; background: rgba(0,0,0,.18); white-space: nowrap;
+         user-select: none; transition: color .15s, background .15s; }
+.bxtab:hover { color: var(--ink); }
+.bxtab.on { color: var(--accent); background: rgba(249,115,22,.08); }
+.bxtab .nm { overflow: hidden; text-overflow: ellipsis; }
+.bxtab .star { color: var(--warm); }
+.bxtabnote { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+             white-space: nowrap; color: var(--ink-faint); font: 11px var(--mono);
+             padding: 0 8px 6px; }
+.bxtabadd { cursor: pointer; color: var(--ink-dim); font: 700 15px var(--mono);
+            padding: 2px 12px 4px; border: 1px solid var(--panel-brd);
+            border-bottom: none; background: rgba(0,0,0,.18); user-select: none; }
+.bxtabadd:hover { color: var(--warm); border-color: rgba(251,191,36,.5); }
+#bxtabMenu { top: 100%; left: auto; right: 0; margin-top: 4px; min-width: 248px; }
+#bxtabMenu .bxlist { display: flex; flex-direction: column; gap: 4px;
+                     max-height: 260px; overflow: auto; margin: 2px 0; }
+#bxtabMenu .bxlist .rowl { display: flex; align-items: center; gap: 8px;
+                           padding: 5px 7px; border: 1px solid var(--panel-brd);
+                           cursor: pointer; background: rgba(0,0,0,.25); }
+#bxtabMenu .bxlist .rowl:hover { background: rgba(255,255,255,.06); }
+#bxtabMenu .bxlist .rowl .nm { flex: 1 1 auto; min-width: 0; overflow: hidden;
+                               text-overflow: ellipsis; white-space: nowrap; }
+#bxtabMenu .bxlist .rowl .dt { color: var(--ink-faint); font: 11px var(--mono); }
 /* the Palette menu: its categories, expanding into the box cards themselves */
 #bxtPalMenu { min-width: 384px; }
 .bxtcat { display: flex; align-items: center; gap: 6px; cursor: pointer;
@@ -988,9 +1019,13 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
 
 <main>
   <section id="view-training" class="view">
+    <div class="bxtabs">
+      <div class="bxtabrail" id="bxtabrail"></div>
+      <span class="bxtabnote" id="bxtabnote"></span>
+      <span class="bxtabadd" id="bxtabadd" title="open another canvas">+</span>
+      <div class="bxtdrop bxtdrop-r" id="bxtabMenu" hidden></div>
+    </div>
     <div class="bxtools" id="bxtools">
-      <span class="bxtbtn" id="bxtFiles" title="the design as JSON">Files ▾</span>
-      <div class="bxtdrop" id="bxtFilesMenu" hidden></div>
       <span class="bxtbtn" id="bxtDocs" title="the handbook: what this is, how to use the boxes"
             onclick="window.open('/docs', '_blank')">Docs</span>
       <span class="bxtbtn" id="bxtPalette" title="add a box to the canvas">Palette ▾</span>
@@ -1066,7 +1101,7 @@ const BXW = 160, BXH = 80;                 // every box is exactly this size —
                                            // 4 × 2 whole cells of the 40 grid
 const BX_GRID = 40;                        // the breadboard's base step
 let BX = { nodes: [], edges: [], view: { cx: null, cy: null, k: 1 }, stack: [], up: null,
-           model: null };
+           model: null, projects: [], active: null };   // …and the open project tabs
 let bxDrag = null, bxWire = null, bxBend = null, bxMenuAt = null, bxDropIn = null;
 let bxGuides = [], bxMarqueeRect = null;
 // what is selected: { kind: "boxes", ids } | { kind: "edge", from, to } | null.
@@ -1135,6 +1170,7 @@ function bxCommit(keep) {
   if (bxUndoStack.length > 60) bxUndoStack.shift();
   bxUndoLast = text;
   bxRedoStack = [];
+  bxTabDirty();                                // the tab wears its star
 }
 function bxRestore(snap, path) {
   const targetPath = path || snap.path || [];
@@ -6254,6 +6290,10 @@ function bxMenuBuild(mode, id, ev) {
   } else {
     design.push(["export the canvas as JSON", () => bxJSONForm("export", null, ev)]);
     design.push(["import JSON …", () => bxJSONForm("import", null, ev)]);
+    design.push(["export weights …", () => {
+      bxMenuClose();
+      bxWeightsExportForm();
+    }]);
   }
   section("the design", "the design", design, again);
 }
@@ -6332,14 +6372,13 @@ function bxtForm(mode) {
 function bxtExport() { return bxtForm("export"); }
 function bxtImport() { return bxtForm("import"); }
 function bxtDropsClose(keep) {
-  for (const id of ["bxtFilesMenu", "bxtPalMenu", "bxtImportMenu",
-                    "bxtBackendMenu", "bxtVramMenu", "bxtAccountMenu"]) {
+  for (const id of ["bxtPalMenu", "bxtImportMenu", "bxtBackendMenu",
+                    "bxtVramMenu", "bxtAccountMenu", "bxtabMenu"]) {
     if (id === keep) continue;
     const m = $(id);
     if (m) m.hidden = true;
   }
 }
-function bxtFilesClose() { bxtDropsClose(); }
 function bxtPlace(menuId, btnId) {             // under its own button, not the strip's left
   if (!btnId) return;
   const m = $(menuId), b = $(btnId), w = $("bxtools");
@@ -6360,7 +6399,6 @@ function bxtToggle(id, btnId) {
   if (open) bxtPlace(id, btnId);               // the strip's left edge is not an address
   return open;
 }
-function bxtFilesToggle() { return BX.up ? false : bxtToggle("bxtFilesMenu", "bxtFiles"); }
 function bxtPaletteToggle() { return bxtToggle("bxtPalMenu", "bxtPalette"); }
 function bxtImportToggle() { return BX.up ? false : bxtToggle("bxtImportMenu", "bxtImport"); }
 function bxtVramToggle() {
@@ -6590,10 +6628,10 @@ function bxAccountBuild() {
     return;
   }
   item("signed in as " + BXACCT.name, "", null, true);
-  item("save this canvas …", "sealed here first — the server never sees the design",
-       () => { bxtDropsClose(); bxAccountSaveForm(); });
-  item("open a saved canvas …", "a design this account saved before",
-       () => { bxtDropsClose(); bxAccountOpenForm(); });
+  item("save · Ctrl+S, any time", "the active project, sealed in this browser first",
+       null, true);
+  item("open · the + beside the tabs", "saved canvases, each in its own tab",
+       null, true);
   item("log out", "this browser forgets the cookie and the token it held",
        () => { bxtDropsClose(); bxAccountLogout(); });
 }
@@ -6849,10 +6887,10 @@ function bxAccountUnlockForm() {
   bxAccountPlace();
   return true;
 }
-function bxAccountSaveForm() {
+function bxAccountSaveForm(onSaved, given) {
   if (!BXACCT.user || typeof fetch !== "function" || !bxCryptoReady()) return false;
   if (BXACCT.locked) { bxAccountUnlockForm(); return false; }
-  const design = bxExportCanvas();
+  const design = given || bxExportCanvas();
   const text = JSON.stringify(design);
   const wrap = bxAccountForm();
   if (!wrap) return false;
@@ -6873,7 +6911,10 @@ function bxAccountSaveForm() {
     if (saved) { bxMenuClose(); return; }
     const name = String(inp.value || "").trim();
     if (!name) { status.textContent = "the design needs a name"; return; }
-    bxAccountSave(name, design, status, go, () => { saved = true; });
+    bxAccountSave(name, design, status, go, () => {
+      saved = true;
+      if (onSaved) onSaved(name);               // the tab takes the name it was saved under
+    });
   });
   bxAccountPlace();
   return true;
@@ -7007,6 +7048,244 @@ function bxAccountOpenApply(name, design) {
   bxMenuClose();
   return true;
 }
+// ---- the project tabs: a browser-style strip above the toolbar -------------
+// One tab per open canvas; switching snapshots the one on screen and loads the
+// other through the same JSON path an imported design takes. Ctrl/Cmd+S saves
+// the active project: sealed in this browser first, ciphertext posted after.
+let BXTAB = { msg: "", view: "main" };         // the note line, and the + menu's view
+let bxTabSeq = 1;                              // the next "New Project N"
+
+function bxProject(id) {
+  const want = id === undefined ? BX.active : id;
+  return (BX.projects || []).find(p => p.id === want) || null;
+}
+function bxTabsSay(msg) { BXTAB.msg = String(msg || ""); bxTabsRender(); }
+function bxTabDirty() {                        // a change the server has not seen
+  const p = bxProject();
+  if (!p || p.dirty) return;
+  p.dirty = true;
+  bxTabsRender();
+}
+function bxTabStash() {                        // the screen's state → its tab
+  const p = bxProject();
+  if (!p) return null;
+  p.doc = bxExportCanvas() || p.doc;           // top level: the whole canvas
+  p.view = { cx: BX.view.cx, cy: BX.view.cy, k: BX.view.k };
+  p.undo = bxUndoStack;
+  p.redo = bxRedoStack;
+  p.undoLast = bxUndoLast;
+  return p;
+}
+function bxTabLoad(p, doc) {                   // a tab → the screen
+  const wasDirty = !!p.dirty;
+  BX.up = null;                                // a canvas loads at the top level
+  BX.stack = [];
+  const text = JSON.stringify(doc || p.doc ||
+                              { type: "canvas", version: 1, nodes: [], edges: [] });
+  const ok = bxJSONApply(bxJSONRead(text, {}), {});
+  if (!ok || !ok.ok) {
+    bxTabsSay(String((ok && ok.error) || "that canvas cannot be opened"));
+    return false;
+  }
+  if (p.undo) bxUndoStack = p.undo;            // the tab keeps its own history
+  else { bxUndoStack = [bxSnapshotNow()]; bxUndoLast = JSON.stringify(bxUndoStack[0]); }
+  bxRedoStack = p.redo || [];
+  if (p.undoLast != null) bxUndoLast = p.undoLast;
+  if (p.view && p.view.cx != null)             // …and the camera it was left at
+    BX.view = { cx: p.view.cx, cy: p.view.cy, k: p.view.k };
+  bxSel = null;
+  bxRunErr = null;
+  BXRUN.last = null;                           // the verdict was the other tab's
+  BXRUN.full_ms = null;
+  BXRUN.timing = null;
+  p.dirty = wasDirty;
+  bxRender();
+  bxTabsRender();
+  return true;
+}
+function bxTabSelect(id) {
+  if (id === BX.active || !bxProject(id)) return false;
+  bxTabStash();
+  BX.active = id;
+  BXTabSwitchSay: {}
+  bxTabsSay("");
+  return bxTabLoad(bxProject(id));
+}
+function bxTabNew() {                          // a blank canvas, its own tab
+  bxTabStash();
+  const p = { id: bxId(), name: "New Project " + (bxTabSeq++), dirty: false, saved: false };
+  (BX.projects = BX.projects || []).push(p);
+  BX.active = p.id;
+  BX.up = null;
+  BX.stack = [];
+  BX.nodes = [];
+  BX.edges = [];
+  BX.weights = {};
+  BX.model = null;
+  BX.view = { cx: null, cy: null, k: 1 };
+  bxSeedBlank();                               // the blank skeleton, wired already
+  bxUndoStack = [bxSnapshotNow()];
+  bxUndoLast = JSON.stringify(bxUndoStack[0]);
+  bxRedoStack = [];
+  bxSel = null;
+  p.dirty = false;                             // a fresh blank is nothing unsaved
+  bxtDropsClose();
+  bxRender();
+  bxTabsRender();
+  bxTabsSay("");
+  return p;
+}
+function bxTabOpenSaved(name, doc) {           // a saved canvas → its own tab
+  bxTabStash();
+  const p = { id: bxId(), name: String(name || "saved canvas"), dirty: false, saved: true };
+  (BX.projects = BX.projects || []).push(p);
+  BX.active = p.id;
+  if (!bxTabLoad(p, doc)) {
+    BX.projects = BX.projects.filter(x => x !== p);
+    BX.active = (BX.projects[BX.projects.length - 1] || {}).id || null;
+    return null;
+  }
+  p.dirty = false;
+  bxtDropsClose();
+  bxTabsSay("");
+  return p;
+}
+function bxTabSave() {                         // Ctrl/Cmd+S, and the saved names
+  const p = bxProject();
+  if (!p) return false;
+  if (typeof fetch !== "function") { bxTabsSay("the app cannot reach the server to save"); return false; }
+  if (!BXACCT.user) {
+    bxTabsSay("saving takes an account \u2014 create one from the block at the top right");
+    return false;
+  }
+  if (BXACCT.locked) {
+    bxTabsSay("the account is locked \u2014 unlock it with your token to save");
+    return false;
+  }
+  if (!p.saved) {                              // never saved: what name is this?
+    let design = bxExportCanvas();
+    if (!design) design = (bxTabStash() || {}).doc || null;   // saving from inside one
+    if (!design) { bxTabsSay("come back out to the top level to save"); return false; }
+    bxTabsSay("name this project \u2026");
+    bxAccountSaveForm((name) => {              // the dialog seals and posts it
+      if (!name) return;
+      p.name = String(name);
+      p.saved = true;
+      p.dirty = false;
+      bxTabsSay("saved \u00b7 " + p.name + " \u2713");
+      bxTabsRender();
+    }, design);
+    return true;
+  }
+  let design = bxExportCanvas();
+  if (!design) design = (bxTabStash() || {}).doc || null;
+  if (!design) { bxTabsSay("come back out to the top level to save"); return false; }
+  bxTabsSay("saving \u00b7 " + p.name + " \u2026");
+  bxAccountSave(p.name, design, null, null, () => {
+    p.dirty = false;
+    bxTabsSay("saved \u00b7 " + p.name + " \u2713");
+    bxTabsRender();
+  });
+  return true;
+}
+function bxTabsRender() {                      // the strip, its stars, the note
+  const rail = $("bxtabrail");
+  if (!rail) return;
+  rail.innerHTML = "";
+  for (const p of BX.projects || []) {
+    const t = mk("div", { class: "bxtab" + (p.id === BX.active ? " on" : ""),
+                          title: (p.saved ? "saved \u00b7 " : "not saved yet \u00b7 ") + p.name });
+    t.appendChild(mk("span", { class: "nm", text: p.name }));
+    if (p.dirty)
+      t.appendChild(mk("span", { class: "star", text: "*", title: "changes not saved" }));
+    t.addEventListener("click", () => bxTabSelect(p.id));
+    rail.appendChild(t);
+  }
+  const note = $("bxtabnote");
+  if (note) note.textContent = BXTAB.msg || "";
+}
+function bxtabToggle() {
+  const m = $("bxtabMenu");
+  if (!m) return false;
+  const open = !!m.hidden;
+  bxtDropsClose("bxtabMenu");
+  if (open) {
+    BXTAB.view = "main";
+    bxtabMenuBuild();
+  }
+  m.hidden = !open;
+  return open;
+}
+function bxtabMenuBuild() {                    // the + : New Canvas, Saved Canvas
+  const menu = $("bxtabMenu");
+  if (!menu) return;
+  menu.innerHTML = "";
+  const item = (text, title, fn, dim) => {
+    const it = mk("div", { class: "bxtmi" + (dim ? " dim" : ""), text, title });
+    if (fn) it.addEventListener("click", fn);
+    menu.appendChild(it);
+    return it;
+  };
+  if (BXTAB.view !== "saved") {
+    item("New Canvas", "a fresh blank canvas \u2014 nothing saved yet", () => bxTabNew());
+    item("Saved Canvas \u2026", "open one of your saved canvases in its own tab",
+         () => { BXTAB.view = "saved"; bxtabMenuBuild(); });
+    return;
+  }
+  item("\u2190 back", "the two ways in",
+       () => { BXTAB.view = "main"; bxtabMenuBuild(); });
+  if (!BXACCT.user) {
+    item("saving and opening need an account \u2014 create one at the top right",
+         "", null, true);
+    return;
+  }
+  if (BXACCT.locked) {
+    item("the account is locked \u2014 unlock it with your token", "", null, true);
+    return;
+  }
+  const list = mk("div", { class: "bxlist" });
+  const status = mk("div", { class: "bxtmi dim", text: "reading the list \u2026" });
+  menu.appendChild(list);
+  menu.appendChild(status);
+  if (typeof fetch !== "function") { status.textContent = "the app cannot reach the server"; return; }
+  fetch("/api/account/canvases").then(r => r.json()).then(d => {
+    if (!d || !d.ok) throw new Error((d && d.error) || "the list could not be read");
+    return bxTabSavedRows(list, status, d.canvases || []);
+  }).catch(e => { status.textContent = String((e && e.message) || e); });
+}
+async function bxTabSavedRows(list, status, rows) {
+  list.innerHTML = "";
+  if (!rows.length) {
+    status.textContent = "nothing saved yet \u2014 Ctrl+S saves this canvas";
+    return true;
+  }
+  const names = await Promise.all(rows.map(r =>
+    bxUnseal(BXACCT.token, r.name_ct).then(n => String(n), () => "(unreadable)")));
+  status.textContent = rows.length + (rows.length === 1 ? " canvas" : " canvases");
+  rows.forEach((r, i) => {
+    const rowl = mk("div", { class: "rowl", title: "open " + names[i] + " in a new tab" });
+    rowl.appendChild(mk("span", { class: "nm", text: names[i] }));
+    rowl.appendChild(mk("span", { class: "dt", text: bxWhen(r.updated) }));
+    rowl.addEventListener("click", () => bxTabOpenSavedRow(r.name_tag, names[i], status));
+    list.appendChild(rowl);
+  });
+  return true;
+}
+async function bxTabOpenSavedRow(tag, name, status) {
+  if (typeof fetch !== "function" || typeof status === "undefined") return;
+  if (status) status.textContent = "opening " + name + " \u2026";
+  try {
+    const r = await fetch("/api/account/canvas?tag=" + encodeURIComponent(tag));
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error((d && d.error) || "that canvas could not be read");
+    const design = await bxUnseal(BXACCT.token, d.blob);
+    if (!bxTabOpenSaved(name, design)) throw new Error("that canvas cannot be opened here");
+    bxtDropsClose();
+  } catch (e) {
+    if (status) status.textContent = String((e && e.message) || e);
+  }
+}
+
 // ---- the Backend menu: two dropdowns, their instructions inside ------------
 // The heavy work does not run in this page: Local dispatches to a connector on
 // your own machine, Remote launches on your own Modal account with your key.
@@ -7833,40 +8112,23 @@ function bxUsageWatch(on) {                    // the 5 s poll is fine when idle
 }
 function bxtRefresh() {
   const up = !!BX.up;
-  const btn = $("bxtFiles");
-  if (btn) {
-    if (btn.classList) btn.classList.toggle("off", up);
-    btn.title = up ? "come back out to the top level first" : "the design as JSON";
-  }
   const imp = $("bxtImport");                  // a whole model loads at the top level
   if (imp) {
     if (imp.classList) imp.classList.toggle("off", up);
     imp.title = up ? "come back out to the top level first" : "bring a GGUF model in";
   }
   if (up) {                                    // no toolbar menu survives going inside
-    for (const id of ["bxtFilesMenu", "bxtImportMenu"]) {
-      const m = $(id);
-      if (m) m.hidden = true;
-    }
+    const m = $("bxtImportMenu");
+    if (m) m.hidden = true;
   }
   bxtRunRefresh();                             // Run follows the backend's state
 }
 function bxtInit() {
-  const menu = $("bxtFilesMenu");
   const item = (text, title, fn) => {
     const it = mk("div", { class: "bxtmi", text, title });
     it.addEventListener("click", fn);
     return it;
   };
-  if (menu) {
-    menu.appendChild(item("export", "export the canvas as JSON",
-                          () => { bxtDropsClose(); bxtExport(); }));
-    menu.appendChild(item("import", "import JSON \u2026",
-                          () => { bxtDropsClose(); bxtImport(); }));
-    menu.appendChild(item("export weights …",
-                          "every weight box into one pt / safetensors file",
-                          () => { bxtDropsClose(); bxWeightsExportForm(); }));
-  }
   const imenu = $("bxtImportMenu");
   if (imenu) {                                 // the one door to a whole model
     imenu.appendChild(item("GGUF model \u2026",
@@ -7882,8 +8144,8 @@ function bxtInit() {
       });
   };
   bxtBackendLoad();                            // the remembered backend choice
-  wire("bxtFiles", bxtFilesToggle);
   wire("bxtPalette", bxtPaletteToggle);
+  wire("bxtabadd", bxtabToggle);
   wire("bxtImport", bxtImportToggle);
   wire("bxtBackend", bxtBackendToggle);
   wire("bxtVram", bxtVramToggle);
@@ -7891,7 +8153,7 @@ function bxtInit() {
   document.addEventListener("mousedown", (ev) => {   // a click outside closes them all
     const t = ev.target;
     if (t && t.closest && (t.closest(".bxtdrop") || t.closest(".bxtbtn") ||
-                           t.closest(".bxuser"))) return;
+                           t.closest(".bxuser") || t.closest(".bxtabadd"))) return;
     bxtDropsClose();
   });
   bxtDropsClose();                             // all menus start closed
@@ -9710,6 +9972,10 @@ function bxSeedBlank() {
   bxUndoLock--;
   bxUndoStack = [bxSnapshotNow()];         // the skeleton is where undo stops
   bxUndoLast = JSON.stringify(bxUndoStack[0]);
+  BX.projects = [{ id: bxId(), name: "New Project " + (bxTabSeq++), dirty: false,
+                   saved: false }];        // the blank canvas is its own tab
+  BX.active = BX.projects[0].id;
+  bxTabsRender();
   host.addEventListener("mouseleave", () => bxHotSet(null));
   window.addEventListener("mousemove", bxPalMove);
   window.addEventListener("mouseup", bxPalUp);
@@ -9740,6 +10006,12 @@ function bxSeedBlank() {
   document.addEventListener("paste", bxOnPaste);
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") { bxMenuClose(); bxSelect(null); return; }
+    if ((ev.ctrlKey || ev.metaKey) && !ev.altKey &&
+        String(ev.key || "").toLowerCase() === "s") {
+      ev.preventDefault();                     // the browser's own save stays away
+      bxTabSave();
+      return;
+    }
     const t = ev.target;
     const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" ||
                          t.tagName === "SELECT" || t.isContentEditable);

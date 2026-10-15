@@ -46,6 +46,11 @@ values are derived from the token, in the browser, each under its own label:
 | `name tag` = sha256("nnstudio-name-v1" + token + lower(name)) | with each save | the tag itself — keyed, so it cannot be matched to a guessed name |
 | data key = sha256("nnstudio-data-v1" + token) → AES-GCM | nothing | — |
 
+Designs are saved from the **project tabs** above the toolbar: `Ctrl/Cmd+S`
+saves the active one (a new project asks for its name first), the `+` at the
+strip's right opens **New Canvas** or your **Saved Canvas** list — each saved
+canvas opens as its own tab.
+
 Names and designs are sealed with AES-GCM *before* they are sent; `users.db`
 holds the tag, the sealed name, the sealed design, and the auth hash — no
 plaintext name, design, or credential. What stays visible is only metadata:
@@ -121,7 +126,7 @@ code (git-ignored) is the default.
 
 | file | role |
 |---|---|
-| `ui/index.html` | the whole app — the canvas, the toolbar (Files · Palette · Backend — the server config's door, up top of that menu — · VRAM), the right-click menus; one self-contained page |
+| `ui/index.html` | the whole app — the canvas, the project tabs above it (Ctrl/Cmd+S saves; the + opens New Canvas / Saved Canvas), the toolbar (Palette · Import · Backend — the server config's door, up top of that menu — · VRAM), the right-click menus; one self-contained page |
 | `nn_engine.py` | the GGUF/HF → canvas builder (`build_canvas` is pure; `gguf_canvas`/`hf_canvas` read real headers) — extracted from next-token's engine |
 | `nn_server.py` | the stdlib server: the UI, the GGUF list, the builder endpoint, the GPU badge, the agents' control listener and the run dispatch |
 | `nn_users.py` | accounts for saving designs: sealed names/designs, keyed tags, the auth hash, the Turnstile check (`users.db`, git-ignored — ciphertext only) |

@@ -196,8 +196,15 @@
 <section class="card" id="canvas">
   <h1>The canvas: using it</h1>
   <p class="dim">
-    The toolbar strip above the canvas has its menus:
-    <span class="pill grey">Files ▾</span> <span class="pill grey">Palette ▾</span>
+    Above the canvas, a <b>browser-style strip of project tabs</b>: one tab per
+    open canvas, titled with its project name (<i>New Project 1</i> for a blank),
+    a <b>*</b> when there are changes the server has not seen, and a
+    <span class="pill grey">+</span> at the right that offers <b>New Canvas</b>
+    (a fresh blank, nothing saved yet) and <b>Saved Canvas …</b> (your saved
+    canvases — each opens as its own tab). <b>Ctrl/Cmd+S</b> saves the active
+    project: a new one asks what to name it first; a saved one saves silently
+    (same name, replaced). Below the strip, the toolbar's menus:
+    <span class="pill grey">Palette ▾</span>
     <span class="pill grey">Import ▾</span> <span class="pill grey">Backend ▾</span>
     <span class="pill grey">VRAM ▾</span> — the
     <span class="pill">server config</span>'s door is the <b>first row of the
@@ -335,11 +342,13 @@
 
   <h2>Designs, saving, sharing</h2>
   <p>
-    Everything on the canvas is a <b>design</b> — plain JSON.
-    <span class="pill grey">Files ▾</span> exports it (a <code>.json</code> file),
-    imports one back, and lists what's saved. Design JSON nests: a nested box
-    carries its own network inside the file, so one file can hold a whole model.
-    The canvas also auto-saves in the browser — reload and your work is still there.
+    Everything on the canvas is a <b>design</b> — plain JSON. Right-click the
+    canvas → <b>the design</b> exports it (a <code>.json</code> file), imports
+    one back, and exports the whole design's weights. Design JSON nests: a nested
+    box carries its own network inside the file, so one file can hold a whole
+    model. <b>There is no autosave</b>: the tabs live in this page, so a reload
+    starts a fresh <i>New Project 1</i> — <b>Ctrl/Cmd+S</b> is how a design
+    outlives it (saving takes an account, below).
   </p>
   <p>
     <b>Everyone starts a guest.</b> A guest draws, wires and runs like anyone;
@@ -350,8 +359,11 @@
     <b>username</b> and an <b>optional email</b> (sealed like everything else),
     then this browser makes a token — 32 random bytes, shown once — and the
     token is the whole login. Anywhere else, <i>log in with a token</i> and
-    paste it. Signed in, its menu saves the canvas under a name of yours and
-    opens what was saved; saving over a name replaces it.
+    paste it. Signed in, <b>Ctrl/Cmd+S</b> saves the active project — sealed in
+    this browser first — and the <span class="pill grey">+</span> beside the
+    tabs lists what was saved, each opening as its own tab; saving over a name
+    replaces it. The account menu keeps the account itself: who is signed in,
+    unlock, log out.
   </p>
   <p>
     <b>The server cannot read any of it.</b> The token never leaves the
