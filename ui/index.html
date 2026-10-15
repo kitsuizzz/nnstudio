@@ -9545,8 +9545,11 @@ function bxUp(ev) {
 function bxSeedBlank() {
   if (BX.up || BX.nodes.length) return false;
   const i = bxAdd("input", 320, 200, {});
-  const o = bxAdd("output", 640, 200, {});
-  if (!i || !o) return false;
+  if (!i) return false;
+  // the output sits clear of the input — a wire's runway, measured from the
+  // input's real width (these are roomy windows, not little cards)
+  const o = bxAdd("output", i.x + bxNodeW(i) + 200, 200, {});
+  if (!o) return false;
   bxConnect(i.id, o.id);                   // directly: input → output
   bxSettleSizes();
   bxRender();

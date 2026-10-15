@@ -4140,6 +4140,8 @@ check("a blank network is one input wired straight into one output", () => {
   eql([e.from, e.to], [ins[0].id, outs[0].id], "…running input → output");
   eql([ins[0].x % 40, ins[0].y % 40, outs[0].x % 40, outs[0].y % 40], [0, 0, 0, 0],
     "…and both sit on the grid");
+  const air = outs[0].x - (ins[0].x + __t.bxNodeW(ins[0]));
+  ok(air >= 120, "…and clear air between them: " + air + " px");
   ok(__t.bxSeedBlank() === false, "a used canvas is left alone");
 });
 
