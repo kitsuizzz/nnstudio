@@ -4509,6 +4509,10 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
   eql(__t.BXACCT.user, null, "the account starts empty: a guest");
   eql(getEl("bxuname").textContent, "guest", "the header's user block says guest");
   eql(__t.bxAccountSaveForm(), false, "a guest has no save dialog");
+  ok(__t.bxAccountLogin() === true, "the login dialog opens");
+  eql(getEl("bxmenu").querySelectorAll(".bxinp")[0].type, "password",
+      "\u2026and the token field is masked");
+  __t.bxMenuClose();
   ok(__t.bxtAccountToggle() === true && !getEl("bxtAccountMenu").hidden,
      "the account menu opens");
   const guestItems = getEl("bxtAccountMenu").children.map(c => c.textContent);
@@ -4613,6 +4617,8 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
   eql(__t.bxAccountSaveForm(), false, "…saving waits for the unlock");
   __t.bxAccountUnlockForm();
   const f3 = getEl("bxmenu");
+  eql(f3.querySelectorAll(".bxinp")[0].type, "password",
+      "\u2026and the unlock token is masked too");
   f3.querySelectorAll(".bxinp")[0].value = "not-the-token";
   f3.querySelectorAll(".chip").find(c => String(c.textContent) === "unlock").click();
   const hint = f3.querySelectorAll(".panehint");

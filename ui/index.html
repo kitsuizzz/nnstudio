@@ -512,7 +512,8 @@
   .bxmenu .bf .row { display: flex; gap: 6px; justify-content: flex-end; }
   /* the account dialogs: a username, Cloudflare's widget, the token shown once */
   .bxmenu .bf.bxacct { min-width: 340px; max-width: 440px; }
-  .bxmenu .bf.bxacct input[type="text"] { width: 100%; border-radius: 0;
+  .bxmenu .bf.bxacct input[type="text"],
+  .bxmenu .bf.bxacct input[type="password"] { width: 100%; border-radius: 0;
     padding: 7px 9px; font: 12.5px var(--mono); }
   /* the bot check sits in the middle of the dialog, not off to one side */
   .bxmenu .bf.bxacct .bxcf { display: flex; justify-content: center; padding: 8px 0; }
@@ -6702,7 +6703,7 @@ function bxAccountLogin() {
     text: "an account shows its token once, when it is created — paste that here. " +
           "It stays in this browser: it authenticates and it decrypts." }));
   const lab = mk("label", { text: "token" });
-  const inp = mk("input", { class: "bxinp", type: "text", autocomplete: "off",
+  const inp = mk("input", { class: "bxinp", type: "password", autocomplete: "off",
                             placeholder: "the 43-character token" });
   lab.appendChild(inp);
   wrap.appendChild(lab);
@@ -6743,7 +6744,7 @@ function bxAccountUnlockForm() {
     text: "the token is the key. The server never had it — this browser just needs " +
           "to be told it again." }));
   const lab = mk("label", { text: "token" });
-  const inp = mk("input", { class: "bxinp", type: "text", autocomplete: "off",
+  const inp = mk("input", { class: "bxinp", type: "password", autocomplete: "off",
                             placeholder: "the token your account showed you" });
   lab.appendChild(inp);
   wrap.appendChild(lab);
