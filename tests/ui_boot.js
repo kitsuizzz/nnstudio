@@ -4700,6 +4700,28 @@ check("the output's training tab: the switch, the plan, and the input's dots", (
   __t.bxRemove(ys.id);
 });
 
+check("the veterans' way plans too: a wired dataset→loss needs no config", () => {
+  const out = __t.bxAdd("output", 320, 0, { din: 8, train: true });
+  const inp = __t.bxAdd("input", 0, 0, { dout: 8 });
+  const l1 = __t.bxAdd("layer", 0, 240, { din: 8, dout: 8 });
+  const ds = __t.bxAdd("dataset", 0, 480, { format: "csv", text: "a,b\nc,d" });
+  const loss = __t.bxAdd("loss", 320, 480, { din: 8 });
+  eql(__t.bxConnect(inp.id, l1.id, 0, 0), null, "the network wires");
+  eql(__t.bxConnect(l1.id, out.id, 0, 0), null, "\u2026into the output");
+  eql(__t.bxConnect(ds.id, loss.id, 0, 1), null, "the dataset into the loss's second dot");
+  eql(__t.bxConnect(l1.id, loss.id, 0, 0), null, "\u2026and the model's scores into its first");
+  const sum = __t.bxTrainSummary(out);
+  ok(!sum.missing.some(m => m.indexOf("train config") >= 0 || m.indexOf("no data") >= 0),
+     "no config needed \u2014 the loss wire is the signal: " + sum.missing.join(" | "));
+  ok(sum.lines.join(" | ").indexOf("signal \u00b7") >= 0,
+     "\u2026and the plan says so: " + sum.lines.join(" | "));
+  __t.bxRemove(out.id);
+  __t.bxRemove(inp.id);
+  __t.bxRemove(l1.id);
+  __t.bxRemove(ds.id);
+  __t.bxRemove(loss.id);
+});
+
 check("the server config: one only, at the top level, and no rename", () => {
   const tr = __t.bxAdd("train", 0, 0, {});
   ok(!!tr && tr.name === "server config 1", "a server config lands, named server config 1");
