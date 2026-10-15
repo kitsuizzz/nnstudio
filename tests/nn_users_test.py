@@ -4,6 +4,7 @@ the sealed design — and only the auth credential's hash. Never a plaintext
 name, design or credential. (Plus the bot check's answers and the .env loader.)
 """
 import base64
+import json
 import os
 import sqlite3
 import sys
@@ -192,7 +193,30 @@ def designs():
         assert "account" in str(e), e
 
 
+def email_migration():
+    """A users.db from before the email column: ensure() adds it in place,
+    and the accounts already in it carry on."""
+    path = os.path.join(WORK, "migrate.db")
+    conn = sqlite3.connect(path)
+    conn.execute("""CREATE TABLE users (
+        id TEXT PRIMARY KEY, name_tag TEXT UNIQUE, name_ct TEXT NOT NULL,
+        auth_hash TEXT NOT NULL, created REAL NOT NULL)""")
+    conn.execute("INSERT INTO users VALUES ('u_old', ?, ?, ?, 1.0)",
+                 (tag("0"), json.dumps(sealed("old")),
+                  nn_users.hash_auth(nn_users.new_auth())))
+    conn.commit()
+    conn.close()
+    auth = nn_users.new_auth()
+    u = nn_users.register(tag("1"), sealed("newcomer"), auth,
+                          email_ct=sealed("n@example.com"), path=path)
+    assert u["email_ct"], u
+    assert nn_users.user_for(auth, path=path)["email_ct"] == u["email_ct"]
+    rows = sqlite3.connect(path).execute("select id from users order by created").fetchall()
+    assert [r[0] for r in rows] == ["u_old", u["id"]], "the old row stays where it was"
+
+
 check("an account: a hashed credential, a sealed name, nothing plaintext", registering)
+check("an older users.db grows the email column in place", email_migration)
 check("the bot check: Cloudflare's answer decides", the_bot_check)
 check("the .env next to the code seeds the keys — an env var still wins", the_env_file)
 check("an old store steps aside for the sealed one, nothing deleted", the_old_store)
