@@ -920,6 +920,8 @@ check("the heatmap: a vector in, a picture out, drawn in its own window", () => 
                              image: { w: 4, h: 2, blob: "", thumb: { w: 4, h: 2, rgb } } };
   const d = pane();
   ok(d.querySelectorAll(".bxoutimg").length === 1, "…and after one it draws the picture");
+  ok(d.querySelectorAll(".chip").map(c => c.textContent).indexOf("save image") >= 0,
+     "…with copy and save at hand");
   ok(d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
        .indexOf("4×2 px") >= 0, "…with its size under it");
   ok(String(__t.bxShape(hm)).indexOf("image 4×2") >= 0, "…and the card says so");
@@ -2096,6 +2098,73 @@ check("the i/o windows: roomy by default, and their corner adjusts them", () => 
   eql([back.box.w, back.box.h], [520, 400], "…and the size travels with the design");
   __t.bxRemove(o.id);
   __t.bxRemove(i.id);
+  eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
+});
+
+check("an image at an output: copy it, or save it as a PNG", async () => {
+  const nodes0 = __t.BX.nodes.length;
+  const out = __t.bxAdd("output", 0, 0, { din: 3 });
+  const pane = () => { const d = document.createElement("div"); __t.bxOutputFill(d, out); return d; };
+  // a stored picture (an image input's own): the state names the blob
+  __t.bxRunValues[out.id] = { shape: [2, 2, 3],
+                              image: { w: 2, h: 2, blob: "blob:pic.png", thumb: null } };
+  let paneNow = pane();
+  ok(paneNow.querySelectorAll(".bxoutimg").length === 1, "the picture is drawn");
+  const chips = paneNow.querySelectorAll(".chip").map(c => c.textContent);
+  ok(chips.indexOf("copy image") >= 0 && chips.indexOf("save image") >= 0,
+     "…with copy and save at hand: " + chips.join(" | "));
+  // save image: a PNG download named after the box
+  const made = [], realCreate = document.createElement, realFetch = global.fetch;
+  const hadNav = Object.getOwnPropertyDescriptor(global, "navigator");
+  document.createElement = (t) => { const e = realCreate(t); if (t === "a") made.push(e); return e; };
+  const blob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" });
+  global.fetch = async (url) => {
+    if (String(url).indexOf("/api/blob?id=") === 0)
+      return { ok: true, blob: async () => blob };
+    return realFetch(url);
+  };
+  paneNow = pane();
+  const saveChip = paneNow.querySelectorAll(".chip").find(c => c.textContent === "save image");
+  saveChip.click();
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  ok(made.length === 1 && made[0].download === "output-1.png",
+     "save image downloads it, named after the box: " + (made[0] || {}).download);
+  ok(saveChip.textContent === "saved ✓", "…and the chip says so");
+  // copy image: the same PNG onto the clipboard
+  let wrote = null;
+  global.ClipboardItem = class { constructor(m) { for (const k of Object.keys(m)) this[k] = m[k]; } };
+  Object.defineProperty(global, "navigator", {
+    value: { clipboard: { write: async (items) => { wrote = items; } } }, configurable: true });
+  __t.bxRunValues[out.id] = { shape: [2, 2, 3],   // a concurrent check may have loaded
+                              image: { w: 2, h: 2, blob: "blob:pic.png", thumb: null } };
+  paneNow = pane();
+  const copyChip = paneNow.querySelectorAll(".chip").find(c => c.textContent === "copy image");
+  copyChip.click();
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  ok(wrote && wrote.length === 1 && wrote[0]["image/png"] === blob,
+     "copy image puts the PNG on the clipboard");
+  ok(copyChip.textContent === "copied ✓", "…and the chip says so");
+  // a bare thumbnail (no blob) needs a real canvas to encode — the stub says so
+  __t.bxRunValues[out.id] = { shape: [2, 2, 3],
+                              image: { w: 2, h: 2, blob: "",
+                                       thumb: { w: 2, h: 2,
+                                                rgb: Buffer.from(new Uint8Array(12)).toString("base64") } } };
+  paneNow = pane();
+  const tChip = paneNow.querySelectorAll(".chip").find(c => c.textContent === "save image");
+  tChip.click();
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  ok(String(tChip.textContent).indexOf("cannot export") >= 0,
+     "a bare thumbnail explains what is missing: " + tChip.textContent);
+  // tidy
+  document.createElement = realCreate;
+  global.fetch = realFetch;
+  delete global.ClipboardItem;
+  if (hadNav) Object.defineProperty(global, "navigator", hadNav);
+  delete __t.bxRunValues[out.id];
+  __t.bxRemove(out.id);
   eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
 });
 

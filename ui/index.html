@@ -850,8 +850,8 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 .bxbcode { margin: 0; font: 11px/1.5 var(--mono); color: var(--ink);
            background: rgba(0,0,0,.3); border: 1px solid var(--panel-brd);
            border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; }
-.bxtdrop .rrow, .bxrunbody .rrow, .runfoot .rrow { display: flex; gap: 6px;
-                                                     align-items: center; }
+.bxtdrop .rrow, .bxrunbody .rrow, .runfoot .rrow, .bxinputbody .rrow {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 /* the input's run action: a footer with air under it, so the button never
    touches the box's bottom edge (the corner grip keeps its room too) */
 .bxlogpane .runfoot { display: flex; flex-direction: column; align-items: flex-start;
@@ -4103,13 +4103,14 @@ function bxImageAttach(n, f, zone) {           // a file -> the media store -> t
     });
   return true;
 }
-function bxImageDraw(body, st) {               // the picture a state carries, drawn
+function bxImageDraw(body, st, name) {         // the picture a state carries, drawn
   const im = st && st.image;                   // as it arrived — blob or thumbnail
   if (!im || !body) return false;
   const bid = String(im.blob || "").replace(/^blob:/, "");
   if (bid) {
     body.appendChild(mk("img", { class: "bxoutimg",
                                  src: "/api/blob?id=" + encodeURIComponent(bid) }));
+    if (name) bxImageActions(body, st, name);
     return true;
   }
   const t = im.thumb;
@@ -4130,9 +4131,98 @@ function bxImageDraw(body, st) {               // the picture a state carries, d
       }
       ctx.putImageData(px, 0, 0);
     }
+    if (name) bxImageActions(body, st, name);
     return true;
   }
   return false;
+}
+function bxImageFileName(name, st) {          // a box's name, as a file name —
+  const im = (st && st.image) || {};           // with the stored picture's own
+  const bid = String(im.blob || "").replace(/^blob:/, "");
+  const ext = (bid.split(".").pop() || "").toLowerCase();   // extension when there
+  const keep = /^(png|jpe?g|webp|gif|avif|bmp)$/.test(ext); // is one (a thumbnail
+  const base = String(name || "image").trim().replace(/[^\w.-]+/g, "-")   // always
+                     .replace(/^-+|-+$/g, "");              // re-encodes to png)
+  return (base || "image") + "." + (keep ? ext : "png");
+}
+function bxImageBlob(st) {                     // the picture as a PNG blob, either way
+  return new Promise((resolve, reject) => {
+    const im = (st && st.image) || {};
+    const bid = String(im.blob || "").replace(/^blob:/, "");
+    if (bid) {                                 // the stored picture: ask the server
+      if (typeof fetch !== "function")
+        return reject(new Error("the app cannot reach the server"));
+      fetch("/api/blob?id=" + encodeURIComponent(bid))
+        .then(r => (r && r.ok && r.blob ? r.blob()
+                                        : Promise.reject(new Error("the picture could not be read"))))
+        .then(resolve, reject);
+      return;
+    }
+    const t = im.thumb;
+    if (!t || !t.rgb || typeof atob !== "function" ||
+        typeof document === "undefined" || !document.createElement)
+      return reject(new Error("this picture is not copyable here"));
+    const cv = document.createElement("canvas");
+    cv.width = t.w;
+    cv.height = t.h;
+    const ctx = cv.getContext && cv.getContext("2d");
+    if (!ctx || !cv.toBlob)
+      return reject(new Error("this browser cannot export the picture"));
+    const bin = atob(t.rgb);                   // the backend's own RGB bytes
+    const px = ctx.createImageData(t.w, t.h);
+    for (let i = 0, j = 0; i < px.data.length; i += 4, j += 3) {
+      px.data[i] = bin.charCodeAt(j);
+      px.data[i + 1] = bin.charCodeAt(j + 1);
+      px.data[i + 2] = bin.charCodeAt(j + 2);
+      px.data[i + 3] = 255;
+    }
+    ctx.putImageData(px, 0, 0);
+    cv.toBlob((b) => b ? resolve(b)
+                       : reject(new Error("the picture could not be encoded")), "image/png");
+  });
+}
+function bxImageSave(st, file, chip) {         // save image: a plain PNG download
+  bxImageBlob(st).then(blob => {
+    if (typeof URL === "undefined" || !URL.createObjectURL ||
+        typeof document === "undefined" || !document.createElement)
+      throw new Error("this browser cannot save files");
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = file;
+    if (a.click) a.click();
+    if (URL.revokeObjectURL) URL.revokeObjectURL(url);
+    if (chip) chip.textContent = "saved \u2713";
+  }).catch(e => {
+    if (chip) chip.textContent = String((e && e.message) || e).slice(0, 46);
+  });
+}
+function bxImageCopy(st, chip) {               // copy image: onto the clipboard
+  bxImageBlob(st).then(blob => {
+    if (typeof navigator === "undefined" || !navigator.clipboard ||
+        !navigator.clipboard.write || typeof ClipboardItem === "undefined")
+      throw new Error("clipboard images need Chrome \u2014 use save");
+    return navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+  }).then(() => { if (chip) chip.textContent = "copied \u2713"; },
+          e => { if (chip) chip.textContent = String((e && e.message) || e).slice(0, 46); });
+}
+function bxImageActions(body, st, name) {      // the two ways to keep the picture
+  const row = mk("div", { class: "rrow" });
+  const file = bxImageFileName(name, st);
+  const chip = (label, title, fn) => {
+    const b = mk("span", { class: "chip tiny", text: label, title: title });
+    b.addEventListener("mousedown", (e) => {   // a display click is not a canvas click:
+      if (e && e.stopPropagation) e.stopPropagation();   // the state stays put
+    });
+    b.addEventListener("click", () => fn(b));
+    row.appendChild(b);
+    return b;
+  };
+  chip("copy image", "put the picture on the clipboard as a PNG",
+       (b) => bxImageCopy(st, b));
+  chip("save image", "download it as " + file, (b) => bxImageSave(st, file, b));
+  body.appendChild(row);
+  return row;
 }
 function bxOutputFill(pane, n) {               // the output's window: whatever data
   // the last run handed it \u2014 and, one tab over, the training it carries
@@ -4177,7 +4267,8 @@ function bxOutputFill(pane, n) {               // the output's window: whatever 
     return;
   }
   if (st.image) {                              // a picture arrived: draw the data
-    const drew = bxImageDraw(body, st);        // as it is, then say what it is
+    const drew = bxImageDraw(body, st, n.name || "output");   // as it is, then
+                                               // say what it is — and how to keep it
     if (!drew) {
       body.appendChild(mk("div", { class: "panehint",
         text: "an image arrived (" + (st.image.w || "?") + "\u00d7"
@@ -4308,7 +4399,7 @@ function bxHeatFill(pane, n) {                 // the heatmap's window: the pict
       text: "no picture yet \u2014 run the design and the vector it receives draws here" }));
     return;
   }
-  const drew = bxImageDraw(body, st);
+  const drew = bxImageDraw(body, st, n.name || "heatmap");
   if (!drew)
     body.appendChild(mk("div", { class: "panehint",
       text: "an image arrived (" + (st.image.w || "?") + "\u00d7"

@@ -642,7 +642,8 @@
       length with no square-ish factor pair (a prime) gets a near-square grid
       whose padded tail reads neutral gray — never an invented value. The
       picture is an ordinary RGB matrix in 0..1, so it <b>reads as an image
-      everywhere</b>: its own window draws it after a run, and an
+      everywhere</b>: its own window draws it after a run (with copy/save at
+      hand), and an
       <span class="pill">output</span> box at the end of the wire shows it too.
       Feeding it a bigger matrix? Everything is flattened — put a
       <span class="pill">slice</span> in front to picture one row.</p>
@@ -659,7 +660,11 @@
     <div class="bdet">
       <p>The end of the line: its own window shows whatever data reaches it — the
       numbers it received (with the shape and mean under them), or the text it
-      produced — and says <i>no data yet</i> until a run. Name
+      produced — and says <i>no data yet</i> until a run. When the data is a
+      picture, it is drawn right there, with <b>copy image</b> (onto the
+      clipboard) and <b>save image</b> (a download named after the box — the
+      stored file's own format, or a PNG re-encoded from the run's thumbnail)
+      under it. Name
       outputs after what they are (<code>logits</code>, <code>hidden</code>) — runs
       report per output name. The window opens roomy; double-click the box for
       the compact size, or drag its corner to size it yourself.</p>
