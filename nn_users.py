@@ -41,6 +41,7 @@ TAG_RE = re.compile(r"^[0-9a-f]{64}$")         # a 32-byte sha256, hex
 B64_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
 IV_MAX = 64                                    # a GCM nonce, base64
 NAME_CT_MAX = 1024                             # a sealed name, base64 chars
+EMAIL_CT_MAX = 1024                            # a sealed email, base64 chars
 BLOB_MAX = 6 * 1024 * 1024                     # a sealed design, base64 chars
 
 SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
@@ -100,7 +101,12 @@ def ensure(path=None):
             name_tag TEXT UNIQUE,
             name_ct TEXT NOT NULL,
             auth_hash TEXT NOT NULL,
-            created REAL NOT NULL)""")
+            created REAL NOT NULL,
+            email_ct TEXT)""")
+        # an older users.db: the optional email joins the row in place
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)")]
+        if "email_ct" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN email_ct TEXT")
         conn.execute("""CREATE TABLE IF NOT EXISTS canvases (
             user_id TEXT NOT NULL,
             name_tag TEXT NOT NULL,
@@ -154,8 +160,12 @@ def _unpack(text):
 
 
 def _user(row):
+    if not row:
+        return None
+    keys = row.keys()
     return {"id": row["id"], "name_ct": _unpack(row["name_ct"]),
-            "created": row["created"]} if row else None
+            "email_ct": _unpack(row["email_ct"]) if "email_ct" in keys else None,
+            "created": row["created"]}
 
 
 def user_for(auth, path=None):
@@ -169,10 +179,13 @@ def user_for(auth, path=None):
         return _user(row)
 
 
-def register(name_tag, name_ct, auth, path=None):
-    """Create the account. Raises ValueError with the reason it is refused."""
+def register(name_tag, name_ct, auth, email_ct=None, path=None):
+    """Create the account. Raises ValueError with the reason it is refused.
+    The email is optional, and sealed like the name: for the server it is
+    ciphertext either way."""
     tag = _tag(name_tag, "account tag")
     sealed = _sealed(name_ct, "account name", NAME_CT_MAX)
+    sealed_mail = _sealed(email_ct, "account email", EMAIL_CT_MAX) if email_ct else None
     auth = str(auth or "")
     if not TAG_RE.match(auth):
         raise ValueError("the auth credential is not a sha256")
@@ -181,9 +194,11 @@ def register(name_tag, name_ct, auth, path=None):
         if conn.execute("SELECT 1 FROM users WHERE name_tag = ?", (tag,)).fetchone():
             raise ValueError("that name is taken")
         uid = "u_" + secrets.token_hex(8)
-        conn.execute("INSERT INTO users (id, name_tag, name_ct, auth_hash, created)"
-                     " VALUES (?,?,?,?,?)", (uid, tag, sealed, hash_auth(auth), time.time()))
-    return {"id": uid, "name_ct": _unpack(sealed), "created": time.time()}
+        conn.execute("INSERT INTO users (id, name_tag, name_ct, auth_hash, created,"
+                     " email_ct) VALUES (?,?,?,?,?,?)",
+                     (uid, tag, sealed, hash_auth(auth), time.time(), sealed_mail))
+    return {"id": uid, "name_ct": _unpack(sealed), "email_ct": _unpack(sealed_mail),
+            "created": time.time()}
 
 
 # ---------------------------------------------------------------- bot check

@@ -77,6 +77,24 @@ def registering():
             raise AssertionError("accepted a bad sealed name: %r" % (bad,))
         except ValueError:
             pass
+    # the optional email: sealed like the name, carried back to its owner only
+    auth2 = nn_users.new_auth()
+    u2 = nn_users.register(tag("f"), sealed("mailer"), auth2,
+                           email_ct=sealed("t@example.com"), path=DB)
+    assert u2["email_ct"] and "t@example.com" not in str(u2), u2
+    back = nn_users.user_for(auth2, path=DB)
+    assert back["email_ct"] == u2["email_ct"], "the email comes back to its owner"
+    assert nn_users.user_for(auth, path=DB)["email_ct"] is None, "an account without one"
+    blob = open(DB, "rb").read()
+    assert b"t@example.com" not in blob, "not one plaintext email in the whole file"
+    for bad in ({"iv": "AA==", "ct": ""},
+                {"iv": "AA==", "ct": "x" * (nn_users.EMAIL_CT_MAX + 2)}):
+        try:
+            nn_users.register(tag("g"), sealed("x"), nn_users.new_auth(),
+                              email_ct=bad, path=DB)
+            raise AssertionError("accepted a bad sealed email: %r" % (bad,))
+        except ValueError:
+            pass
 
 
 def the_bot_check():

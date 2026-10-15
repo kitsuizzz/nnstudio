@@ -29,11 +29,13 @@ straight from `nvidia-smi`), `/api/backend` (who is connected) and
 
 Everyone starts a **guest**: drawing, wiring, running and training all work
 with no account, and nothing of the session is kept on the server. An account
-is only what the server saves a canvas *for*. Creating one always goes through
+is only what the server saves a canvas *for* — it carries a username and an
+optional email, sealed like everything else. Creating one always goes through
 Cloudflare's bot check (Turnstile): the browser solves the challenge, generates
 its own token — 32 random bytes, never a password, shown once — and the
 register endpoint verifies the challenge with Cloudflare before the row
-exists.
+exists. The account lives in the header's top-right block (icon and name)
+throughout.
 
 **The server never sees the token, and cannot read what it saves.** Three
 values are derived from the token, in the browser, each under its own label:
@@ -54,7 +56,7 @@ unlocked; *log out* forgets it, and a browser without it shows the account
 locked ("account 🔒") until the token is pasted again.
 
 Endpoints, sealed end to end: `/api/account/register` (`name_tag`, `name_ct`,
-`auth`, `challenge`), `/api/account/login` (`auth`), `/api/account/save`
+`auth`, `challenge`, `email_ct` when given), `/api/account/login` (`auth`), `/api/account/save`
 (`name_tag`, `name_ct`, `blob`), `/api/account/canvases`,
 `/api/account/canvas?tag=…`, `/api/account/delete` (`name_tag`). Sealing needs
 WebCrypto, which browsers only expose on secure origins — `http://localhost`

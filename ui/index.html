@@ -39,6 +39,19 @@
   }
   .logo { font-weight: 700; font-size: 26px; letter-spacing: -.02em; }
   .logo span { color: var(--accent); }
+  /* the account: its own corner of the header — an icon, the name, a menu */
+  .bxuser { position: relative; margin-left: auto; align-self: center; }
+  .bxuserbtn { display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+               border: 1px solid var(--panel-brd); background: rgba(0,0,0,.25);
+               padding: 6px 12px 6px 9px; color: var(--ink-dim);
+               font: 600 12.5px var(--mono); user-select: none;
+               transition: color .15s, border-color .15s; }
+  .bxuserbtn:hover { color: var(--ink); border-color: rgba(249,115,22,.6); }
+  .bxuserbtn .bxuico { width: 15px; height: 15px; fill: none; stroke: currentColor;
+                       stroke-width: 1.3; stroke-linecap: round; }
+  .bxuserbtn.locked .bxuico { opacity: .55; }
+  .bxuserbtn .bxucar { color: var(--ink-faint); font-size: 10px; }
+  .bxuser .bxtdrop { top: 100%; left: auto; right: 0; margin-top: 6px; }
   .modes { display: flex; gap: 6px; }
   .mode {
     cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink-dim);
@@ -497,10 +510,12 @@
   .bxmenu .bf.bximp { min-width: 340px; }
   .bxmenu .bf.bximp select { flex: 1 1 auto; min-width: 0; }
   .bxmenu .bf .row { display: flex; gap: 6px; justify-content: flex-end; }
-  /* the account dialogs: a name, Cloudflare's widget, the token shown once */
+  /* the account dialogs: a username, Cloudflare's widget, the token shown once */
   .bxmenu .bf.bxacct { min-width: 340px; max-width: 440px; }
   .bxmenu .bf.bxacct input[type="text"] { width: 100%; border-radius: 0;
     padding: 7px 9px; font: 12.5px var(--mono); }
+  /* the bot check sits in the middle of the dialog, not off to one side */
+  .bxmenu .bf.bxacct .bxcf { display: flex; justify-content: center; padding: 8px 0; }
   .bxmenu .bf.bxacct textarea.bxtok { width: 100%; height: 56px; min-height: 0; border-radius: 0;
     font: 12px/1.5 var(--mono); word-break: break-all; }
   .bxmenu .bf.bxacct .bxlist { display: flex; flex-direction: column; gap: 4px;
@@ -956,6 +971,17 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
 <header>
   <div class="logo">nn<span>·</span>studio</div>
   <div class="sub">compose the network on the canvas, wire it, price it, then run it</div>
+  <div class="bxuser" id="bxuser">
+    <span class="bxuserbtn" id="bxtAccount" title="a guest: drawing and running are free, saving takes an account">
+      <svg class="bxuico" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="5" r="3.1"/>
+        <path d="M2.3 14.3c.6-3 3-4.6 5.7-4.6s5.1 1.6 5.7 4.6"/>
+      </svg>
+      <span class="bxuname" id="bxuname">guest</span>
+      <span class="bxucar">▾</span>
+    </span>
+    <div class="bxtdrop bxtdrop-r" id="bxtAccountMenu" hidden></div>
+  </div>
 </header>
 
 <main>
@@ -976,8 +1002,6 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
       <div class="bxtdrop bxtdrop-r" id="bxtVramMenu" hidden>
         <div class="bxvram" id="bxvram"></div>
       </div>
-      <span class="bxtbtn" id="bxtAccount" title="a guest: drawing and running are free, saving takes an account">guest ▾</span>
-      <div class="bxtdrop bxtdrop-r" id="bxtAccountMenu" hidden></div>
     </div>
     <div class="bxrow">
       <div class="bxwrap" id="bxwrap">
@@ -6432,18 +6456,21 @@ function bxAccountOut() {
 }
 function bxAccountSync() {
   const b = $("bxtAccount");
-  if (!b) return;
+  const nm = $("bxuname");
+  if (!b || !nm) return;
+  b.className = "bxuserbtn";
   if (!BXACCT.user) {
-    b.textContent = "guest ▾";
+    nm.textContent = "guest";
     b.title = "a guest: drawing and running are free, saving takes an account";
     return;
   }
   if (BXACCT.locked) {
-    b.textContent = "account 🔒";
+    nm.textContent = "account 🔒";
     b.title = "signed in — paste your token once so this browser can read your designs";
+    b.className = "bxuserbtn locked";
     return;
   }
-  b.textContent = BXACCT.name + " ▾";
+  nm.textContent = BXACCT.name;
   b.title = "signed in — designs are sealed in this browser; the server holds only ciphertext";
 }
 function bxtAccountToggle() {
@@ -6527,10 +6554,18 @@ function bxAccountRow(wrap, goText, goFn) {
   return go;
 }
 function bxAccountNameField(defaultName) {
-  const lab = mk("label", { text: "name" });
+  const lab = mk("label", { text: "username" });
   const inp = mk("input", { class: "bxinp", type: "text", autocomplete: "off",
-                            placeholder: "your name" });
+                            placeholder: "your username" });
   inp.value = defaultName || "";
+  lab.appendChild(inp);
+  return { lab, inp };
+}
+function bxAccountEmailField(defaultEmail) {
+  const lab = mk("label", { text: "email — optional" });
+  const inp = mk("input", { class: "bxinp", type: "text", autocomplete: "off",
+                            placeholder: "you@example.com" });
+  inp.value = defaultEmail || "";
   lab.appendChild(inp);
   return { lab, inp };
 }
@@ -6538,12 +6573,10 @@ function bxAccountCreate() {
   const wrap = bxAccountForm();
   if (!wrap) return false;
   wrap.appendChild(mk("div", { class: "mhead", text: "create an account" }));
-  wrap.appendChild(mk("div", { class: "panehint",
-    text: "guests are never saved for — an account is what keeps a design. " +
-          "Cloudflare's bot check runs below, then this browser makes your token " +
-          "and seals everything with it before it is sent." }));
   const { lab, inp } = bxAccountNameField("");
   wrap.appendChild(lab);
+  const { lab: mlab, inp: minp } = bxAccountEmailField("");
+  wrap.appendChild(mlab);
   const status = mk("div", { class: "panehint", text: "loading the bot check …" });
   wrap.appendChild(status);
   const mount = mk("div", { class: "bxcf" });
@@ -6553,9 +6586,14 @@ function bxAccountCreate() {
   const go = bxAccountRow(wrap, "create", () => submit());
   const submit = () => {
     const name = String(inp.value || "").trim();
-    if (!name) { status.textContent = "the account needs a name"; return; }
+    if (!name) { status.textContent = "the account needs a username"; return; }
+    const email = String(minp.value || "").trim();
+    if (email && (email.indexOf("@") < 1 || email.length > 200)) {
+      status.textContent = "that does not look like an email — fix it, or leave it out";
+      return;
+    }
     if (!challenge) { status.textContent = "the bot check has not passed yet"; return; }
-    bxAccountRegister(name, token, challenge, status, go);
+    bxAccountRegister(name, email, token, challenge, status, go);
   };
   const start = (ts) => {
     if (!ts) { status.textContent = "the bot check could not load — an account needs it"; return; }
@@ -6595,7 +6633,7 @@ function bxAccountCreate() {
   else bxTurnstileLoad(start);
   return true;
 }
-async function bxAccountRegister(name, token, challenge, status, go) {
+async function bxAccountRegister(name, email, token, challenge, status, go) {
   if (typeof fetch !== "function") return false;
   if (!bxCryptoReady()) { if (status) status.textContent = "this browser cannot seal"; return false; }
   if (go) go.textContent = "creating …";
@@ -6606,6 +6644,7 @@ async function bxAccountRegister(name, token, challenge, status, go) {
       auth: await bxAuthCred(token),
       challenge,
     };
+    if (email) body.email_ct = await bxSeal(token, email);   // optional, sealed like the rest
     const r = await fetch("/api/account/register", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const d = await r.json();
@@ -7771,7 +7810,8 @@ function bxtInit() {
   wire("bxtAccount", bxtAccountToggle);
   document.addEventListener("mousedown", (ev) => {   // a click outside closes them all
     const t = ev.target;
-    if (t && t.closest && (t.closest(".bxtdrop") || t.closest(".bxtbtn"))) return;
+    if (t && t.closest && (t.closest(".bxtdrop") || t.closest(".bxtbtn") ||
+                           t.closest(".bxuser"))) return;
     bxtDropsClose();
   });
   bxtDropsClose();                             // all menus start closed

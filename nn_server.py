@@ -950,7 +950,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": why or "the bot check refused"}, 403)
                 return
             try:
-                user = nn_users.register(name_tag, name_ct, auth)
+                user = nn_users.register(name_tag, name_ct, auth,
+                                         email_ct=data.get("email_ct"))
             except ValueError as e:
                 self._json({"ok": False, "error": str(e)}, 400)
                 return

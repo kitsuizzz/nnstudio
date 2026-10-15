@@ -4507,7 +4507,7 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
   };
   // everyone starts a guest — nothing is saved for one
   eql(__t.BXACCT.user, null, "the account starts empty: a guest");
-  eql(getEl("bxtAccount").textContent, "guest ▾", "the toolbar says guest");
+  eql(getEl("bxuname").textContent, "guest", "the header's user block says guest");
   eql(__t.bxAccountSaveForm(), false, "a guest has no save dialog");
   ok(__t.bxtAccountToggle() === true && !getEl("bxtAccountMenu").hidden,
      "the account menu opens");
@@ -4554,7 +4554,12 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
   const form = getEl("bxmenu");
   ok(!form.hidden, "the create dialog is up");
   eql(renders, 1, "…with Cloudflare's widget rendered in it");
+  const said = Array.from(form.children[0].children).filter(c => c.textContent)
+    .map(c => String(c.textContent));
+  ok(said.indexOf("username") >= 0 && said.some(t => t.indexOf("email") === 0),
+     "the form asks a username, and an optional email: " + said.join(" | "));
   form.querySelectorAll(".bxinp")[0].value = "tester";
+  form.querySelectorAll(".bxinp")[1].value = "t@example.com";
   form.querySelectorAll(".chip").find(c => String(c.textContent) === "create").click();
   await seen;
   eql(sent.auth, await __t.bxAuthCred(made), "register carries the derived auth");
@@ -4562,11 +4567,14 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
   eql(sent.name_tag, await __t.bxNameTag(made, "tester"), "…and the keyed name tag");
   eql(await __t.bxUnseal(made, sent.name_ct), "tester",
       "…and the sealed name, which only the token opens");
-  ok(!JSON.stringify(sent).includes("tester") && !JSON.stringify(sent).includes(made),
-     "no plaintext name goes out — and never the token itself");
-  ok(await until(() => getEl("bxtAccount").textContent === "tester ▾"),
+  eql(await __t.bxUnseal(made, sent.email_ct), "t@example.com",
+      "…and the sealed email rides along");
+  ok(!JSON.stringify(sent).includes("tester") && !JSON.stringify(sent).includes(made) &&
+     !JSON.stringify(sent).includes("t@example.com"),
+     "no plaintext name or email goes out — and never the token itself");
+  ok(await until(() => getEl("bxuname").textContent === "tester"),
      "the stubbed answer lands: signed in and revealed");
-  eql(getEl("bxtAccount").textContent, "tester ▾", "signed in, the toolbar reads the name");
+  eql(getEl("bxuname").textContent, "tester", "signed in, the header block reads the name");
   eql(__t.BXACCT.token, made, "the token is kept in this browser");
   eql(__t.bxTokenRecall(), made, "…remembered for the next reload");
   eql(getEl("bxmenu").querySelectorAll(".bxtok")[0].value, made,
@@ -4601,7 +4609,7 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
   // locked: the cookie says who, but without the token there is nothing to read
   __t.bxAccountLocked(__t.BXACCT.user);
   eql(__t.BXACCT.locked, true, "without the key the account is locked");
-  eql(getEl("bxtAccount").textContent, "account 🔒", "…and the toolbar says so");
+  eql(getEl("bxuname").textContent, "account 🔒", "…and the header block says so");
   eql(__t.bxAccountSaveForm(), false, "…saving waits for the unlock");
   __t.bxAccountUnlockForm();
   const f3 = getEl("bxmenu");
@@ -4613,8 +4621,8 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
      "a wrong token cannot unlock: " + hint[hint.length - 1].textContent);
   f3.querySelectorAll(".bxinp")[0].value = made;
   f3.querySelectorAll(".chip").find(c => String(c.textContent) === "unlock").click();
-  await until(() => getEl("bxtAccount").textContent === "tester ▾");
-  eql(getEl("bxtAccount").textContent, "tester ▾", "the real token unlocks it");
+  await until(() => getEl("bxuname").textContent === "tester");
+  eql(getEl("bxuname").textContent, "tester", "the real token unlocks it");
   __t.bxMenuClose();
   // opening: rows carry sealed names; a click asks for the blob by its tag
   __t.bxAccountOpenForm();
@@ -4653,7 +4661,7 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
   // logging out: a guest again, and the browser forgets the key
   __t.bxAccountOut();
   eql(__t.BXACCT.user, null, "logging out is a guest again");
-  eql(getEl("bxtAccount").textContent, "guest ▾", "…and the toolbar says so");
+  eql(getEl("bxuname").textContent, "guest", "…and the header block says so");
   eql(__t.bxTokenRecall(), "", "…and the remembered key is gone");
   __t.bxMenuClose();
   delete global.turnstile;
