@@ -9367,10 +9367,16 @@ function bxConfigFill(pane, n) {               // the train config: every settin
   const rl = (n.paradigm || "supervised") === "rl";
   const unsup = (n.paradigm || "supervised") === "unsupervised";
   const to = mk("div", { class: "panehint" });
-  if (mine && wired.input)
+  if (n.model)
+    to.textContent = "names " + ((bxFindBox(n.model) || {}).name || "a model off "
+                                 + "the canvas");
+  else if (mine && wired.input)
     to.textContent = "wired into " + (wired.input.name || wired.input.id);
+  else if (bxAnyModel())
+    to.textContent = "pick the model it trains above";
   else {
-    to.textContent = "not wired in \u2014 wire this into the input's first dot";
+    to.textContent = "older shape: not wired in \u2014 wire this into the "
+      + "input's first dot";
     const fix = mk("span", { class: "bxlink", text: " wire it now" });
     fix.addEventListener("mousedown", (ev) => { if (ev.stopPropagation) ev.stopPropagation(); });
     fix.addEventListener("click", () => bxTrainWireConfig(n));

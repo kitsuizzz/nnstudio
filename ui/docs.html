@@ -250,10 +250,12 @@
     <li><b>Edit a box</b> — right-click it. Its menu renames it (the server
         config excepted), changes its settings (the activation, the operation, the embedding…),
         and offers <b>freeze</b> (keep its weights fixed) and <b>off</b> (skip it on runs).</li>
-    <li><b>Step inside a nested box</b> — double-click a
-        <span class="pill">custom</span> box. A nested box is a whole network of
-        its own — that's the "nested" in nnstudio. Double-clicking again goes
-        deeper; the strip above the canvas shows where you are and takes you back.</li>
+    <li><b>Step inside a model</b> — double-click a
+        <span class="pill">model</span> box (palette → <b>models</b>). A
+        nested box is a whole network of its own — that's the "nested" in
+        nnstudio, and a model is where the trainable weights live. Double-clicking
+        again goes deeper; the strip above the canvas shows where you are and
+        takes you back.</li>
     <li><b>Run it</b> — connect <span class="pill grey">Backend ▾</span> first,
         then press <b>▶ run the design</b> in an <span class="pill">input</span>
         box. The page verifies the dataflow first — a wired path from an input to
@@ -268,16 +270,16 @@
     <li><b>Train it</b> — training is scored on the <b>output box</b> and
         wired through the <b>input box</b>. Open the
         <span class="pill">output</span>, switch its window to the
-        <b>training</b> tab and tick <b>Enable Training</b>: the input opens
-        one training dot — it takes a <span class="pill">train
-        config</span> box (palette → <b>training</b>), which carries every
-        knob of the run (the paradigm, the optimizer, the learning rate, the
-        batch, the steps, the save/eval cadence, the optional test split, the
-        columns). Wire the config in and the input opens its <b>data dot</b>:
-        one dataset — or a <span class="pill">select col</span> box (a
-        dataset's columns, as a matrix) — feeds the run, and the
+        <b>training</b> tab and see where it lives: the architecture sits in a
+        <span class="pill">model</span> box (palette → <b>models</b>) and a
+        <span class="pill">train config</span> box names it. The config carries
+        every knob of the run (the paradigm, the optimizer, the learning rate,
+        the batch, the steps, the save/eval cadence, the optional test split) and
+        its own <b>data dot</b>: one dataset — or a
+        <span class="pill">select col</span> box — feeds the run, and the
         <b>config detects it</b>: its window shows the columns it hands out and
-        <b>x col</b> / <b>y col</b> pick them there (A/B by default). The controls
+        <b>x col</b> / <b>y col</b> pick them there (A/B by default). The run
+        enters the model's first input and scores its first output. The controls
         (<b>start</b>, <b>save now</b>, <b>hold</b>, <b>detach</b>,
         <b>resume</b>, <b>load last checkpoint</b>) sit under them, with the
         plan's summary, the step/loss strip and the live curves. The output is
@@ -438,16 +440,17 @@
       where the data is — with the run's verdict line under it.
       The editor opens roomy (its content has the space); double-click the box
       for the compact size, or drag the corner to size it yourself.</p>
-      <p>Training on, the input box grows its <b>training dots</b>: the first
-      takes the <span class="pill">train config</span> box (the run's settings),
-      the second — once the config is wired — the run's one
-      <b>matrix</b>: a dataset, or a <span class="pill">select col</span> box
-      narrowing its columns. The config <b>detects</b> what is attached and its
-      window names the columns; <b>x col</b> and <b>y col</b> pick the rows the
-      model reads and the targets it is scored on (supervised; unsupervised and
-      rl train on x alone). The run reads the matrix and feeds the input box, so
-      inference is untouched — and the input's window shows the wiring
-      live.</p>
+      <p>New designs train through a <span class="pill">model</span> box: the
+      train config names the model and carries the data, and the batch enters
+      the model (an empty input box wired into it stands down on a training
+      run). Inputs stay what a run feeds — the value you type here rides the
+      wires.</p>
+      <p><i>Older designs</i> (built before models) keep their <b>training
+      dots</b>: training on, the input grows one for the
+      <span class="pill">train config</span> and, once wired, one for the
+      <b>matrix</b> — a dataset or a <span class="pill">select col</span>
+      box. They run exactly as they did; right-click a weight box →
+      <b>wrap the weights into a model</b> moves them to the new shape.</p>
       <p class="bfields"><b>Fields:</b> width <code>dout</code> (a matrix's
       columns — what a layer reads); data type <code>input_mode</code> —
       <code>matrix</code> (the numbers it carries, one row per line),
@@ -644,6 +647,34 @@
 
   <div class="boxref">
     <div>
+      <div class="bname">model</div>
+      <div class="bwires">its own inputs · its own outputs</div>
+    </div>
+    <div class="bdet">
+      <p><b>The architecture's box.</b> Every trainable weight lives inside one:
+      the palette refuses <code>embed</code> / <code>layer</code> / <code>norm</code>
+      and the other weight boxes at the top level, and building inside a
+      <span class="pill">model</span> is the only way. Top level stays what it
+      should be — sources, the model, sinks, and the training that points at it.</p>
+      <p>A model is a nested box with a skeleton inside
+      (<code>input → output</code>) and a tag that says what it is. Its dots
+      are its inner input/output boxes (in the order they sit); its window reads
+      the ports, the parameters, whether any weight is frozen, and <b>which train
+      config names it</b>. Double-click to step in and build — layers, blocks,
+      another model. Out here it is one box you feed and read.</p>
+      <p>Designs built before models — weights sitting flat on the canvas — keep
+      running, and one click moves them in: right-click a weight box →
+      <b>wrap the weights into a model</b> (or the link in a config's window).
+      The wrap moves the cluster inside, makes the boundary dots, and lands the
+      wires where they were; the old training wiring folds onto the new config.</p>
+      <p class="bfields"><b>Fields:</b> <code>model</code> (the tag that makes it a
+      model), <code>inner</code> (the network inside), the weight bindings like
+      any nested box; <code>box</code> size.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
       <div class="bname">custom</div>
       <div class="bwires">its own · 1 in · 1 out</div>
     </div>
@@ -651,7 +682,9 @@
       <p>A nested box: a whole network inside one box. Double-click to step in and
       edit its insides; from outside it behaves like a single box. This is how large
       models stay legible — a 27-billion-parameter model is one nested box that
-      you can open into blocks, each block open into its attention and MLP.</p>
+      you can open into blocks, each block open into its attention and MLP.
+      Tagged as a <span class="pill">model</span> (palette → <b>models</b>),
+      it is where trainable weights live.</p>
       <p class="bfields"><b>Fields:</b> its <code>inner</code> network; where its
       weights read from (<code>file</code>, <code>t</code>), and the source
       <code>repo</code> when it came from a huggingface canvas. A whole model
@@ -711,15 +744,13 @@
       report per output name. The window opens roomy; double-click the box for
       the compact size, or drag its corner to size it yourself.</p>
       <p>Its window has two tabs: <b>output</b> (the readout) and
-      <b>training</b>. Tick <b>Enable Training</b> and this output is what the
-      run <b>scores</b>: the input box opens its training dots, the plan reads
-      the wiring back (the dataset attached and the columns x/y pick, what the
-      loss will be, what the test split is), and the controls — <b>start</b>, <b>save now</b>,
-      <b>hold</b>, <b>detach</b>, <b>resume</b>, <b>load last checkpoint</b> —
-      sit under the step/loss strip and the live curves. The settings themselves
-      live on the <span class="pill">train config</span> box wired into the
-      input. Inference stands the matrices down: a training dot is no part of
-      run-the-design.</p>
+      <b>training</b>. In the model world the training tab is the readout's own
+      — it says where training lives and offers the chip that drops a
+      <span class="pill">train config</span> beside the model. Older designs
+      (built before models) keep the full tab: <b>Enable Training</b>, the plan,
+      the step/loss strip, the controls — <b>start</b>, <b>save now</b>,
+      <b>hold</b>, <b>detach</b>, <b>resume</b>, <b>load last checkpoint</b>
+      — and the live curves.</p>
       <p class="bfields"><b>Fields:</b> <code>din</code>, its name,
       <code>train</code> (the training tab), <code>task_id</code> (the live
       task), display <code>box</code> size, <code>panel.tab</code>. Older
@@ -882,24 +913,24 @@
 
   <h2>Train a network on your own data</h2>
   <ol>
-    <li>Build the network: <span class="pill">input</span> →
+    <li>Build the network <b>inside a model</b>: drop a
+        <span class="pill">model</span> (palette → <b>models</b>), double-click
+        it, and build in there — <span class="pill">input</span> →
         <span class="pill">embed</span> → one or more
-        <span class="pill">layer</span> boxes → whatever produces scores over the
-        vocabulary (a layer sized to the vocab).</li>
+        <span class="pill">layer</span> boxes → whatever produces scores over
+        the vocabulary (a layer sized to the vocab), back out through its output
+        box. Weights are only placeable in here.</li>
     <li>Open <span class="pill grey">Palette ▾</span> → <b>Dataset</b>, drag out
         the <span class="pill">dataset</span> box; give it rows
         (<code>prompt&lt;TAB&gt;completion</code> or JSONL). A second dataset box
         is the held-out test split, if you have one.</li>
-    <li>Open the <span class="pill">output</span> box's window on its
-        <b>training</b> tab and tick <b>Enable Training</b> — the input opens
-        its training dot. Drop a <span class="pill">train config</span> box
-        (palette → <b>training</b>) and wire it into that dot: that is where
-        every knob lives now — the paradigm, the learning rate, the
-        optimizer, the batch, the steps, the optional test split. The dataset box
-        then wires into the <b>data dot</b> that opens beside it, and the config
-        — detecting it — names the columns: <b>x col</b> reads the
-        prompt, <b>y col</b> the completion. The plan under the switch reads the
-        wiring back.</li>
+    <li>Drop a <span class="pill">train config</span> box (palette →
+        <b>training</b>) and <b>pick the model</b> in its window: that is where
+        every knob lives — the paradigm, the learning rate, the optimizer,
+        the batch, the steps, the optional test split. The dataset box then wires
+        into the config's <b>data dot</b>, and — detecting it — the
+        config names the columns: <b>x col</b> reads the prompt, <b>y col</b> the
+        completion. The plan under the model picker reads the wiring back.</li>
     <li>Start the training from the tab's <b>start</b> chip: the full training
         runs as a task — its progress, curves and <b>detach</b> / <b>resume</b>
         live there (or via <code>POST /api/tasks</code> below).</li>
@@ -928,16 +959,14 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     <li>A dataset box with rows of <code>text&lt;TAB&gt;label</code> — the text is
         column A, the label is column B. Held-out rows get a second dataset box.</li>
     <li>The network as in the recipe above, ending in a layer sized to the number
-        of classes.</li>
-    <li>The output box's training tab: tick <b>Enable Training</b>, wire a
-        <span class="pill">train config</span> box into the input's first dot,
-        wire the dataset into the <b>data dot</b>, and in the config's window
-        tick <b>y is a class label</b> and point <b>x col</b> at the text column
-        and <b>y col</b> at the labels — one column, names like
-        <code>cat</code>/<code>dog</code>. The values y takes are the classes: no
-        list to type, and the run reports <b>accuracy</b> (the share of rows the
-        model gets right) alongside the loss, on the train split and the test
-        split.</li>
+        of classes (inside the model).</li>
+    <li>The config's window: pick the model, wire the dataset into its
+        <b>data dot</b>, tick <b>y is a class label</b>, and point <b>x col</b>
+        at the text column and <b>y col</b> at the labels — one column,
+        names like <code>cat</code>/<code>dog</code>. The values y takes are the
+        classes: no list to type, and the run reports <b>accuracy</b> (the share
+        of rows the model gets right) alongside the loss, on the train split and
+        the test split.</li>
     <li>Start it; watch the accuracy climb to the ceiling the data allows. Freeze
         the boxes you trust, train the rest.</li>
   </ol>
@@ -947,20 +976,19 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     <li>A dataset box of <b>prompts</b> — column A is all the data gives. There is
         no y column: in rl the <b>reward box is the signal</b>, so a loss box has
         nothing to do and must not be wired to the dataset.</li>
-    <li>The network as in the recipe above, ending in the output box the policy
-        samples from.</li>
+    <li>The network as in the recipe above, ending in the model's output box
+        the policy samples from.</li>
     <li>Add a <span class="pill">reward</span> box; pick its kind and write it —
         e.g. <code>expr = "1.0 if output.strip().endswith('!') else 0.0"</code>.
         The score is deterministic — the same output always earns the same reward,
         so runs are reproducible. Keep it partly soft (a little reward even for
         imperfect outputs), or the policy can starve on a row that keeps scoring
         zero.</li>
-    <li>The output box's training tab: tick <b>Enable Training</b>, wire a
-        <span class="pill">train config</span> box into the input's first dot,
-        set its <b>paradigm</b> to <b>rl</b> and bind the <b>reward</b> box; wire
-        the prompts into the <b>data dot</b> and point <b>x col</b> at them
-        — rl takes x alone, and the policy samples from this output itself.
-        Set <code>temperature</code>, <code>max_tokens</code> and
+    <li>The config's window: pick the model, set the <b>paradigm</b> to
+        <b>rl</b> and bind the <b>reward</b> box; wire the prompts into the
+        <b>data dot</b> and point <b>x col</b> at them — rl takes x alone,
+        and the policy samples from the model itself. Set
+        <code>temperature</code>, <code>max_tokens</code> and
         <code>n_samples</code> — how the sampling goes, and how many samples
         one row of the dataset earns per step.</li>
     <li>Start it and watch the <b>reward</b> climb: solid — the mean reward, dashed
@@ -1089,28 +1117,31 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     <div class="cap">Predict, score, nudge, repeat — the whole of training.</div>
   </div>
 
-  <h2>The hub: the train config box, wired through the input</h2>
+  <h2>The hub: the train config, and the model it names</h2>
   <p>
     Training needs one place to say <i>what</i> the model learns from and
-    <i>how</i>. The <i>how</i> is a <span class="pill">train config</span> box
-    (palette → <b>training</b>): its window holds every knob of the run —
-    the <b>paradigm</b> (<code>supervised</code> | <code>unsupervised</code> |
-    <code>rl</code>), the optimizer, the learning rate, the batch, the steps,
-    the grad clip, the save/eval cadence, the optional <code>test_dataset</code>,
-    whether y is a class label, and in <b>rl</b> the reward box with the
-    sampling knobs.
+    <i>how</i>. The <i>what</i> is a <span class="pill">model</span> box (palette
+    → <b>models</b>): a nested box holding the architecture, the only place
+    trainable weights may live. The <i>how</i> is a
+    <span class="pill">train config</span> box (palette → <b>training</b>):
+    it <b>names the model</b> in its window, and holds every knob of the run
+    — the <b>paradigm</b> (<code>supervised</code> |
+    <code>unsupervised</code> | <code>rl</code>), the optimizer, the learning
+    rate, the batch, the steps, the grad clip, the save/eval cadence, the
+    optional <code>test_dataset</code>, whether y is a class label, and in
+    <b>rl</b> the reward box with the sampling knobs.
   </p>
   <p>
-    The <i>what</i> rides the <span class="pill">input</span> box's training
-    dots. Tick <b>Enable Training</b> on the output box the run scores and the
-    input opens <b>one</b> dot — the train config's. Wire the config in and
-    the input opens its <b>data dot</b>: one matrix, the rows the run reads —
-    a dataset box wired straight in, or a <span class="pill">select col</span>
-    box (a dataset's columns, as <code>[rows × columns]</code>). The config
-    <b>detects</b> the matrix: its window lists the columns it hands out, and
-    <b>x col</b> / <b>y col</b> pick the model's input and its target from them
-    (A/B by default; a sequence like <code>x0 x1 x2</code> is a vector). An
-    optional test split (bound in the config) is read with the same columns.
+    The data wires into the <b>config's own dot</b>: one matrix, the rows the
+    run reads — a dataset box wired straight in, or a
+    <span class="pill">select col</span> box (a dataset's columns, as
+    <code>[rows × columns]</code>). The config <b>detects</b> it: its
+    window lists the columns it hands out, and <b>x col</b> / <b>y col</b> pick
+    the model's input and its target from them (A/B by default; a sequence like
+    <code>x0 x1 x2</code> is a vector). A training run feeds that batch into the
+    model's <b>first input</b> and scores the model's <b>first output</b> (a
+    wired <span class="pill">loss</span> box still wins). An optional test split
+    (bound in the config) is read with the same columns.
   </p>
   <p>
     What the paradigm means for the signal: <b>supervised</b> scores the model
@@ -1118,11 +1149,11 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     sequence like <code>y0 y1</code>, mean squared error over a vector target);
     <b>unsupervised</b> needs no y — the model rebuilds the x rows
     themselves (next-token over their text, or the numbers); <b>rl</b> draws
-    samples from the output and scores them with the reward box. The
-    <span class="pill">output</span> box keeps the plan, the controls and the
-    curves — there is no mode switch: running the design is the
-    <span class="pill">input</span> box's <b>▶ run</b> (inference — an
-    inference run stands the matrix boxes down), training it is this wiring.
+    samples from the model and scores them with the reward box. The config's
+    window keeps the plan, the controls and the curves — there is no mode
+    switch: running the design is the <span class="pill">input</span> box's
+    <b>▶ run</b> (inference — an inference run stands the data dot
+    down), training it is this wiring.
   </p>
   <p>
     A <b>column sequence is a vector</b>: <code>x col</code>
@@ -1133,8 +1164,9 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     columns it hands out, and a blank spec takes the first (x) and second (y)
     column. The <span class="pill">server config</span> box — the
     <span class="pill grey">Backend ▾</span> menu's first row — stays
-    the machine's window; older designs that carry the training fields on the
-    output (or a train node as the hub) keep working.
+    the machine's window. Designs built before models — weights flat on the
+    canvas, the config boxed into an input, the fields stored on an output —
+    keep working as they did; the wrap moves them over when you want.
   </p>
   <p>
     One exception, for the veterans: wire a <span class="pill">loss</span> box
@@ -1142,9 +1174,9 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     that dataset and that loss run the training.
   </p>
   <p>
-    While a training task runs, the canvas shows the config, the matrices the
-    training reads from, the target it scores (or samples, in rl) and — in
-    rl — the reward box that does the scoring.
+    While a training task runs, the canvas shows the config, the model it names,
+    the data the training reads from, and — in rl — the reward box
+    that does the scoring.
   </p>
 
   <h2>The vocabulary of training</h2>
@@ -1281,19 +1313,24 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
   <p>Fifteen minutes, no GPU required (CPU is fine for this one):</p>
   <ol>
     <li><b>Meet the canvas</b> — open <span class="pill grey">Palette ▾</span>,
-        drag out an <span class="pill">input</span>, an
+        drop a <span class="pill">model</span> (the <b>models</b> category) and
+        double-click into it. In there, drag out an
+        <span class="pill">input</span>, an
         <span class="pill">embed</span> (vocab 64, dout 16), a
-        <span class="pill">layer</span> (din 16, dout 64), and a
-        <span class="pill">detokenize</span>. Wire them in that order.</li>
+        <span class="pill">layer</span> (din 16, dout 64), and wire them in that
+        order into its <span class="pill">output</span> box. Back out — the
+        model now hands out the layer's logits.</li>
     <li><b>Teach it a tiny language</b> — add a
         <span class="pill">dataset</span> box with a handful of rows, e.g.
         <code>a	c</code> / <code>b	d</code> / <code>c	d</code>
         (type them as <code>prompt&lt;TAB&gt;completion</code>), with
-        <code>vocab</code> <code>abcd</code>.</li>
+        <code>vocab</code> <code>abcd</code>. A <span class="pill">detokenize</span>
+        box wired from the model reads the text back.</li>
     <li><b>Add the loss</b> — a <span class="pill">loss</span> box; wire the
-        layer's output into dot one, the dataset into dot two.</li>
-    <li><b>Watch it learn</b> — open the output box's <b>training</b> tab,
-        tick <b>Enable Training</b>, then start it from the <b>start</b> chip.
+        model's output into dot one, the dataset into dot two.</li>
+    <li><b>Watch it learn</b> — drop a <span class="pill">train config</span>
+        (palette → <b>training</b>), pick the model in its window, wire the
+        dataset into its <b>data dot</b>, and start from the <b>start</b> chip.
         The task's readout should show the loss falling within seconds — the
         network has learned that <code>a</code> is followed by <code>c</code>.</li>
     <li><b>Detach, then resume</b> — press <b>detach</b>; watch it checkpoint and
