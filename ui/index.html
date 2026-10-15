@@ -3843,9 +3843,6 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
   // the datatype, and the data itself — typed right on the canvas
   pane.innerHTML = "";
   bxBehaveInside(pane);
-  const head = mk("div", { class: "bxlogrow" });
-  head.appendChild(mk("b", { text: "input" }));
-  pane.appendChild(head);
   const mrow = mk("label", { class: "rf" });
   mrow.appendChild(mk("span", { text: "data" }));
   const sel = mk("select", { class: "bxsel" });
@@ -4052,16 +4049,11 @@ function bxOutputFill(pane, n) {               // the output's window: whatever 
   bxBehaveInside(pane);
   const p = n.panel || {};
   const cur = p.tab === "training" ? "training" : "output";
+  const st = bxNodeState(n);
   const prev = pane.querySelector ? pane.querySelector(".bxinputbody") : null;
   const kept = (n._scroll && n._scroll[cur]) || 0;
   const keepTop = (prev && n._tabShown === cur && prev.scrollTop) ? prev.scrollTop : kept;
   n._tabShown = cur;
-  const head = mk("div", { class: "bxlogrow" });
-  head.appendChild(mk("b", { text: "output" }));
-  const st = bxNodeState(n);
-  if (st && cur === "output")
-    head.appendChild(mk("span", { class: "panehint", text: bxShape(n) }));
-  pane.appendChild(head);
   const menu = mk("div", { class: "runmenu" });
   const tab = (id, label) => {
     const b = mk("span", { class: "runmi" + (cur === id ? " on" : ""), text: label });
@@ -4139,7 +4131,7 @@ function bxOutputTrain(body, n) {              // the training tab: the switch, 
   body.appendChild(row);
   if (!n.train) {
     body.appendChild(mk("div", { class: "bxbhint",
-      text: "off \u2014 this output just shows what arrived. on, it trains: the "
+      text: "off \u2014 this node just shows what arrived. on, it trains: the "
           + "parameters show up here, and a dataset dot opens on the box." }));
     return;
   }
