@@ -1884,6 +1884,94 @@ check("the training wires live on the input: the config, and ONE data dot",
       training_wires_on_the_input)
 
 
+def a_model_trains_through_its_node():
+    # the new shape: a nested model node holds the architecture; the train
+    # config names it, the data wires into the config, and the batch enters the
+    # model's first inner input — the probe scores its first out-port
+    data = "\n".join(["x0,x1,x2,y0,y1"] +
+                     ["%d,%d,%d,%d,%d" % (a, b, c, 2 * a - b, c)
+                      for a, b, c in [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1),
+                                      (1, 1, 0), (1, 0, 1), (0, 1, 1), (1, 1, 1)]])
+    c = canvas([
+        n("custom", "model", name="model", inner={
+            "nodes": [n("input", "min", dout=3),
+                      n("layer", "h", din=3, dout=8),
+                      n("layer", "o", din=8, dout=2),
+                      n("output", "mout", din=2)],
+            "edges": [edge("min", "h"), edge("h", "o"), edge("o", "mout")]}),
+        n("dataset", "rows", format="csv", text=data),
+        n("config", "cfg", paradigm="supervised", model="model", batch=8,
+          lr=0.02, x_col="x0 x1 x2", y_col="y0 y1", save_every=0, eval_every=0),
+    ], [edge("rows", "cfg", 0, 0)])
+    hub = T.train_hub(c)
+    assert hub.get("_model") and hub.get("target") == "model", hub
+    src2 = T.train_sources(c, hub)
+    assert src2["wired"] and src2["x"]["cols"] == [0, 1, 2] \
+        and src2["y"]["cols"] == [3, 4], src2
+    assert src2["x"]["node"]["id"] == "rows" == src2["y"]["node"]["id"], src2
+    # the run reads the rows through the model, and the probe scores its output
+    res = T.run(c, {}, mode="training")
+    probe = res.get("probe") or {}
+    assert probe.get("loss") is not None, probe
+    # the trainer: the batch enters the model, the loss falls, the net fits
+    import shutil
+    d = tempfile.mkdtemp()
+    try:
+        tr = T.DesignTrainer(c, {"batch": 8, "lr": 0.02, "save_every": 10 ** 9,
+                                 "eval_every": 0, "name": "m", "checkpoints": d})
+        assert tr.input_id == "model" and tr.target_id == "model", \
+            (tr.input_id, tr.target_id)
+        events = []
+        tr.run(steps=300, on_event=events.append)
+        losses = [e["loss"] for e in events if e.get("type") == "loss"]
+        assert len(losses) == 300 and losses[-1] < losses[0], (losses[0], losses[-1])
+        with torch.no_grad():
+            xb, yb = tr._batch()
+            pred = T._target_val(tr.graph(feeds={tr.input_id: xb}), "model")
+            err = float((pred[-yb.shape[0]:].float() - yb).abs().mean())
+        assert err < 0.2, "the fitted error: %.3f" % err
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    # a model with no output box inside names the problem
+    c2 = canvas([
+        n("custom", "model", name="model", inner={
+            "nodes": [n("input", "min", dout=2)], "edges": []}),
+        n("dataset", "rows", format="csv", text="a,b\n0,1\n1,0"),
+        n("config", "cfg", paradigm="supervised", model="model", batch=2),
+    ], [edge("rows", "cfg", 0, 0)])
+    try:
+        T.DesignTrainer(c2, {"batch": 2})
+        raise AssertionError("a model with no outputs trained anyway")
+    except T.CanvasError as e:
+        assert "no output box" in str(e), e
+    # a model that is off the canvas names itself too
+    c3 = canvas([
+        n("dataset", "rows", format="csv", text="a,b\n0,1"),
+        n("config", "cfg", paradigm="supervised", model="ghost", batch=2),
+    ], [edge("rows", "cfg", 0, 0)])
+    try:
+        T.DesignTrainer(c3, {"batch": 2})
+        raise AssertionError("a ghost model trained anyway")
+    except T.CanvasError as e:
+        assert "not on the canvas" in str(e), e
+    # the data dot on the config is where a bare config looks
+    c4 = canvas([
+        n("custom", "model", name="model", inner={
+            "nodes": [n("input", "min", dout=1), n("output", "mout", din=1)],
+            "edges": [edge("min", "mout")]}),
+        n("config", "cfg", paradigm="supervised", model="model", batch=2),
+    ], [])
+    try:
+        T.run(c4, {}, mode="training")
+        raise AssertionError("a config with no data trained anyway")
+    except T.CanvasError as e:
+        assert "wire a dataset" in str(e) and "data dot" in str(e), e
+
+
+check("a model node holds the architecture: the config names it, its ports score",
+      a_model_trains_through_its_node)
+
+
 def unsupervised_trains_on_x_alone():
     # unsupervised: the one matrix's x is the whole story; the labels are the
     # input itself — next-token over its text, or the numbers it rebuilds

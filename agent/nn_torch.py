@@ -1928,6 +1928,8 @@ class Graph(nn.Module):
                     raise
             elif box.kind == "custom":
                 box._on_node = self.on_node    # the inside reports its own nodes too
+                if nid in feeds:               # a feed wins the first port: the
+                    ins = [feeds[nid]] + ins   # training batch enters the model
                 v = box(*ins)                    # its inside moves what it needs
             else:
                 if not ins:
@@ -2760,9 +2762,9 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                     b = _dbox(dn)
                     if b is not None:
                         b.batch = train_labels.to(b.device or "cpu")
-            iid = _find_kind(canvas, "input")
-            if iid:
-                feeds[iid] = ids     # the model's input reads the rows
+            fid = _feed_target(canvas, hub)
+            if fid:
+                feeds[fid] = ids     # the model (or the input) reads the rows
     generated = []
 
     def passes():
@@ -2857,9 +2859,9 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                                                        x_only=x_only)
                         tbox.batch = tlabels.to(tbox.device or "cpu")
                         tfeeds = dict(feeds)
-                        iid = _find_kind(canvas, "input")
-                        if iid:
-                            tfeeds[iid] = tids
+                        fid = _feed_target(canvas, hub)
+                        if fid:
+                            tfeeds[fid] = tids
                         with torch.no_grad():
                             tvals = graph(feeds=tfeeds)
                         probe["tloss"], probe["tacc"] = _probe_loss(
@@ -3543,17 +3545,22 @@ def train_sources(canvas, hub):
         out["x"] = {"node": ds, "cols": xc}
         out["y"] = {"node": ds, "cols": yc}
         return out
-    inp = None
-    for src, dst, _fp, _tp in _edges_full(canvas):
-        if src.get("kind") == "config" and src.get("id") == hub.get("id") \
-                and dst.get("kind") == "input":
-            inp = dst
-            break
-    if inp is None:
-        return out
+    # where the data sits: the config's own dot in the model world, the input
+    # box's data dot for the configs boxed into an input
+    holder, port = hub.get("id"), 0
+    if not hub.get("_model"):
+        holder = None
+        for src, dst, _fp, _tp in _edges_full(canvas):
+            if src.get("kind") == "config" and src.get("id") == hub.get("id") \
+                    and dst.get("kind") == "input":
+                holder = dst.get("id")
+                break
+        if holder is None:
+            return out
+        port = 1
     node = None
     for src, dst, _fp, to_port in _edges_full(canvas):
-        if dst.get("id") == inp.get("id") and to_port == 1:
+        if dst.get("id") == holder and to_port == port:
             node = src
             break
     if node is None:
@@ -3590,12 +3597,14 @@ def train_sources(canvas, hub):
 
 
 def train_hub(canvas):
-    """The node that carries a training run's setup. A train config box wired
-    into an input box is the host now: it names every setting, and the input's
-    matrix dots name the data. An output box with `train` set — its training
-    tab — stays the host of the older designs, and the train node the host of
-    the oldest. Returns the node's fields (with `target` always set for an
-    output host), or {} when the design carries no training setup."""
+    """The node that carries a training run's setup. A train config box that
+    names a model (`model`: a nested box whose architecture trains) is the host
+    now — the data wires into the config itself. A config boxed into an input
+    box stays the host of the designs built before models; an output box with
+    `train` set, and before that the train node, stay the hosts of the older
+    designs. Returns the node's fields (with `target` always set: the model, an
+    output, or the loss's carrier), or {} when the design carries no training
+    setup."""
     def _all(nodes):
         for n in nodes or []:
             yield n
@@ -3604,6 +3613,14 @@ def train_hub(canvas):
                     yield m
 
     nodes = list(_all((canvas or {}).get("nodes")))
+    cfg = next((n for n in nodes if n.get("kind") == "config" and n.get("model")),
+               None)
+    if cfg is not None:
+        hub = dict(cfg)
+        hub["_config"] = True
+        hub["_model"] = True
+        hub["target"] = cfg.get("model")        # a model trains on its own out
+        return hub
     cfg = next((n for n in nodes if n.get("kind") == "config"), None)
     if cfg is not None and any(src.get("id") == cfg.get("id")
                                and dst.get("kind") == "input"
@@ -3671,8 +3688,8 @@ def _probe_loss(canvas, hub, vals, labels, graph=None):
                 acc = float(box.last_acc)
         return loss, acc
     target = hub.get("target")
-    if target and labels is not None and vals.get(target) is not None:
-        lg = vals[target]
+    if target and labels is not None and _target_val(vals, target) is not None:
+        lg = _target_val(vals, target)
         if labels.dim() == 1:                       # class labels: the end position
             lgf = lg.float()
             last = lgf[:, -1, :] if lgf.dim() == 3 else \
@@ -3687,6 +3704,24 @@ def _probe_loss(canvas, hub, vals, labels, graph=None):
     return None, None
 
 
+def _target_val(vals, target):
+    """The value a training run scores: a model node hands out its outputs by
+    port — the first one is the implicit target — every other box its value."""
+    v = vals.get(target)
+    if isinstance(v, dict):                     # a nested box: port 0 first
+        return v.get(0)
+    return v
+
+
+def _feed_target(canvas, hub):
+    """Where a training batch enters: the model the config names, else the
+    first input box (how the flat designs read their rows)."""
+    hub = hub or {}
+    if hub.get("_model") and hub.get("model"):
+        return hub.get("model")
+    return _find_kind(canvas, "input")
+
+
 def _rl_probe(canvas, hub, graph, train_dn, rows, x_col, seed):
     """The training readout for an rl design: one sample from the first row,
     scored by the reward box — the console shows the signal before it starts."""
@@ -3696,7 +3731,7 @@ def _rl_probe(canvas, hub, graph, train_dn, rows, x_col, seed):
     if train_dn is None or not rows:
         return out
     reward_node = _node_by_id(canvas, hub.get("reward"))
-    iid = _find_kind(canvas, "input")
+    iid = _feed_target(canvas, hub)
     target = hub.get("target")
     if reward_node is None or not iid or not target:
         return out
@@ -3721,7 +3756,7 @@ def _rl_probe(canvas, hub, graph, train_dn, rows, x_col, seed):
                 for b in dboxes:
                     b.batch = torch.tensor([ids])
                 vals = graph(feeds={iid: torch.tensor([ids])})
-                logits = vals.get(target)
+                logits = _target_val(vals, target)
                 if logits is None:
                     break
                 last = logits.reshape(-1, logits.shape[-1])[-1].float().cpu()
@@ -3759,7 +3794,21 @@ class DesignTrainer:
         self.x_only = self.paradigm in ("rl", "unsupervised")
         self.graph = compile_canvas(canvas, device=device, native=False, train=True)
         self.graph.train()
-        self.input_id = cfg.get("input") or _find_kind(canvas, "input")
+        if cfg.get("_model"):
+            mid = cfg.get("model")
+            mnode = _node_by_id(canvas, mid) if mid else None
+            if mnode is None:
+                raise CanvasError("config", "the model it names is not on the "
+                                       "canvas")
+            outs = [k for k in ((mnode.get("inner") or {}).get("nodes") or [])
+                    if k.get("kind") == "output"]
+            if mnode.get("kind") != "custom" or not outs:
+                raise CanvasError(mnode.get("name") or "model",
+                                  "it has no output box inside \u2014 a model "
+                                  "trains through its outputs")
+            self.input_id = mid              # the batch enters the model
+        else:
+            self.input_id = cfg.get("input") or _find_kind(canvas, "input")
         # the signal: a loss box wired on the canvas wins (existing designs),
         # else the hub's target output box is scored and the loss is implicit.
         # In rl the hub's dataset is the carrier, full stop — the reward box is
@@ -3935,7 +3984,7 @@ class DesignTrainer:
             box = self._box(self.loss_id)
             acc = getattr(box, "last_acc", None) if box is not None else None
             return loss, (float(acc) if acc is not None else None)
-        logits = vals.get(self.target_id)
+        logits = _target_val(vals, self.target_id)
         if logits is None:
             return None, None
         if labels.dim() == 1:                       # class labels: pick at the end
@@ -3971,7 +4020,7 @@ class DesignTrainer:
             for b in self.dataset_boxes:
                 b.batch = torch.tensor([ids]).to(self.device)
             vals = self.graph(feeds={self.input_id: torch.tensor([ids]).to(self.device)})
-            logits = vals.get(self.target_id)
+            logits = _target_val(vals, self.target_id)
             if logits is None:
                 raise CanvasError("output", "the output box is switched off")
             last = logits.reshape(-1, logits.shape[-1])[-1].float().cpu()
