@@ -876,8 +876,8 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(top.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output"], "Input and Output are the first cards, not a category");
   eql(menu.children.filter(c => c.className === "bxtcat").map(c => c.textContent),
-    ["AI", "weights", "text", "Dataset", "training", "tensor ops", "blocks",
-     "analysis", "containers"],
+    ["AI", "models", "weights", "text", "Dataset", "training", "tensor ops",
+     "blocks", "analysis", "containers"],
     "and only the categories are listed below");
   // the AI category holds the agent box
   menu.children.find(c => c.textContent === "AI").click();

@@ -1304,6 +1304,7 @@ function bxKindLabel(kind) {
        : kind === "train" ? "Server config"
        : kind === "select" ? "Select columns"
        : kind === "config" ? "Train config"
+       : kind === "model" ? "Model"
        : kind === "heatmap" ? "Heatmap"
        : kind === "custom" ? "Nested"
        : kind === "vision" ? "Vision tower"
@@ -1414,7 +1415,9 @@ function bxShape(n) {
   }
   if (n.kind === "custom") {                             // how many ports it exposes
     const i = bxPortDefs(n, "in").length, o = bxPortDefs(n, "out").length;
-    return i + " in · " + o + " out";
+    const pr = n.model ? bxParamsOf(n) : 0;
+    return (n.model ? "model · " : "") + i + " in · " + o + " out"
+         + (pr ? " · " + bxBig(pr) + " params" : "");
   }
   if (n.kind === "input") return n.input_mode === "text" ? "text"
                                : n.input_mode === "image" ? "image"
@@ -1901,8 +1904,16 @@ function bxMoEDoc(opts) {
   link(mu, iout);
   return doc;
 }
-const BX_TEMPLATES = { attn: bxAttentionDoc, ssm: bxStateDoc, moe: bxMoEDoc };
-const BX_TPL_WORD = { attn: "attention", ssm: "state space", moe: "mixture" };
+function bxModelDoc() {                       // a model: the box the architecture
+  const i = bxId(), o = bxId();               // lives in — values in, values out
+  return { nodes: [{ id: i, kind: "input", name: "in", x: 40, y: 120 },
+                   { id: o, kind: "output", name: "out", x: 340, y: 120 }],
+           edges: [{ from: i, to: o, fromPort: 0, toPort: 0 }] };
+}
+const BX_TEMPLATES = { attn: bxAttentionDoc, ssm: bxStateDoc, moe: bxMoEDoc,
+                       model: bxModelDoc };
+const BX_TPL_WORD = { attn: "attention", ssm: "state space", moe: "mixture",
+                      model: "model" };
 function bxTemplateName(tpl) {
   return BX_TPL_WORD[tpl] + " " + (BX.nodes.filter(n => n.name && n.name.indexOf(BX_TPL_WORD[tpl]) === 0).length + 1);
 }
@@ -1927,6 +1938,7 @@ function bxAddTokenizerPair(x, y, v) {        // one repo, the pair that belongs
 function bxAddTemplate(tpl, x, y, name) {
   bxUndoLock++;                             // one step for the whole template
   const n = bxAdd("custom", x, y, { name: name || bxTemplateName(tpl) });
+  if (tpl === "model") n.model = true;        // the architecture's own box
   n.inner = BX_TEMPLATES[tpl]({});
   bxSettleSizes();
   bxRender();
@@ -3079,6 +3091,32 @@ function bxConfigure(id, vals) {
 // ---- where a layer loads: the gpu, or the system's ram ----------------------
 // `place` travels in the design (`gpu` / `system`); unset takes the backend's
 // own device. The engine moves each box there before its forward.
+function bxParamsOf(n) {                      // the weights a box holds, in all
+  if (!n) return 0;                           // its depths
+  if (n.kind === "layer")
+    return (bxSize(n.din, 0) || 0) * (bxSize(n.dout, 0) || 0);
+  if (n.kind === "embed")
+    return (bxSize(n.vocab, 0) || 0) * (bxSize(n.dout, 0) || 0);
+  if (n.kind === "norm")
+    return bxSize(n.size, 0) || bxSize(n.din, 0) || 0;
+  if (n.params) return Number(n.params) || 0;
+  if (n.kind === "custom")
+    return ((n.inner && n.inner.nodes) || [])
+      .reduce((a, x) => a + bxParamsOf(x), 0);
+  return 0;
+}
+function bxWeightsBox(n) {                    // a box that owns weights of its own
+  if (!n) return false;
+  if (n.kind === "layer" || n.kind === "embed" || n.kind === "norm" ||
+      n.kind === "vision" || n.kind === "hf") return true;
+  if (n.kind === "op" && bxOpName(n) === "scale") return true;
+  if ((n.kind === "op" || n.kind === "script") && n.t && n.params) return true;
+  return false;
+}
+function bxWeightsKind(kind) {                // …and the palette kinds that
+  return kind === "layer" || kind === "embed" || kind === "norm" ||   // hold them
+         kind === "vision" || kind === "hf";
+}
 function bxWeightedBox(n) {
   if (!n) return false;
   if (n.kind === "layer" || n.kind === "embed" || n.kind === "norm") return true;
@@ -5155,6 +5193,8 @@ function bxJSONNode(n) {
   else if (n.kind === "custom") {
     o.inner = bxJSONDoc((n.inner && n.inner.nodes) || [], (n.inner && n.inner.edges) || [], "nested");
     if (n.repo) o.repo = n.repo;         // the HF repo that filled it, if any
+    if (n.model) o.model = true;         // the architecture's own box
+    if (n.box) o.box = { w: Math.round(n.box.w || 380), h: Math.round(n.box.h || 220) };
   }
   else if (n.kind === "vision") {        // the mmproj tower: its file + geometry
     o.din = n.din == null ? null : n.din;
@@ -5554,6 +5594,9 @@ function bxJSONNodeFrom(o) {
     if (!inner) return null;                    // a canvas can never sit inside a nested box
     n.inner = { nodes: inner.nodes, edges: inner.edges };
     if (typeof o.repo === "string" && o.repo.trim()) n.repo = bxClip(o.repo.trim(), 200);
+    if (o.model === true) n.model = true;       // the architecture's own box
+    if (o.box && typeof o.box === "object")
+      n.box = { w: bxSize(o.box.w, 380), h: bxSize(o.box.h, 220) };
   }
   if (typeof o.t === "string" && o.t.trim()) n.t = bxClip(o.t.trim(), 200);
   if (typeof o.file === "string" && o.file.trim()) n.file = bxClip(o.file.trim(), 300);
@@ -5745,6 +5788,8 @@ function bxNodeW(n) {
     return Math.max(320, Number((n.box || {}).w) || 440);
   if (n && (n.kind === "select" || n.kind === "config"))    // …and their windows
     return Math.max(280, Number((n.box || {}).w) || 360);
+  if (n && n.kind === "custom" && n.model)                 // a model, with its pane
+    return Math.max(300, Number((n.box || {}).w) || 380);
   if (n && n.kind === "input")             // …and the input's own editor: roomy
     return Math.max(240, Number((n.box || {}).w) || 420);   // by default, so its
   if (n && n.kind === "output")            // content fits; the corner adjusts it
@@ -5760,6 +5805,8 @@ function bxNodeH(n) {
     return Math.max(180, Number((n.box || {}).h) || 300);
   if (n && (n.kind === "select" || n.kind === "config"))
     return Math.max(140, Number((n.box || {}).h) || 240);
+  if (n && n.kind === "custom" && n.model)
+    return Math.max(150, Number((n.box || {}).h) || 220);
   if (n && n.kind === "input")
     return Math.max(120, Number((n.box || {}).h) || 280);
   if (n && n.kind === "output")
@@ -6216,6 +6263,7 @@ function bxStateText(st) {                     // the data a box carries, as con
 function bxHasPane(n) {                        // a box whose card holds an editor
   return !!n && (n.kind === "agent" || n.kind === "train" ||
                  n.kind === "dataset" || n.kind === "select" || n.kind === "config" ||
+                 (n.kind === "custom" && n.model) ||      // a model's own window
                  n.kind === "input" || n.kind === "output" ||
                  n.kind === "heatmap");
 }
@@ -6255,7 +6303,9 @@ function bxCard(n) {
   const isSheet = n.kind === "dataset";       // its sheet is inset inside the card
   g.appendChild(svg("rect", { x: n.x, y: n.y, width: w, height: h,
                               rx: 9, class: "drect" }));
-  g.appendChild(svgText(n.x + 9, n.y + 15, bxKindLabel(n.kind), "dtype " + n.kind));
+  g.appendChild(svgText(n.x + 9, n.y + 15,
+                        bxKindLabel(n.model ? "model" : n.kind),
+                        "dtype " + (n.model ? "model" : n.kind)));
   let rightX = w - 9;                          // the corner marks stack right-to-left
   if (tint) {                                  // the training signal's mark
     g.appendChild(svgText(n.x + rightX, n.y + 15, TINT_TAG[tint] || "?", "dtag " + tint));
@@ -9237,10 +9287,46 @@ function bxTrainAddConfig(h) {                 // one click: a config box, wired
                    + " \u2014 wire a dataset (or a select col box) into its "
                    + "data dot, and name the columns in the config");
 }
+function bxModelFill(pane, n) {                // a model: what it is, and who
+  pane.innerHTML = "";                         // trains it — the architecture's box
+  bxBehaveInside(pane);
+  const ins = bxBoundary(n, "in"), outs = bxBoundary(n, "out");
+  const type = (b, dir) => bxTypeText(bxPortType(b, dir)) || "?";
+  pane.appendChild(mk("div", { class: "panehint",
+    text: "in " + (ins.length ? ins.map(b => type(b, "out")).join(" · ")
+                              : "— (add an input box inside)")
+        + "  →  out " + (outs.length ? outs.map(b => type(b, "in")).join(" · ")
+                                         : "— (add an output box inside)") }));
+  const pr = bxParamsOf(n);
+  let frozen = 0, tot = 0;
+  (function walk(nodes) {
+    for (const x of nodes || []) {
+      if (bxWeightedBox(x) && x.kind !== "custom") {
+        tot += 1;
+        if (x.frozen) frozen += 1;
+      }
+      if (x.kind === "custom") walk((x.inner || {}).nodes);
+    }
+  })((n.inner || {}).nodes);
+  pane.appendChild(mk("div", { class: "panehint",
+    text: (pr ? bxBig(pr) + " params" : "no weights inside yet")
+        + (tot ? " · " + frozen + " of " + tot + " weight boxes frozen" : "") }));
+  let cfg = null;
+  bxEveryBox(x => { if (!cfg && x.kind === "config" && x.model === n.id) cfg = x; });
+  const st = cfg ? ((BXRUN.trainState || {})[cfg.id] || {}) : {};
+  pane.appendChild(mk("div", { class: "panehint",
+    text: cfg ? ("training · " + (cfg.name || cfg.id)
+                 + (st.step != null ? " · step " + st.step : "")
+                 + (st.loss != null ? " · loss " + Number(st.loss).toFixed(4) : ""))
+              : "training · no train config names it yet" }));
+  pane.appendChild(mk("div", { class: "bxhint2",
+    text: "double-click to open it — the weights live in here" }));
+}
 function bxPaneFill(pane, n) {                 // one pane, filled by its kind —
   if (n.kind === "dataset") bxDatasetFill(pane, n);   // every renderer goes through
   else if (n.kind === "select") bxSelectFill(pane, n);
   else if (n.kind === "config") bxConfigFill(pane, n);
+  else if (n.kind === "custom") bxModelFill(pane, n);
   else if (n.kind === "train") bxTrainFill(pane, n);
   else if (n.kind === "input") bxInputFill(pane, n);
   else if (n.kind === "output") bxOutputFill(pane, n);
@@ -10186,7 +10272,8 @@ let bxpOpen = null;                            // the expanded category, if any
 function bxPreview(kind) {
   const isTpl = !!BX_TEMPLATES[kind];
   const fake = { id: "pal-" + kind, kind: isTpl ? "custom" : kind, x: 0, y: 0,
-                 name: (kind === "embed" ? "embedding " : kind === "layer" ? "fully connected "
+                 name: (kind === "model" ? "model "
+                        : kind === "embed" ? "embedding " : kind === "layer" ? "fully connected "
                         : kind === "act" ? "activation "
                         : kind === "op" ? "operation " : kind === "norm" ? "norm "
                         : kind === "tokenize" ? "tokenizer "
@@ -10222,6 +10309,7 @@ function bxPreview(kind) {
 }
 const BX_PALETTE = () => [
   ["AI", [["agent", "agent box"]]],
+  ["models", [["model", "model box"]]],
   ["weights", [["embed", "embedding box"], ["layer", "fully connected box"],
                ["norm", "norm box"]]],
   ["text", [["tokenize", "tokenizer box"], ["detokenize", "de-tokenizer box"],
