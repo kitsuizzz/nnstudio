@@ -2680,13 +2680,14 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
             # a design with data somewhere must hand the run some — a bare
             # canvas just trains nothing (a forward that keeps its grads)
             raise CanvasError("run", "training has no rows to read \u2014 wire a "
-                                  "dataset (or a select col box) into the input's X "
-                                  "dot" + ("" if src["wired"] else ", or bind one "
-                                  "in the output's training tab"))
+                                  "dataset (or a select col box) into the input's "
+                                  "data dot" + ("" if src["wired"] else ", or bind "
+                                  "one in the output's training tab"))
         x_only = paradigm in ("rl", "unsupervised")
         if not x_only and train_dn is not None and y_src is None:
-            raise CanvasError("run", "supervised training needs a Y matrix \u2014 "
-                                  "wire one into the input's third dot")
+            raise CanvasError("run", "supervised training needs a second column "
+                                  "\u2014 wire the dataset into the input's data "
+                                  "dot and name the target in the config's y col")
         vector = len(x_col) > 1 or (not x_only and len(y_col) > 1)
         if vector and paradigm == "rl":
             raise CanvasError("run", "rl draws samples token by token \u2014 a "
@@ -3520,11 +3521,12 @@ def matrix_source(canvas, node):
 
 def train_sources(canvas, hub):
     """Where a training run's rows come from. A train config boxed into an
-    input names the settings, and the input's matrix dots name the data: the
-    first is X, the second is Y (read only when the paradigm is supervised).
-    Older designs stay as they were: the hub names a dataset and its x_col /
-    y_col pick the columns (A/B by default). Returns {"wired", "x", "y"} with
-    each side {"node", "cols"} (cols never None) or None."""
+    input names the settings, and the input's one data dot carries the matrix:
+    the config's x_col / y_col pick its columns (A/B by default) — names from
+    its header, or letters within what the matrix hands out. Older designs
+    name a dataset in the hub and pick columns the same way. Returns
+    {"wired", "x", "y"} with each side {"node", "cols"} (cols never None) or
+    None."""
     hub = hub or {}
     out = {"wired": bool(hub.get("_config")), "x": None, "y": None}
     if not out["wired"]:
@@ -3536,7 +3538,7 @@ def train_sources(canvas, hub):
         yc = col_indexes(hub.get("y_col"), named) if hub.get("y_col") else [1]
         if xc is None or yc is None:
             raise CanvasError("dataset", "a column in the training tab's x or y "
-                                   "is not in the dataset — a name, or a "
+                                   "is not in the dataset \u2014 a name, or a "
                                    "letter like A")
         out["x"] = {"node": ds, "cols": xc}
         out["y"] = {"node": ds, "cols": yc}
@@ -3549,29 +3551,41 @@ def train_sources(canvas, hub):
             break
     if inp is None:
         return out
-    got = {}
+    node = None
     for src, dst, _fp, to_port in _edges_full(canvas):
-        if dst.get("id") != inp.get("id") or to_port not in (1, 2):
-            continue
-        got[to_port] = src
-    for side, port in (("x", 1), ("y", 2)):
-        node = got.get(port)
-        if node is None:
-            continue
-        found = matrix_source(canvas, node)
-        ds = found["node"]
-        if ds is None:
-            raise CanvasError(node.get("name") or "matrix",
-                              "it carries no dataset — wire a dataset box "
-                              "into it, or bind one in its window")
-        cols = found["cols"]
-        if cols is None and found["spec"]:
-            raise CanvasError(node.get("name") or "matrix",
-                              "a column it names is not in the dataset's sheet: %r"
-                              % found["spec"])
-        if cols is None:
-            cols = list(range(dataset_width(ds)))
-        out[side] = {"node": ds, "cols": cols}
+        if dst.get("id") == inp.get("id") and to_port == 1:
+            node = src
+            break
+    if node is None:
+        return out
+    found = matrix_source(canvas, node)
+    ds = found["node"]
+    if ds is None:
+        raise CanvasError(node.get("name") or "matrix",
+                          "it carries no dataset \u2014 wire a dataset box "
+                          "into it, or bind one in its window")
+    if found["cols"] is None and found["spec"]:
+        raise CanvasError(node.get("name") or "matrix",
+                          "a column it names is not in the dataset's sheet: %r"
+                          % found["spec"])
+    width = dataset_width(ds)
+    vis = list(found["cols"]) if found["cols"] else list(range(width))
+    names = dataset_cols(ds)
+    vnames = [(names[k] if 0 <= k < len(names) else "") for k in vis]
+
+    def side(key, default):
+        spec = str(hub.get(key) or "").strip()
+        pos = col_indexes(spec, vnames) if spec else None
+        if spec and pos is None:
+            raise CanvasError("config", "a column in the training tab's %s is not "
+                                        "among the columns the matrix hands out: %r"
+                                        % (key, spec))
+        if not pos:
+            pos = [default] if len(vis) > default else [0]
+        return [vis[p] for p in pos]
+
+    out["x"] = {"node": ds, "cols": side("x_col", 0)}
+    out["y"] = {"node": ds, "cols": side("y_col", 1)}
     return out
 
 

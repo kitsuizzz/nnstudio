@@ -1763,32 +1763,40 @@ check("a class label derives from its column: the switch, no list",
 
 
 def training_wires_on_the_input():
-    # a train config wired into the input names the settings; the input's own
-    # dots name the data: port 1 is X, port 2 is Y (supervised only)
+    # a train config wired into the input names the settings; the input's ONE
+    # data dot carries the matrix, and the config picks the columns from it
     data = "\n".join(["x0,x1,x2,y0,y1"] +
-                      ["%d,%d,%d,%d,%d" % (a, b, c, 2 * a - b, c)
-                       for a, b, c in [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1),
-                                       (1, 1, 0), (1, 0, 1), (0, 1, 1), (1, 1, 1)]])
-    c = canvas([
-        n("input", "vec", dout=3),
-        n("layer", "l1", din=3, dout=8),
-        n("layer", "l2", din=8, dout=2),
-        n("output", "pred", din=2, train=True, batch=8, save_every=0, eval_every=0),
-        n("dataset", "rows", format="csv", text=data),
-        n("select", "xs", cols="x0 x1 x2"),
-        n("select", "ys", cols="y0 y1"),
-        n("config", "cfg", paradigm="supervised", batch=8, lr=0.02),
-    ], [
-        edge("cfg", "vec", 0, 0), edge("xs", "vec", 0, 1), edge("ys", "vec", 0, 2),
-        edge("rows", "xs"), edge("rows", "ys"),
-        edge("vec", "l1"), edge("l1", "l2"), edge("l2", "pred"),
-    ])
+                     ["%d,%d,%d,%d,%d" % (a, b, c, 2 * a - b, c)
+                      for a, b, c in [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1),
+                                      (1, 1, 0), (1, 0, 1), (0, 1, 1), (1, 1, 1)]])
+
+    def wired(cfg_fields, data_node=None, attached="rows"):
+        nodes = [
+            n("input", "vec", dout=3),
+            n("layer", "l1", din=3, dout=8),
+            n("layer", "l2", din=8, dout=2),
+            n("output", "pred", din=2, train=True, batch=8, save_every=0,
+              eval_every=0),
+            n("dataset", "rows", format="csv", text=data),
+            n("config", "cfg", paradigm="supervised", batch=8, lr=0.02,
+              **cfg_fields),
+        ]
+        edges = [edge("cfg", "vec", 0, 0), edge(attached, "vec", 0, 1),
+                 edge("vec", "l1"), edge("l1", "l2"), edge("l2", "pred")]
+        if attached != "rows":
+            nodes.append(n("select", attached, cols="x0 x1 x2"))
+            edges.append(edge("rows", attached))
+        return canvas(nodes, edges)
+
+    c = wired({"x_col": "x0 x1 x2", "y_col": "y0 y1"})
     hub = T.train_hub(c)
     assert hub.get("_config") and hub.get("target") == "pred", hub
     src2 = T.train_sources(c, hub)
-    assert src2["wired"] and src2["x"] and src2["y"], src2
+    assert src2["wired"], src2
     assert src2["x"]["cols"] == [0, 1, 2] and src2["y"]["cols"] == [3, 4], src2
-    # the run scores the wired pair, with a probe
+    assert src2["x"]["node"]["id"] == "rows" == src2["y"]["node"]["id"], \
+        "the two sides read the one attached sheet"
+    # the run scores the pair, with a probe
     res = T.run(c, {}, mode="training")
     probe = res.get("probe") or {}
     assert probe.get("loss") is not None, probe
@@ -1815,52 +1823,41 @@ def training_wires_on_the_input():
         assert err < 0.2, "the fitted error: %.3f" % err
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    # two separate sheets pair row by row
-    two = canvas([
+    # with no x_col/y_col the first two columns are A and B, as ever
+    bare = wired({})
+    srcb = T.train_sources(bare, T.train_hub(bare))
+    assert srcb["x"]["cols"] == [0] and srcb["y"]["cols"] == [1], srcb
+    # a select on the dot: the config's columns resolve within what it hands out
+    sel = wired({"x_col": "x1", "y_col": "x0"}, attached="xs")
+    src3 = T.train_sources(sel, T.train_hub(sel))
+    assert src3["x"]["cols"] == [1] and src3["y"]["cols"] == [0], src3
+    # a name that is not among the handed-out columns is named
+    bad = wired({"x_col": "y0", "y_col": "y1"}, attached="xs")
+    try:
+        T.train_sources(bad, T.train_hub(bad))
+        raise AssertionError("a column outside the matrix was accepted")
+    except T.CanvasError as e:
+        assert "not among the columns" in str(e), e
+    # a bare data dot, a dataset-less select, and a ghost selection name it too
+    none = canvas([
         n("input", "vec", dout=2),
         n("layer", "l1", din=2, dout=2),
-        n("output", "pred", din=1, train=True, batch=4),
-        n("dataset", "xr", format="csv", text="a,b\n0,0\n1,0\n0,1\n1,1"),
-        n("dataset", "yr", format="csv", text="t\n5\n6\n7\n8"),
-        n("select", "xs", cols="a b"),
-        n("select", "ys", cols="t"),
+        n("output", "pred", din=2, train=True),
+        n("dataset", "rows", format="csv", text="a,b\n0,1\n1,0"),
         n("config", "cfg", paradigm="supervised"),
-    ], [edge("cfg", "vec", 0, 0), edge("xs", "vec", 0, 1), edge("ys", "vec", 0, 2),
-        edge("xr", "xs"), edge("yr", "ys"),
-        edge("vec", "l1"), edge("l1", "pred")])
-    hub2 = T.train_hub(two)
-    src3 = T.train_sources(two, hub2)
-    assert src3["x"]["node"]["id"] == "xr" and src3["y"]["node"]["id"] == "yr", src3
-    xb, yb = T.dataset_batch(src3["x"]["node"], T.dataset_rows(src3["x"]["node"]),
-                             0, 4, src3["x"]["cols"], src3["y"]["cols"],
-                             y_node=src3["y"]["node"],
-                             y_rows=T.dataset_rows(src3["y"]["node"]))
-    assert tuple(xb.shape) == (4, 2) and yb.tolist() == [[5], [6], [7], [8]], \
-        (xb.shape, yb.tolist())
-    # a blank column list means the whole sheet
-    c["nodes"].append(n("select", "all", cols=""))
-    c["edges"].append({"from": "rows", "to": "all", "fromPort": 0, "toPort": 0})
-    got = T.matrix_source(c, [x for x in c["nodes"] if x["id"] == "all"][0])
-    assert got["node"] and got["cols"] is None and got["spec"] == "", got
-    # a supervised config with no Y wire says so
-    bare = canvas([x for x in c["nodes"] if x["id"] != "ys"] +
-                  [n("output", "pred2", din=2, train=True)],
-                  [e for e in c["edges"] if e.get("from") != "ys"]
-                  + [{"from": "cfg", "to": "pred2", "fromPort": 0, "toPort": 0}])
+    ], [edge("cfg", "vec", 0, 0), edge("vec", "l1"), edge("l1", "pred")])
     try:
-        T.run(bare, {}, mode="training")
-        raise AssertionError("a bare Y dot trained anyway")
+        T.run(none, {}, mode="training")
+        raise AssertionError("a bare data dot trained anyway")
     except T.CanvasError as e:
-        assert "needs a Y matrix" in str(e), e
-    # a select without its dataset, and a ghost column, name themselves
+        assert "wire a dataset" in str(e) and "data dot" in str(e), e
     c2 = canvas([
         n("input", "vec", dout=2),
         n("layer", "l1", din=2, dout=2),
         n("output", "pred", din=2, train=True),
         n("select", "xs", cols="a"),
-        n("select", "ys", cols="b"),
         n("config", "cfg", paradigm="supervised"),
-    ], [edge("cfg", "vec", 0, 0), edge("xs", "vec", 0, 1), edge("ys", "vec", 0, 2),
+    ], [edge("cfg", "vec", 0, 0), edge("xs", "vec", 0, 1),
         edge("vec", "l1"), edge("l1", "pred")])
     try:
         T.run(c2, {}, mode="training")
@@ -1873,11 +1870,9 @@ def training_wires_on_the_input():
         n("output", "pred", din=2, train=True),
         n("dataset", "rows", format="csv", text="a,b\n0,1\n1,0"),
         n("select", "xs", cols="ghost0"),
-        n("select", "ys", cols="b"),
         n("config", "cfg", paradigm="supervised"),
-    ], [edge("cfg", "vec", 0, 0), edge("xs", "vec", 0, 1), edge("ys", "vec", 0, 2),
-        edge("rows", "xs"), edge("rows", "ys"),
-        edge("vec", "l1"), edge("l1", "pred")])
+    ], [edge("cfg", "vec", 0, 0), edge("xs", "vec", 0, 1),
+        edge("rows", "xs"), edge("vec", "l1"), edge("l1", "pred")])
     try:
         T.run(c3, {}, mode="training")
         raise AssertionError("a ghost column was accepted")
@@ -1885,24 +1880,22 @@ def training_wires_on_the_input():
         assert "not in the dataset's sheet" in str(e), e
 
 
-check("the training wires live on the input: config, X, and Y for supervised",
+check("the training wires live on the input: the config, and ONE data dot",
       training_wires_on_the_input)
 
 
 def unsupervised_trains_on_x_alone():
-    # unsupervised: only X is wired; the labels are the input itself — the
-    # text next-token, or the numbers the model learns to rebuild
+    # unsupervised: the one matrix's x is the whole story; the labels are the
+    # input itself — next-token over its text, or the numbers it rebuilds
     c = canvas([
         n("input", "tok", dout=1),
         n("embed", "emb", vocab=4, din=1, dout=8),
         n("layer", "l2", din=8, dout=4),
         n("output", "logits", din=4, train=True),
         n("dataset", "rows", vocab="abcd", text="ab\ncd\nab"),
-        n("select", "xs", cols="A"),
-        n("config", "cfg", paradigm="unsupervised", batch=2),
-    ], [edge("cfg", "tok", 0, 0), edge("xs", "tok", 0, 1),
-        edge("rows", "xs"), edge("tok", "emb"), edge("emb", "l2"),
-        edge("l2", "logits")])
+        n("config", "cfg", paradigm="unsupervised", batch=2, x_col="A"),
+    ], [edge("cfg", "tok", 0, 0), edge("rows", "tok", 0, 1),
+        edge("tok", "emb"), edge("emb", "l2"), edge("l2", "logits")])
     res = T.run(c, {}, mode="training")
     probe = res.get("probe") or {}
     assert probe.get("loss") is not None and probe.get("acc") is None, probe
@@ -1912,23 +1905,22 @@ def unsupervised_trains_on_x_alone():
         tr = T.DesignTrainer(c, {"batch": 2, "lr": 0.05, "save_every": 10 ** 9,
                                  "eval_every": 0, "name": "unsup",
                                  "checkpoints": d})
-        assert tr.x_only and tr.y_node is None, (tr.x_only, tr.y_node)
+        assert tr.x_only and tr.x_col == [0], (tr.x_only, tr.x_col)
         events = []
         tr.run(steps=40, on_event=events.append)
         losses = [e["loss"] for e in events if e.get("type") == "loss"]
         assert len(losses) == 40 and losses[-1] < losses[0], (losses[0], losses[-1])
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    # a numeric X learns to rebuild itself: the labels are the matrix
+    # a numeric x learns to rebuild itself: the labels are the matrix
     v = canvas([
         n("input", "vec", dout=2),
         n("layer", "l1", din=2, dout=2),
         n("output", "back", din=2, train=True),
         n("dataset", "rows", format="csv", text="x0,x1\n0,0\n1,0\n0,1\n1,1"),
-        n("select", "xs", cols="x0 x1"),
-        n("config", "cfg", paradigm="unsupervised", batch=4),
-    ], [edge("cfg", "vec", 0, 0), edge("xs", "vec", 0, 1),
-        edge("rows", "xs"), edge("vec", "l1"), edge("l1", "back")])
+        n("config", "cfg", paradigm="unsupervised", batch=4, x_col="x0 x1"),
+    ], [edge("cfg", "vec", 0, 0), edge("rows", "vec", 0, 1),
+        edge("vec", "l1"), edge("l1", "back")])
     res2 = T.run(v, {}, mode="training")
     probe2 = res2.get("probe") or {}
     assert probe2.get("loss") is not None, probe2
@@ -1938,13 +1930,15 @@ def unsupervised_trains_on_x_alone():
                              0, 4, srcv["x"]["cols"], [1], x_only=True)
     assert xb.shape == yb.shape and xb.dtype.is_floating_point, (xb.shape, yb.shape)
     # the class switch is a supervised thing
-    v["nodes"].append(n("config", "cfg2", paradigm="supervised"))
+    v["nodes"] = [x for x in v["nodes"] if x["id"] != "cfg"] + \
+        [n("config", "cfg2", paradigm="supervised", y_class=True, batch=2)]
+    v["edges"] = [e for e in v["edges"] if e.get("from") != "cfg"] + \
+        [{"from": "cfg2", "to": "vec", "fromPort": 0, "toPort": 0}]
     try:
-        T.DesignTrainer(v, {"y_class": True, "paradigm": "supervised",
-                            "batch": 2})
-        raise AssertionError("no error for a missing Y")
-    except T.CanvasError:
-        pass
+        T.DesignTrainer(v, {"paradigm": "unsupervised", "y_class": True, "batch": 2})
+        raise AssertionError("no error for the class switch in unsupervised")
+    except T.CanvasError as e:
+        assert "no labels" in str(e), e
 
 
 check("unsupervised trains on X alone \u2014 the model learns to rebuild it",

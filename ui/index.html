@@ -1631,7 +1631,7 @@ function bxMatrixTell(n) {                    // a matrix box: what it hands out
     const hit = (BX.dsCache || {})[ds.file];
     const toks = spec0 ? spec0.split(/[\s,]+/).filter(x => x) : [];
     return { node: ds, ds, cols: null, count: toks.length || null, names: null,
-             rows: hit && hit.ok ? (hit.rows || []).length : null,
+             vnames: [], rows: hit && hit.ok ? (hit.rows || []).length : null,
              file: true, bad: null };
   }
   const t = bxTableRead(ds) || {};
@@ -1649,24 +1649,56 @@ function bxMatrixTell(n) {                    // a matrix box: what it hands out
       if (cols.indexOf(i) < 0) cols.push(i);
     }
   } else cols = names.map((_, i) => i);
-  return { node: ds, ds, cols, rows, names, bad: null };
+  const vnames = cols.map(i => names[i] || "");
+  return { node: ds, ds, cols, vnames, rows, names, bad: null };
+}
+function bxAttached() {                       // what the train config detects:
+  // the one matrix wired into the input's data dot, and its columns
+  const wired = bxTrainWired();
+  const tell = wired.data ? bxMatrixTell(wired.data) : null;
+  return { node: wired.data || null, tell,
+           ds: tell && tell.ds, rows: tell ? tell.rows : null,
+           cols: tell && tell.cols, vnames: (tell && tell.vnames) || [],
+           names: (tell && tell.names) || [],
+           file: !!(tell && tell.file), bad: tell ? tell.bad : null,
+           count: tell ? (tell.cols ? tell.cols.length
+                                    : (tell.count != null ? tell.count : null)) : null };
+}
+function bxColsOf(spec, at, dflt) {           // a config's x/y spec -> columns
+  // names from what the matrix hands out, or letters within it; blank = A/B
+  const toks = String(spec || "").trim().split(/[\s,]+/).filter(x => x);
+  const vis = (at && at.cols) || null;
+  const use = (p) => (vis && vis.length ? vis[Math.min(Math.max(0, p),
+                                                       vis.length - 1)] : p);
+  if (at && at.file && toks.length) return null;   // its columns are the backend's
+  if (!toks.length)
+    return [use(at && at.vnames && at.vnames.length > dflt ? dflt : 0)];
+  const out = [];
+  for (const tok of toks) {
+    const p = bxColIndex(tok, (at && at.vnames) || [], (at && at.vnames || []).length);
+    if (p == null) return null;
+    out.push(use(p));
+  }
+  return out;
+}
+function bxColLabel(cols, at) {               // resolved columns as names/letters
+  if (!cols) return "?";
+  return cols.map(i => ((at && at.names && at.names[i]) || bxColLetter(i))).join(" ");
 }
 function bxTrainWired() {                     // the design's training wiring:
-  // the train config boxed into an input, and the matrices on that input's dots
-  const out = { cfg: null, input: null, x: null, y: null, supervised: true };
+  // the train config boxed into an input, and the data on that input's one dot
+  const out = { cfg: null, input: null, data: null };
   for (const e of (BX.edges || [])) {
     const a = bxNode(e.from), b = bxNode(e.to);
     if (!a || !b || b.kind !== "input") continue;
     const p = e.toPort || 0;
     if (p === 0 && a.kind === "config") { if (!out.cfg) { out.cfg = a; out.input = b; } }
-    else if (out.input && b.id === out.input.id && p === 1) out.x = a;
-    else if (out.input && b.id === out.input.id && p === 2) out.y = a;
+    else if (out.input && b.id === out.input.id && p === 1) out.data = a;
   }
-  out.supervised = out.cfg ? (out.cfg.paradigm || "supervised") === "supervised" : true;
   return out;
 }
 function bxInputLink(n) {                     // one input's own training dots
-  const out = { on: false, cfg: null, x: null, y: null, supervised: true };
+  const out = { on: false, cfg: null, data: null };
   let trainOn = false;
   bxEveryBox(x => { if (x.kind === "output" && x.train) trainOn = true; });
   for (const e of (BX.edges || [])) {
@@ -1674,11 +1706,9 @@ function bxInputLink(n) {                     // one input's own training dots
     const s = bxNode(e.from);
     const p = e.toPort || 0;
     if (p === 0 && s && s.kind === "config") out.cfg = s;
-    else if (p === 1) out.x = s;
-    else if (p === 2) out.y = s;
+    else if (p === 1) out.data = s;
   }
   out.on = trainOn || !!out.cfg;
-  out.supervised = out.cfg ? (out.cfg.paradigm || "supervised") === "supervised" : true;
   return out;
 }
 function bxPortDefs(n, dir, seen) {
@@ -1695,17 +1725,14 @@ function bxPortDefs(n, dir, seen) {
   seen = seen || new Set();
   if (seen.has(n.id)) return [];                 // a loop of pass-throughs stops here
   seen.add(n.id);
-  if (n.kind === "input") {                  // a source — and, training on, a
-    if (dir === "out")                       // hub: the train config, X, and Y
+  if (n.kind === "input") {                  // a source — and, training on, its
+    if (dir === "out")                       // hub: the train config, then data
       return [{ size: n.dout, node: n, field: "dout" }];
     const link = bxInputLink(n);
     if (!link.on) return [];
     const ports = [{ size: null, node: n, field: "din", act: true, opt: true }];
-    if (link.cfg) {
+    if (link.cfg)
       ports.push({ size: null, node: n, field: "din", act: true, opt: true });
-      if (link.supervised)
-        ports.push({ size: null, node: n, field: "din", act: true, opt: true });
-    }
     return ports;
   }
   if (n.kind === "select")                   // a sheet's columns, as a matrix
@@ -1922,6 +1949,14 @@ function bxAdd(kind, x, y, v) {
               dout: kind === "output" || sizeless ? null : bxSize(v.dout) };
   if (kind === "act") n.act = v.act || "silu";
   if (kind === "script") n.script = typeof v.script === "string" ? v.script : "";
+  if (kind === "select") {
+    const cs = String(v.cols == null ? "" : v.cols).trim()
+      .split(/[\s,]+/).filter(x => x).slice(0, 16)
+      .map(x => bxClip(x.toUpperCase(), 8));
+    if (cs.length) n.cols = cs.join(" ");
+    if (typeof v.dataset === "string" && v.dataset) n.dataset = v.dataset;
+  }
+  if (kind === "config" && v.paradigm) n.paradigm = v.paradigm;
   if (kind === "op") {
     n.op = BX_OPS.indexOf(v.op) >= 0 ? v.op : BX_OPS[0];
     const d = bxDims(v.dims);
@@ -3713,10 +3748,9 @@ function bxTrainTintInfo() {                      // who carries the signal, at 
   const c = tied.cfg || hub;
   if (tied.cfg) {                                 // the wired training: its boxes
     mark(tied.cfg.id, "tsrc");
-    for (const node of [tied.x, tied.supervised ? tied.y : null]) {
-      if (!node) continue;
-      mark(node.id, "tsrc");
-      const tell = bxMatrixTell(node);
+    if (tied.data) {
+      mark(tied.data.id, "tsrc");
+      const tell = bxMatrixTell(tied.data);
       if (tell && tell.ds) mark(tell.ds.id, "tsrc");
     }
   }
@@ -3762,55 +3796,54 @@ function bxTrainSummary(h) {                       // what the engine will do, i
     return null;
   })();
   if (wired.cfg) {
-    const tell = (side, node, label) => {
-      if (!node) {
-        if (side === "y" && !wired.supervised) return null;
-        missing.push("wire the " + label + " matrix into the input's "
-                     + (side === "x" ? "second" : "third") + " dot");
-        return null;
+    // the config detects what is attached: one matrix on the input's data dot,
+    // and its columns — x col / y col pick from those (A/B by default)
+    const at = bxAttached();
+    if (!wired.data) {
+      missing.push("wire the dataset (or a select col box) into the input's "
+                   + "data dot (the second one)");
+    } else if (at.bad || !at.ds) {
+      missing.push("the data matrix: " + (at.bad || "not a dataset box"));
+    } else {
+      const rows = at.rows;
+      const specX = String(c.x_col || "").trim();
+      const specY = String(c.y_col || "").trim();
+      let xc = null, yc = null;
+      if (!at.file) {
+        xc = bxColsOf(c.x_col, at, 0);
+        yc = bxColsOf(c.y_col, at, 1);
+        if (xc === null)
+          missing.push("x col names a column the matrix does not hand out: "
+                       + specX.toUpperCase());
+        if (!rl && !unsup && yc === null)
+          missing.push("y col names a column the matrix does not hand out: "
+                       + specY.toUpperCase());
+        if (!rl && !unsup && !yc && !specY && (at.vnames || []).length < 2)
+          missing.push("the matrix hands out one column \u2014 a supervised "
+                       + "target needs a second one");
       }
-      const info = bxMatrixTell(node);
-      if (!info || info.bad) {
-        missing.push("the " + label + " matrix: "
-                     + ((info && info.bad) || "not a matrix box"));
-        return null;
-      }
-      return info;
-    };
-    const xi = tell("x", wired.x, "X");
-    const yi = wired.supervised ? tell("y", wired.y, "Y") : null;
-    const widthOf = (info) => info ? (info.cols ? info.cols.length
-                                                : (info.count || 0)) : 0;
-    const describ = (label, info) => {
-      const name = (info.node && (info.node.name || info.node.id)) || "?";
-      if (info.file)
-        return label + " " + name
-          + (info.count ? " \u00b7 " + info.count
-                           + (info.count === 1 ? " column" : " columns") : "")
-          + (info.rows != null ? " \u00b7 " + info.rows + " rows"
-                               : " \u00b7 rows on the backend");
-      const cols = (info.cols || []).length;
-      return label + " " + name
-        + " \u00b7 " + cols + (cols === 1 ? " column" : " columns")
-        + (info.rows != null ? " \u00b7 " + info.rows + " rows" : "");
-    };
-    const bits = [];
-    if (xi) bits.push(describ("X", xi));
-    if (yi) bits.push(describ("Y", yi));
-    if (!wired.supervised)
-      bits.push(rl ? "X only \u2014 the reward is the signal"
-                   : "X only \u2014 the model rebuilds it");
-    if (bits.length) lines.push("data \u00b7 " + bits.join(" \u00b7 "));
-    if (xi && xi.rows === 0) missing.push("the X matrix has no rows");
-    if (yi && yi.rows === 0) missing.push("the Y matrix has no rows");
-    if (xi && yi && xi.rows != null && yi.rows != null && xi.rows !== yi.rows)
-      lines.push("note \u00b7 X has " + xi.rows + " rows, Y has " + yi.rows
-                 + " \u2014 they pair by index");
-    if (xi && xi.ds && yi && yi.ds && xi.ds.id !== yi.ds.id)
-      lines.push("note \u00b7 X and Y are different sheets \u2014 row i of one "
-                 + "pairs with row i of the other");
-    vector = widthOf(xi) > 1 || widthOf(yi) > 1;
-    if (c.y_class && wired.supervised) {
+      const label = (cols, spec, dflt) => cols ? bxColLabel(cols, at)
+        : ((spec || "").toUpperCase() || bxColLetter(dflt));
+      const bits = [at.node.name || at.node.id];
+      if (at.ds !== at.node) bits.push("reads " + (at.ds.name || at.ds.id));
+      if (rows != null) bits.push(rows + " rows");
+      bits.push("x " + label(xc, specX, 0)
+                + (rl || unsup ? " only" : " \u2192 y " + label(yc, specY, 1)));
+      if (!at.file && !rl && !unsup && yc && xc
+          && yc.join() === xc.join())
+        bits.push("x and y are the same column");
+      else if (!at.file && !rl && !unsup && yc && xc
+               && yc.length !== xc.length)
+        bits.push("x is " + xc.length + " wide, y is " + yc.length);
+      if (at.file) bits.push("its columns are read on the backend");
+      lines.push("data \u00b7 " + bits.join(" \u00b7 "));
+      if (rows === 0) missing.push("the matrix has no rows");
+      const width = (cols) => cols ? cols.length
+        : (String(cols === xc ? specX : specY).trim().split(/[\s,]+/).filter(x => x)
+           .length || 1);
+      vector = (!rl && !unsup ? width(yc) : 0) > 1 || width(xc) > 1;
+    }
+    if (c.y_class && !rl && !unsup) {
       lines.push("classes \u00b7 y is a class label \u2014 the values it takes "
                  + "are the classes");
       if (vector)
@@ -4187,10 +4220,8 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
     const bits = ["training"];
     if (link.cfg) {
       bits.push("config \u00b7 " + (link.cfg.name || link.cfg.id));
-      bits.push(link.x ? "X \u00b7 " + (link.x.name || link.x.id) : "X \u2014 bare");
-      if (link.supervised)
-        bits.push(link.y ? "Y \u00b7 " + (link.y.name || link.y.id) : "Y \u2014 bare");
-      else bits.push("X only");
+      bits.push(link.data ? "data \u00b7 " + (link.data.name || link.data.id)
+                          : "data \u2014 bare");
     } else bits.push("wire a train config box into its first dot");
     pane.appendChild(mk("div", { class: "panehint", text: bits.join(" \u00b7 ") }));
   }
@@ -5851,8 +5882,7 @@ function bxPortType(n, dir, i) {               // what a dot is built to carry
     const link = bxInputLink(n);
     const i2 = i || 0;
     if (i2 === 0) return { kind: "settings", shape: null };
-    const src = i2 === 1 ? link.x : link.y;
-    if (src) return bxPortType(src, "out", 0);
+    if (link.data) return bxPortType(link.data, "out", 0);
     return { kind: "matrix", shape: null };
   }
   if (dir === "out" && n.kind === "op" && bxOpName(n) === "reshape" && n.dims)
@@ -9049,8 +9079,8 @@ function bxSelectFill(pane, n) {              // a matrix: the sheet's columns
   }
   pane.appendChild(line);
   pane.appendChild(mk("div", { class: "bxhint2",
-    text: "wire this into an input's X or Y dot (its training dots) \u2014 the "
-        + "numbers, or one text column, become the rows" }));
+    text: "wire this into the input's data dot (the second one, training on) "
+        + "\u2014 the columns it selects become the rows the model reads" }));
 }
 function bxConfigFill(pane, n) {               // the train config: every setting
   // of the run \u2014 paradigm, cadence, knobs; the data rides the input's own dots
@@ -9095,8 +9125,7 @@ function bxConfigFill(pane, n) {               // the train config: every settin
   const unsup = (n.paradigm || "supervised") === "unsupervised";
   const to = mk("div", { class: "panehint" });
   if (mine && wired.input)
-    to.textContent = "wired into " + (wired.input.name || wired.input.id)
-      + (rl || unsup ? " \u00b7 X only" : " \u00b7 X and Y");
+    to.textContent = "wired into " + (wired.input.name || wired.input.id);
   else {
     to.textContent = "not wired in \u2014 wire this into the input's first dot";
     const fix = mk("span", { class: "bxlink", text: " wire it now" });
@@ -9106,12 +9135,39 @@ function bxConfigFill(pane, n) {               // the train config: every settin
   }
   pane.appendChild(to);
   field("training", par);
-  field("test data", pick("test_dataset", n.test_dataset, boxesOf("dataset"),
-    "scored after every eval \u2014 never trained on"));
-  if (rl)
-    field("reward", pick("reward", n.reward, boxesOf("reward"),
-      "scores every sample \u2014 the signal in rl"));
-  if (!rl) {
+  // the data: the matrix on the input's data dot, detected here \u2014 its
+  // columns are what x col / y col pick from
+  const at = bxAttached();
+  const dline = mk("div", { class: "panehint" });
+  if (!at.node)
+    dline.textContent = "no data \u2014 wire a dataset (or a select col box) "
+      + "into the input's second dot";
+  else if (at.bad || !at.ds)
+    dline.textContent = "the data matrix: " + (at.bad || "not a dataset box");
+  else {
+    const bits = [at.node.name || at.node.id];
+    if (at.ds !== at.node) bits.push("reads " + (at.ds.name || at.ds.id));
+    if (at.rows != null) bits.push(at.rows + " rows");
+    const names = (at.file ? [] : (at.vnames || []).map((nm, k) =>
+      nm || bxColLetter(at.cols ? at.cols[k] : k)));
+    if (names.length) bits.push("columns: " + bxClip(names.join(" "), 44));
+    else if (at.file) bits.push("its columns are read on the backend");
+    dline.textContent = "data \u00b7 " + bits.join(" \u00b7 ");
+  }
+  pane.appendChild(dline);
+  const colField = (key, dflt, title) => {
+    const inp = mk("input", { type: "text",
+                              value: n[key] != null ? n[key] : dflt,
+                              title: title || "" });
+    inp.addEventListener("change", () => bxConfigure(n.id, { [key]: inp.value }));
+    return inp;
+  };
+  field("x col", colField("x_col", "A",
+    "the input column(s) \u2014 a name from the matrix's columns, or a letter; "
+    + "a sequence like x0 x1 x2 is a vector"));
+  if (!rl && !unsup) {
+    field("y col", colField("y_col", "B",
+      "the target column(s) \u2014 what the model is scored on"));
     const yrow = mk("label", { class: "rf" });
     const yck = mk("input", { type: "checkbox", class: "bxtick",
         title: "y's values are the labels to pick \u2014 the column itself names "
@@ -9122,6 +9178,11 @@ function bxConfigFill(pane, n) {               // the train config: every settin
     yrow.appendChild(mk("span", { text: "y is a class label" }));
     pane.appendChild(yrow);
   }
+  field("test data", pick("test_dataset", n.test_dataset, boxesOf("dataset"),
+    "scored after every eval \u2014 never trained on"));
+  if (rl)
+    field("reward", pick("reward", n.reward, boxesOf("reward"),
+      "scores every sample \u2014 the signal in rl"));
   const opt = mk("select", { class: "bxsel" });
   for (const o of ["adamw", "sgd"]) opt.appendChild(mk("option", { value: o, text: o }));
   opt.value = n.optimizer === "sgd" ? "sgd" : "adamw";
@@ -9173,9 +9234,8 @@ function bxTrainAddConfig(h) {                 // one click: a config box, wired
   const err = bxConnect(cfg.id, input.id, 0, 0);
   if (err) bxTrainNote(h, err);
   else bxTrainNote(h, "the train config is wired into " + (input.name || input.id)
-                   + " \u2014 wire a select col box (or a dataset) into the X dot"
-                   + ((h.paradigm || "supervised") === "supervised"
-                      ? ", and one into the Y dot" : ""));
+                   + " \u2014 wire a dataset (or a select col box) into its "
+                   + "data dot, and name the columns in the config");
 }
 function bxPaneFill(pane, n) {                 // one pane, filled by its kind —
   if (n.kind === "dataset") bxDatasetFill(pane, n);   // every renderer goes through
