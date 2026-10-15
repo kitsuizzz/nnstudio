@@ -10887,6 +10887,11 @@ function bxSeedBlank() {
   if (!o) return false;
   bxConnect(i.id, o.id);                   // directly: input → output
   bxSettleSizes();
+  // the first render materialises the camera from whatever it sees — which
+  // can be the input alone. Pin it to the finished pair: both boxes open in
+  // the middle of the canvas, together.
+  const b = bxBounds();
+  BX.view = { cx: (b.x0 + b.x1) / 2, cy: (b.y0 + b.y1) / 2, k: 1 };
   bxRender();
   // a window too narrow for the pair zooms out until it holds both
   const z = bxViewport();
