@@ -1922,8 +1922,12 @@ check("the input box edits its data right on the canvas", () => {
   __t.bxConfigure(i.id, { input_mode: "image", image: "blob:abc123.png",
                           image_size: 768, dout: 3 });
   // the size and the open editor travel too
+  ok(__t.bxNodeW(i) === 420 && __t.bxNodeH(i) === 280,
+     "the editor opens roomy by default — its content has the space");
   __t.bxInputExpand(i);
-  eql([i.box.w, i.box.h], [420, 280], "the editor expands to the bigger size");
+  eql([i.box.w, i.box.h], [300, 170], "…a double-click makes it compact");
+  __t.bxInputExpand(i);
+  eql([i.box.w, i.box.h], [420, 280], "…and another opens it back up");
   eql(__t.bxJSONNodeFrom(__t.bxJSONNode(i)).box.w, 420, "…and the size travels with the design");
   // a run's value never paints over the editor
   __t.bxRunValues = { [i.id]: { shape: [3], peek: [4, 5, 6], mean: 5 } };
@@ -1977,9 +1981,33 @@ check("the output window shows whatever data it receives", () => {
   ok(paneText(o).indexOf("the cat") >= 0, "…or the text it produced");
   __t.bxRunValues = {};
   __t.bxOutputExpand(o);
-  eql([o.box.w, o.box.h], [420, 280], "…and a double-click grows it");
+  eql([o.box.w, o.box.h], [300, 170], "…and a double-click makes it compact");
+  __t.bxOutputExpand(o);
+  eql([o.box.w, o.box.h], [420, 280], "…and another opens it back up");
   eql(__t.bxJSONNodeFrom(__t.bxJSONNode(o)).box.w, 420, "…and the size travels with the design");
   __t.bxRemove(o.id);
+});
+
+check("the i/o windows: roomy by default, and their corner adjusts them", () => {
+  const nodes0 = __t.BX.nodes.length;
+  const i = __t.bxAdd("input", 0, 0, { values: "1 2" });
+  const o = __t.bxAdd("output", 0, 200, { din: 2 });
+  ok(__t.bxNodeW(i) === 420 && __t.bxNodeH(i) === 280, "an input opens at the roomy size");
+  ok(__t.bxNodeW(o) === 420 && __t.bxNodeH(o) === 280, "…and so does an output");
+  const paneOf = (n) => { const d = document.createElement("div"); __t.bxPaneFill(d, n); return d; };
+  ok(paneOf(i).querySelectorAll(".bxgrip").length === 1, "the input's window wears a corner grip");
+  ok(paneOf(o).querySelectorAll(".bxgrip").length === 1, "…and so does the output's");
+  __t.bxAgentResize(i, 800, 600);
+  eql([__t.bxNodeW(i), __t.bxNodeH(i)], [800, 600], "dragging the corner sizes it");
+  __t.bxAgentResize(i, 10, 10);                // the clamp holds: never unusable
+  eql([__t.bxNodeW(i), __t.bxNodeH(i)], [240, 120], "…and the small end is clamped");
+  __t.bxAgentResize(o, 520, 400);
+  eql([o.box.w, o.box.h], [520, 400], "the output takes its own size");
+  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(o));
+  eql([back.box.w, back.box.h], [520, 400], "…and the size travels with the design");
+  __t.bxRemove(o.id);
+  __t.bxRemove(i.id);
+  eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
 });
 
 check("re-placing a box keeps the last run's data (an edit still clears it)", () => {

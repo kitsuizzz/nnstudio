@@ -2862,15 +2862,17 @@ function bxDatasetExpand(n) {                  // the sheet, small or big
   p.expand = !p.expand;
   n.box = p.expand ? { w: 860, h: 520 } : { w: 440, h: 300 };
 }
-function bxInputExpand(n) {                    // the input's editor, small or big
+function bxInputExpand(n) {                    // the input's editor: compact or roomy
   const p = n.panel || (n.panel = {});
-  p.expand = !p.expand;
-  n.box = p.expand ? { w: 420, h: 280 } : { w: 300, h: 170 };
+  const compact = bxNodeW(n) <= 300 && bxNodeH(n) <= 170;
+  p.expand = compact;                          // the choice travels with the design
+  n.box = compact ? { w: 420, h: 280 } : { w: 300, h: 170 };
 }
-function bxOutputExpand(n) {                   // the output's readout, small or big
+function bxOutputExpand(n) {                   // the output's readout: compact or roomy
   const p = n.panel || (n.panel = {});
-  p.expand = !p.expand;
-  n.box = p.expand ? { w: 420, h: 280 } : { w: 300, h: 170 };
+  const compact = bxNodeW(n) <= 300 && bxNodeH(n) <= 170;
+  p.expand = compact;
+  n.box = compact ? { w: 420, h: 280 } : { w: 300, h: 170 };
 }
 function bxCsvParse(text) {                   // RFC 4180-ish: quotes and commas
   const rows = [];
@@ -4610,11 +4612,11 @@ function bxJSONNode(n) {
     if (n.image) o.image = n.image;
     for (const k of ["image_size", "patch_size", "image_mean", "image_std"])
       if (n[k] != null) o[k] = n[k];
-    if (n.box) o.box = { w: Math.round(n.box.w || 300), h: Math.round(n.box.h || 170) };
+    if (n.box) o.box = { w: Math.round(n.box.w || 420), h: Math.round(n.box.h || 280) };
     if (n.panel) o.panel = n.panel;      // {expand} — the editor's size
   }
   else if (n.kind === "output") { o.din = n.din == null ? null : n.din;
-                                  if (n.box) o.box = { w: Math.round(n.box.w || 300), h: Math.round(n.box.h || 170) };
+                                  if (n.box) o.box = { w: Math.round(n.box.w || 420), h: Math.round(n.box.h || 280) };
                                   if (n.panel) o.panel = n.panel;
                                   if (n.train) o.train = true;
                                   bxTrainDoc(o, n); }
@@ -4955,13 +4957,13 @@ function bxJSONNodeFrom(o) {
     if (o.image_mean != null) n.image_mean = String(o.image_mean).slice(0, 80);
     if (o.image_std != null) n.image_std = String(o.image_std).slice(0, 80);
     if (o.box && typeof o.box === "object")
-      n.box = { w: bxSize(o.box.w, 300), h: bxSize(o.box.h, 170) };
+      n.box = { w: bxSize(o.box.w, 420), h: bxSize(o.box.h, 280) };
     if (o.panel && typeof o.panel === "object") n.panel = { expand: !!o.panel.expand };
   }
   else if (o.kind === "output") {
     n.din = bxSize(o.din);
     if (o.box && typeof o.box === "object")
-      n.box = { w: bxSize(o.box.w, 300), h: bxSize(o.box.h, 170) };
+      n.box = { w: bxSize(o.box.w, 420), h: bxSize(o.box.h, 280) };
     if (o.panel && typeof o.panel === "object") {
       n.panel = { expand: !!o.panel.expand };
       if (o.panel.tab === "training") n.panel.tab = "training";
@@ -5280,10 +5282,10 @@ function bxNodeW(n) {
     return Math.max(320, Number((n.box || {}).w) || 480);
   if (n && n.kind === "dataset")           // …and so is the dataset's sheet
     return Math.max(320, Number((n.box || {}).w) || 440);
-  if (n && n.kind === "input")             // …and the input's own editor
-    return Math.max(240, Number((n.box || {}).w) || 300);
-  if (n && n.kind === "output")            // …and the output's own readout
-    return Math.max(240, Number((n.box || {}).w) || 300);
+  if (n && n.kind === "input")             // …and the input's own editor: roomy
+    return Math.max(240, Number((n.box || {}).w) || 420);   // by default, so its
+  if (n && n.kind === "output")            // content fits; the corner adjusts it
+    return Math.max(240, Number((n.box || {}).w) || 420);
   return BXW;
 }
 function bxNodeH(n) {
@@ -5292,9 +5294,9 @@ function bxNodeH(n) {
   if (n && n.kind === "dataset")
     return Math.max(180, Number((n.box || {}).h) || 300);
   if (n && n.kind === "input")
-    return Math.max(120, Number((n.box || {}).h) || 170);
+    return Math.max(120, Number((n.box || {}).h) || 280);
   if (n && n.kind === "output")
-    return Math.max(120, Number((n.box || {}).h) || 170);
+    return Math.max(120, Number((n.box || {}).h) || 280);
   const p = Math.max(bxPortDefs(n, "in").length, bxPortDefs(n, "out").length);
   return p > 2 ? 40 * Math.ceil((30 + 16 * p) / 40) : BXH;   // whole cells, always
 }
@@ -8069,10 +8071,11 @@ function bxBehaveInside(pane) {               // the canvas must not steal the p
 }
 function bxAgentResize(n, w, h) {              // snapped, clamped, persisted
   const p = n.box || (n.box = {});
-  if (w != null && isFinite(Number(w)))
-    p.w = bxSnapTo(Math.max(320, Number(w)));
+  const io = n.kind === "input" || n.kind === "output";    // the i/o windows may go
+  if (w != null && isFinite(Number(w)))                    // smaller than a display
+    p.w = bxSnapTo(Math.max(io ? 240 : 320, Number(w)));
   if (h != null && isFinite(Number(h)))
-    p.h = bxSnapTo(Math.max(160, Number(h)));
+    p.h = bxSnapTo(Math.max(io ? 120 : 160, Number(h)));
   bxRender();
   return n.box;
 }
@@ -8260,12 +8263,19 @@ function bxPaneErr(pane, n) {                  // the run's blame, shown inside 
 }
 function bxPaneFill(pane, n) {                 // one pane, filled by its kind —
   if (n.kind === "dataset") bxDatasetFill(pane, n);   // every renderer goes through
-  else if (n.kind === "train") bxTrainFill(pane, n);  // this, so none can drift
+  else if (n.kind === "train") bxTrainFill(pane, n);
   else if (n.kind === "input") bxInputFill(pane, n);
   else if (n.kind === "output") bxOutputFill(pane, n);
   else if (n.kind === "vision") bxVisionFill(pane, n);
   else bxAgentFill(pane, n);
   bxPaneErr(pane, n);
+  if (n.kind === "input" || n.kind === "output") {
+    // the i/o windows are the user's to size: drag the corner, the gesture
+    // the agent's display takes
+    const grip = mk("div", { class: "bxgrip", title: "drag to resize the box" });
+    grip.addEventListener("mousedown", (ev) => bxAgentGrip(ev, n));
+    pane.appendChild(grip);
+  }
 }
 function bxVisionFill(pane, n) {               // the tower's facts, in its window
   pane.innerHTML = "";

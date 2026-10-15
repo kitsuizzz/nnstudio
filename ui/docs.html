@@ -221,8 +221,11 @@
         <span class="pill grey">Dataset ▾</span> category holds the
         <span class="pill">dataset</span> box. Right-click it any time to
         <i>set the rows …</i>.</li>
-    <li><b>Move / resize</b> — drag a box by its body; drag its corner to resize
-        (boxes with displays, like the agent box, resize with their display).</li>
+    <li><b>Move / resize</b> — drag a box by its body; drag its corner to
+        resize (the display boxes — input, output, dataset, agent — resize with
+        their window). The <b>input</b> and <b>output</b> boxes open roomy by
+        default, so their content has the space; double-click one for the
+        compact size, drag its corner for anything in between.</li>
     <li><b>Wire two boxes</b> — drag from a box's <b>right dot</b> (its output) to
         another box's <b>left dot</b> (its input). <b>Hover a wire</b> to read the
         data riding it — its <b>type</b> (matrix, image, text, ids…), its
@@ -411,7 +414,8 @@
       cutting).
       The window also carries the <b>▶ run the design</b> button — the run starts
       where the data is — with the run's verdict line under it.
-      Double-click the box to grow or shrink the editor.</p>
+      The editor opens roomy (its content has the space); double-click the box
+      for the compact size, or drag the corner to size it yourself.</p>
       <p class="bfields"><b>Fields:</b> width <code>dout</code> (a matrix's
       columns — what a layer reads); data type <code>input_mode</code> —
       <code>matrix</code> (the numbers it carries, one row per line),
@@ -610,7 +614,8 @@
       numbers it received (with the shape and mean under them), or the text it
       produced — and says <i>no data yet</i> until a run. Name
       outputs after what they are (<code>logits</code>, <code>hidden</code>) — runs
-      report per output name. Double-click the box to grow or shrink the window.</p>
+      report per output name. The window opens roomy; double-click the box for
+      the compact size, or drag its corner to size it yourself.</p>
       <p>Its window has two tabs: <b>output</b> (the readout) and
       <b>training</b>. Tick <b>Enable Training</b> and this output becomes the
       <b>hub of a training run</b>: the parameters show up in the tab (the
