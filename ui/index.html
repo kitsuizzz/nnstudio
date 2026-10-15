@@ -10876,15 +10876,21 @@ function bxUp(ev) {
 // top-level canvas is seeded; a design you delete by hand stays yours.
 function bxSeedBlank() {
   if (BX.up || BX.nodes.length) return false;
-  const i = bxAdd("input", 320, 200, {});
+  // the pair, straddling the world origin: the opening view sits on the
+  // design's middle, so input and output land in the middle of the canvas
+  // together — not strung off to one side
+  const i = bxAdd("input", -520, -160, {});
   if (!i) return false;
   // the output sits clear of the input — a wire's runway, measured from the
   // input's real width (these are roomy windows, not little cards)
-  const o = bxAdd("output", i.x + bxNodeW(i) + 200, 200, {});
+  const o = bxAdd("output", i.x + bxNodeW(i) + 200, i.y, {});
   if (!o) return false;
   bxConnect(i.id, o.id);                   // directly: input → output
   bxSettleSizes();
   bxRender();
+  // a window too narrow for the pair zooms out until it holds both
+  const z = bxViewport();
+  if (z.w < bxNodeW(i) + bxNodeW(o) + 240) bxFit();
   return true;
 }
 

@@ -196,6 +196,7 @@ globalThis.__t = {
   bxSnapMove, bxSnapGrid, bxClampView, bxSeedBlank, bxNodeH,
   get bxGuides() { return bxGuides; }, set bxGuides(v) { bxGuides = v; },
   bxSelectBoxes, bxSelectedIds, bxToggleSelect, bxMarqueeSelect, bxStartMove, bxMove, bxUp,
+  bxCenter,
   BX_DTYPES, BX_DTYPE_GROUPS, bxBytes, bxDtypeFill, bxEstimate, bxEstimateRuns, bxRenderEstimate, bxPortDefs, bxPortSizes, bxEnter, bxLeave, bxUpBox,
   bxOutSize, bxInSize,
   bxMenuBuild, bxMenuClose, bxClip, bxShape, bxtExport, bxtImport, bxtForm, bxtRefresh,
@@ -4364,10 +4365,15 @@ check("a blank network is one input wired straight into one output", () => {
   eql(__t.BX.edges.length, 1, "…with one wire");
   const e = __t.BX.edges[0];
   eql([e.from, e.to], [ins[0].id, outs[0].id], "…running input → output");
-  eql([ins[0].x % 40, ins[0].y % 40, outs[0].x % 40, outs[0].y % 40], [0, 0, 0, 0],
-    "…and both sit on the grid");
+  eql([ins[0].x % 40, ins[0].y % 40, outs[0].x % 40, outs[0].y % 40].map(v => v + 0 || 0),
+    [0, 0, 0, 0], "…and both sit on the grid");
   const air = outs[0].x - (ins[0].x + __t.bxNodeW(ins[0]));
   ok(air >= 120, "…and clear air between them: " + air + " px");
+  // the pair straddles the origin: the view opens on the design's middle
+  const mid = (ins[0].x + outs[0].x + __t.bxNodeW(outs[0])) / 2;
+  ok(Math.abs(mid) <= 40, "…and the pair straddles the origin: mid " + mid);
+  ok(__t.bxCenter().cx === mid, "…so the opening view sits on it: "
+     + __t.bxCenter().cx);
   ok(__t.bxSeedBlank() === false, "a used canvas is left alone");
 });
 
