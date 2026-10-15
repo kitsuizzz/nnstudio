@@ -2649,10 +2649,25 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                                   "in the training tab, or wire a dataset into the "
                                   "output's dot")
         paradigm = str(hub.get("paradigm") or "supervised")
-        x_col = col_index(hub.get("x_col")) if hub.get("x_col") else 0
-        y_col = col_index(hub.get("y_col")) if hub.get("y_col") else 1
+        named = dataset_cols(train_dn) if train_dn is not None else []
+        x_col = col_indexes(hub.get("x_col"), named) if hub.get("x_col") else [0]
+        y_col = col_indexes(hub.get("y_col"), named) if hub.get("y_col") else [1]
+        if x_col is None or y_col is None:
+            raise CanvasError("run", "a column in the training tab's x or y is not "
+                                  "in the dataset \u2014 a name, or a letter like A")
+        vector = len(x_col) > 1 or len(y_col) > 1
+        if vector and paradigm == "rl":
+            raise CanvasError("run", "rl trains on prompt columns \u2014 a vector "
+                                  "target is a supervised thing")
+        if vector and any(src2.get("kind") == "dataset" and dst.get("kind") == "loss"
+                          for src2, dst in _edge_pairs(canvas)):
+            raise CanvasError("loss", "a vector target scores with mean squared "
+                                  "error \u2014 a wired loss box computes cross entropy")
         classes = None if paradigm == "rl" else (
             list(hub.get("classes") or []) or None)
+        if vector and classes:
+            raise CanvasError("run", "classes are for a single label column, not "
+                                  "a vector target")
         train_labels = None
 
         def _dbox(dn):
@@ -3031,11 +3046,8 @@ def _find(doc, nid):
 
 
 # ---------------------------------------------------------------- training
-def dataset_rows(node):
-    """A dataset box's rows: its own text or its file, one row per line —
-    JSON objects ({prompt, completion} or {prompt, chosen, rejected}), or
-    `prompt<TAB>completion`. Blank lines are skipped."""
-    text = node.get("text") or ""
+def _dataset_text(node):
+    """A dataset's own text: what it carries, else the file it points at."""
     f = node.get("file")
     if f:
         p = _resolve(f)
@@ -3043,7 +3055,28 @@ def dataset_rows(node):
             raise CanvasError(node.get("name") or "dataset",
                               "its rows are not on disk: %s" % (f,))
         with open(p, encoding="utf-8") as fh:
-            text = fh.read()
+            return fh.read()
+    return str(node.get("text") or "")
+
+
+def dataset_cols(node):
+    """A dataset's column names, lowercased: its CSV header row. The other
+    formats carry none of their own — a letter stands for position."""
+    if str(node.get("format") or "") != "csv":
+        return []
+    try:
+        rd = csv.reader(io.StringIO(str(_dataset_text(node))))
+        head = next(rd, []) or []
+    except (OSError, ValueError):
+        return []
+    return [str(h).strip().lower() for h in head]
+
+
+def dataset_rows(node):
+    """A dataset box's rows: its own text or its file, one row per line —
+    JSON objects ({prompt, completion} or {prompt, chosen, rejected}), or
+    `prompt<TAB>completion`. Blank lines are skipped."""
+    text = _dataset_text(node)
     if str(node.get("format") or "") == "csv":
         return _csv_rows(node, text)
     rows = []
@@ -3126,6 +3159,39 @@ def _ds_decode(node, ids):
     return "".join(out)
 
 
+def col_letter(i):
+    """A 0-based column index as a sheet letter: 1 -> A ... 26 -> Z, 27 -> AA."""
+    s = ""
+    i = int(i or 0)
+    while True:
+        s = chr(65 + (i % 26)) + s
+        i = i // 26 - 1
+        if i < 0:
+            return s
+
+
+def col_indexes(spec, cols=None):
+    """One or more sheet columns from a spec: "A" -> [0]; "x0 x1 x2" -> those
+    header names' indices, in order (a name wins, case-blind; a letter is a
+    position: A=0 ... Z=25, AA=26). None when a token matches nothing."""
+    out = []
+    for tok in re.split(r"[\s,]+", str(spec or "").strip()):
+        if not tok:
+            continue
+        low = tok.lower()
+        idx = None
+        for j, name in enumerate(cols or []):
+            if name and name == low:
+                idx = j
+                break
+        if idx is None:
+            idx = col_index(tok)
+        if idx is None:
+            return None
+        out.append(idx)
+    return out or None
+
+
 def col_index(letter):
     """A sheet column letter to a 0-based index: A->0 … Z->25, AA->26.
     None for an empty or non-letter value."""
@@ -3158,8 +3224,30 @@ def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None,
             return str(cells[col])
         return str(default if default is not None else "")
 
+    def _cols(c, d):
+        if c is None:
+            return [d]
+        return [int(c)] if not isinstance(c, (list, tuple)) else [int(x) for x in c]
+    xs, ys = _cols(x_col, 0), _cols(y_col, 1)
+    if not x_only and (len(xs) > 1 or len(ys) > 1):
+        # a vector target: the selected cells are numbers — x becomes the
+        # batch's input matrix, y the batch's label matrix (mse downstream)
+        def num(r, col, side):
+            s = cell(r, col, "").strip()
+            try:
+                return float(s)
+            except ValueError:
+                raise CanvasError(node.get("name") or "dataset",
+                                  "column %s of a row is not a number for the %s "
+                                  "vector: %r" % (col_letter(col), side, s))
+        ids = torch.tensor([[num(r, c, "x") for c in xs] for r in want],
+                           dtype=torch.float32)
+        labels = torch.tensor([[num(r, c, "y") for c in ys] for r in want],
+                              dtype=torch.float32)
+        return ids, labels
+
     if x_only:
-        seqs = [_ds_encode(node, cell(r, x_col, r.get("prompt"))) for r in want]
+        seqs = [_ds_encode(node, cell(r, xs[0], r.get("prompt"))) for r in want]
         width = max((len(s) for s in seqs), default=1)
         ids = torch.zeros(len(seqs), max(width, 1), dtype=torch.long)
         for i, s in enumerate(seqs):
@@ -3168,8 +3256,8 @@ def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None,
     if classes:
         seqs, cls = [], []
         for r in want:
-            seqs.append(_ds_encode(node, cell(r, x_col, r.get("prompt"))))
-            y = cell(r, y_col, r.get("completion") if r.get("completion") is not None
+            seqs.append(_ds_encode(node, cell(r, xs[0], r.get("prompt"))))
+            y = cell(r, ys[0], r.get("completion") if r.get("completion") is not None
                      else r.get("output"))
             if y not in classes:
                 raise CanvasError(node.get("name") or "dataset",
@@ -3184,8 +3272,8 @@ def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None,
         return ids, torch.tensor(cls, dtype=torch.long)
     seqs, labs = [], []
     for r in want:
-        prompt = cell(r, x_col, r.get("prompt"))
-        comp = cell(r, y_col, r.get("completion") if r.get("completion") is not None
+        prompt = cell(r, xs[0], r.get("prompt"))
+        comp = cell(r, ys[0], r.get("completion") if r.get("completion") is not None
                     else r.get("output"))
         p = _ds_encode(node, prompt)
         c = _ds_encode(node, comp)
@@ -3222,6 +3310,20 @@ def reward_eval(node, prompt, output):
     except Exception as e:  # noqa: BLE001
         raise CanvasError(node.get("name") or "reward",
                           "its reward failed to score: %s" % e)
+
+
+def _vector_loss(logits, labels):
+    """A vector target's signal: mean squared error between the target
+    output's rows and the batch's label rows — the last position when the
+    output is a sequence, the rows themselves when it is per-sample."""
+    lg = logits.float()
+    pred = lg[:, -1, :] if lg.dim() == 3 else lg.reshape(-1, lg.shape[-1])
+    pred = pred[-labels.shape[0]:]
+    if pred.shape[-1] != labels.shape[-1]:
+        raise CanvasError("output", "the target's output is %d wide, the labels "
+                                    "are %d — they must match" % (pred.shape[-1],
+                                                                  labels.shape[-1]))
+    return F.mse_loss(pred, labels.to(pred.dtype))
 
 
 def _cross_entropy(logits, labels):
@@ -3356,6 +3458,8 @@ def _probe_loss(canvas, hub, vals, labels, graph=None):
             with torch.no_grad():
                 acc = (last.argmax(-1) == labels.long()).float().mean()
             return float(loss), float(acc)
+        if labels.dim() == 2 and labels.is_floating_point():
+            return float(_vector_loss(lg, labels).detach()), None   # a vector target
         return float(_cross_entropy(lg, labels).detach()), None
     return None, None
 
@@ -3374,6 +3478,8 @@ def _rl_probe(canvas, hub, graph, train_dn, rows, x_col, seed):
     if reward_node is None or not iid or not target:
         return out
     node = train_dn
+    if isinstance(x_col, (list, tuple)):
+        x_col = x_col[0] if x_col else 0
     cells = rows[0].get("cells") or []
     text = (cells[x_col] if x_col is not None and x_col < len(cells)
             else str(rows[0].get("prompt") or ""))
@@ -3473,11 +3579,26 @@ class DesignTrainer:
         if not self.rows:
             raise CanvasError("dataset", "it has no rows — paste some, "
                                    "or point it at a file")
-        # the hub's columns: letters like a sheet, A/B as before
-        self.x_col = col_index(cfg.get("x_col")) if cfg.get("x_col") else 0
-        self.y_col = col_index(cfg.get("y_col")) if cfg.get("y_col") else 1
+        # the hub's columns: a letter like a sheet (A/B as before), or a
+        # sequence of names — x0 x1 x2 feeds a 3-wide input vector
+        named = dataset_cols(self.dataset_box.node)
+        self.x_col = col_indexes(cfg.get("x_col"), named) if cfg.get("x_col") else [0]
+        self.y_col = col_indexes(cfg.get("y_col"), named) if cfg.get("y_col") else [1]
+        if self.x_col is None or self.y_col is None:
+            raise CanvasError("dataset", "a column in the training tab's x or y is "
+                                   "not in its rows \u2014 a name, or a letter like A")
+        self.vector = len(self.x_col) > 1 or len(self.y_col) > 1
+        if self.vector and self.paradigm == "rl":
+            raise CanvasError("", "rl trains on prompt columns \u2014 a vector "
+                                  "target is a supervised thing")
         self.classes = list(cfg.get("classes") or []) or None
         self.class_mode = bool(self.classes)
+        if self.vector and self.class_mode:
+            raise CanvasError("", "classes are for a single label column, not "
+                                  "a vector target")
+        if self.vector and self.loss_id:
+            raise CanvasError("loss", "a vector target scores with mean squared "
+                                  "error \u2014 a wired loss box computes cross entropy")
         # the test split: scored every eval_every steps, never trained —
         # idle in rl, where every sample the policy draws is scored
         self.test_id = cfg.get("test_dataset") or None
@@ -3561,6 +3682,8 @@ class DesignTrainer:
             with torch.no_grad():
                 acc = (last.argmax(-1) == labels.long()).float().mean()
             return loss, float(acc)
+        if labels.dim() == 2 and labels.is_floating_point():
+            return _vector_loss(logits, labels), None    # a vector target: mse
         return _cross_entropy(logits, labels), None
 
     def _eval(self):
@@ -3624,8 +3747,9 @@ class DesignTrainer:
         row = self.rows[self._pos % max(len(self.rows), 1)]
         self._pos += 1
         cells = row.get("cells") or []
-        text = (cells[self.x_col]
-                if self.x_col is not None and self.x_col < len(cells)
+        xc = self.x_col[0] if isinstance(self.x_col, (list, tuple)) else self.x_col
+        text = (cells[xc]
+                if xc is not None and xc < len(cells)
                 else str(row.get("prompt") or ""))
         x_ids = _ds_encode(node, text)
         if not x_ids:

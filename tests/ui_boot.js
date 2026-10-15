@@ -4597,6 +4597,20 @@ check("the output's training tab: the switch, the plan, and the dataset dot", ()
   ok(__t.bxConfigure(out.id, { x_col: "a", y_col: "b", classes: "cat dog",
                                optimizer: "sgd", lr: 0.01, batch: 8, steps: 40 }),
      "the parameters land");
+  // a sequence of columns is a vector: x0 x1 x2 in, y0 y1 out
+  ok(__t.bxConfigure(out.id, { x_col: "x0 x1 x2, y0", y_col: "y0 y1" }),
+     "a sequence of columns lands too");
+  eql([out.x_col, out.y_col], ["X0 X1 X2 Y0", "Y0 Y1"],
+      "\u2026split on spaces and commas, uppercased, in order");
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(out)).x_col, "X0 X1 X2 Y0",
+      "\u2026and the sequence travels with the design");
+  ok(fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
+       .indexOf("mean squared error") >= 0,
+     "\u2026the plan says which loss that trains with");
+  ok(__t.bxConfigure(out.id, { x_col: "a", y_col: "b" }), "back to single columns");
+  eql([out.x_col, out.y_col], ["A", "B"], "\u2026stored as letters, as before");
+  ok(fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
+       .indexOf("cross entropy") >= 0, "\u2026and the loss line follows back");
   eql([out.x_col, out.y_col, out.optimizer, out.lr, out.batch, out.steps],
       ["A", "B", "sgd", 0.01, 8, 40], "\u2026on the node");
   eql(out.classes, ["cat", "dog"], "\u2026and the classes as a list");

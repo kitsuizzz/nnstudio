@@ -2717,8 +2717,11 @@ function bxConfigure(id, vals) {
     if (!isOut) bind("target");               // an output trains on itself
     const col = (key) => {
       if (vals[key] === undefined) return;
-      const c = String(vals[key] == null ? "" : vals[key]).trim().toUpperCase();
-      if (c) n[key] = bxClip(c, 8);
+      const toks = String(vals[key] == null ? "" : vals[key]).trim()
+        .split(/[\s,]+/).filter(x => x)
+        .slice(0, 16).map(x => bxClip(x.toUpperCase(), 8));
+      if (toks.length)                            // one column, or a sequence:
+        n[key] = toks.join(" ");                  // x0 x1 x2 is a vector
     };
     col("x_col"); col("y_col");
     if (vals.classes !== undefined) {
@@ -3665,7 +3668,11 @@ function bxTrainSummary(h) {                       // what the engine will do, i
     ? "rl training needs a target output box to sample from — bind one in the training tab"
     : "no signal — bind a target, or wire a dataset to a loss box");
   if (!rl && !wired)
-    lines.push("loss \u00b7 cross entropy against the target — the one so far");
+    lines.push(  // a sequence of columns is a vector: mse, not cross entropy
+      (String(h.x_col || "").trim().split(/[\s,]+/).filter(x => x).length > 1 ||
+       String(h.y_col || "").trim().split(/[\s,]+/).filter(x => x).length > 1)
+      ? "loss \u00b7 mean squared error over the vector target"
+      : "loss \u00b7 cross entropy against the target — the one so far");
   if (rl) {
     if (!h.reward) missing.push("no reward box — rl is scored by the reward box");
     else {
@@ -4356,8 +4363,10 @@ function bxOutputTrain(body, n) {              // the training tab: the switch, 
     "the rows it trains on \u2014 a dataset wired into the box's dot wins over this"));
   field("test data", pick("test_dataset", n.test_dataset, boxesOf("dataset"),
     "scored after every eval \u2014 never trained on"));
-  field("x col", txt("x_col", n.x_col != null ? n.x_col : "A", "the input column"));
-  field("y col", txt("y_col", n.y_col != null ? n.y_col : "B", "the label column"));
+  field("x col", txt("x_col", n.x_col != null ? n.x_col : "A",
+    "the input column(s) \u2014 A, or a sequence like x0 x1 x2 for a 3-wide vector"));
+  field("y col", txt("y_col", n.y_col != null ? n.y_col : "B",
+    "the label column(s) \u2014 B, or a sequence like y0 y1 for a 2-wide target"));
   field("classes", txt("classes", Array.isArray(n.classes) ? n.classes.join(" ") : "",
     "y is a class label, not a row \u2014 comma or space separated"));
   const par = mk("select", { class: "bxsel" });

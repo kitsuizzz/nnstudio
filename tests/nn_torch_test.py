@@ -2326,6 +2326,89 @@ def heatmap_draws_a_vector():
 check("the heatmap: a vector in, one picture out", heatmap_draws_a_vector)
 
 
+def vector_columns_train():
+    data = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1),
+            (1, 1, 0), (1, 0, 1), (0, 1, 1), (1, 1, 1)]
+    text = "\n".join(["x0,x1,x2,y0,y1"] +
+                      ["%d,%d,%d,%d,%d" % (a, b, c, 2 * a - b, c)
+                       for a, b, c in data])
+    c = canvas([
+        n("input", "vec", dout=3),
+        n("layer", "l1", din=3, dout=8),
+        n("layer", "l2", din=8, dout=2),
+        n("dataset", "rows", format="csv", text=text),
+        n("output", "pred", din=2, train=True, dataset="rows",
+          x_col="x0 x1 x2", y_col="y0 y1", batch=8, lr=0.02,
+          eval_every=0, save_every=0),
+    ], [edge("vec", "l1"), edge("l1", "l2"), edge("l2", "pred")])
+    ds = [x for x in c["nodes"] if x["id"] == "rows"][0]
+    # the names come from the frame, and a sequence of them is a vector
+    assert T.dataset_cols(ds) == ["x0", "x1", "x2", "y0", "y1"], T.dataset_cols(ds)
+    assert T.col_indexes("y1 x0", T.dataset_cols(ds)) == [4, 0], "names, case-blind"
+    assert T.col_indexes("A", []) == [0], "letters still work"
+    assert T.col_indexes("ghost0", T.dataset_cols(ds)) is None, \
+        "a named stranger (a name with digits) is nothing"
+    rws = T.dataset_rows(ds)
+    ids, labels = T.dataset_batch(ds, rws, 0, 8, [0, 1, 2], [3, 4])
+    assert tuple(ids.shape) == (8, 3) and tuple(labels.shape) == (8, 2), \
+        (ids.shape, labels.shape)
+    assert ids.dtype.is_floating_point and labels.dtype.is_floating_point
+    # the run's probe scores it with mse, and reports no accuracy
+    res = T.run(c, {}, mode="training")
+    probe = res.get("probe") or {}
+    assert probe.get("loss") is not None and probe.get("acc") is None, probe
+    # a real run: the loss falls, and the net fits the pattern
+    import shutil
+    d = tempfile.mkdtemp()
+    try:
+        tr = T.DesignTrainer(c, {"dataset": "rows", "target": "pred",
+                                 "x_col": "x0 x1 x2", "y_col": "y0 y1",
+                                 "batch": 8, "lr": 0.02, "save_every": 10 ** 9,
+                                 "eval_every": 0, "name": "vec",
+                                 "checkpoints": d})
+        assert tr.vector and tr.x_col == [0, 1, 2] and tr.y_col == [3, 4], \
+            (tr.x_col, tr.y_col)
+        events = []
+        tr.run(steps=300, on_event=events.append)
+        losses = [e["loss"] for e in events if e.get("type") == "loss"]
+        assert len(losses) == 300 and losses[-1] < losses[0], (losses[0], losses[-1])
+        with torch.no_grad():
+            xb, yb = tr._batch()
+            pred = tr.graph(feeds={tr.input_id: xb})["pred"]
+            err = float((pred[-yb.shape[0]:].float() - yb).abs().mean())
+        assert err < 0.2, "the fitted error: %.3f" % err
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    # a ghost column names itself
+    c2 = canvas(
+        [x for x in c["nodes"] if x["id"] != "pred"] +
+        [n("output", "pred", din=2, train=True, dataset="rows",
+           x_col="ghost0", y_col="y0 y1", batch=8)],
+        [edge("vec", "l1"), edge("l1", "l2"), edge("l2", "pred")])
+    try:
+        T.run(c2, {}, mode="training")
+        raise AssertionError("a ghost column was accepted")
+    except T.CanvasError as e:
+        assert "not in the dataset" in str(e), e
+    # a text cell in a vector column names the column
+    c3 = canvas([
+        n("input", "vec", dout=3),
+        n("layer", "l1", din=3, dout=2),
+        n("dataset", "rows", format="csv", text="x0,x1,x2,y0,y1\n0,0,0,0,oops"),
+        n("output", "pred", din=2, train=True, dataset="rows",
+          x_col="x0 x1 x2", y_col="y0 y1", batch=1),
+    ], [edge("vec", "l1"), edge("l1", "pred")])
+    try:
+        T.run(c3, {}, mode="training")
+        raise AssertionError("a text cell passed as a number")
+    except T.CanvasError as e:
+        assert "not a number" in str(e) and "oops" in str(e), e
+
+
+check("a sequence of columns is a vector: names resolve, batches are matrices, "
+      "the loss is mse", vector_columns_train)
+
+
 def vision_refuses_unknown_projectors():
     try:
         T.VisionTower({"kind": "vision", "name": "tower", "file": "x.gguf",

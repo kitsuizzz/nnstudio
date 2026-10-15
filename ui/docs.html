@@ -1062,7 +1062,13 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     (<code>x_col</code> conditions, <code>y_col</code> is the target), the
     <code>classes</code> (when y is a label), the <code>paradigm</code>
     (supervised | rl), and in <b>rl</b> the <code>reward</code> box that scores
-    the model's samples (the policy samples from the output itself). It also
+    the model's samples (the policy samples from the output itself). A column
+    spec may be a <b>sequence</b>: <code>x0 x1 x2</code> feeds the model a
+    <b>3-wide input vector</b> (the cells as numbers) and <code>y0 y1</code> a
+    <b>2-wide target</b>, scored with <b>mean squared error</b> instead of
+    cross entropy — names come from the CSV header, letters like
+    <code>A</code>/<code>B</code> stand for positions, and both sides are
+    numbers in that mode. It also
     holds every parameter of the run. The
     <span class="pill">server config</span> box — the
     <span class="pill grey">Backend ▾</span> menu's first row — stays the
