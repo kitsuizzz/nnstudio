@@ -41,6 +41,7 @@
   .logo span { color: var(--accent); }
   /* the account: its own corner of the header — an icon, the name, a menu */
   .bxuser { position: relative; margin-left: auto; align-self: center; }
+  .bxuser[hidden] { display: none; }           /* nothing until the server answers */
   .bxuserbtn { display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
                border: 1px solid var(--panel-brd); background: rgba(0,0,0,.25);
                padding: 6px 12px 6px 9px; color: var(--ink-dim);
@@ -972,7 +973,7 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
 <header>
   <div class="logo">nn<span>·</span>studio</div>
   <div class="sub">compose the network on the canvas, wire it, price it, then run it</div>
-  <div class="bxuser" id="bxuser">
+  <div class="bxuser" id="bxuser" hidden>
     <span class="bxuserbtn" id="bxtAccount" title="a guest: drawing and running are free, saving takes an account">
       <svg class="bxuico" viewBox="0 0 16 16" aria-hidden="true">
         <circle cx="8" cy="5" r="3.1"/>
@@ -6314,7 +6315,8 @@ function bxtVramToggle() {
 // and an AES-GCM key that names and designs are sealed with before they
 // leave. The server stores ciphertext; without the token nobody — the server
 // included — can read it. Lose the token and the designs are gone for good.
-let BXACCT = { user: null, name: "", token: "", locked: false, site: "", test: false, max: 0 };
+let BXACCT = { user: null, name: "", token: "", locked: false, site: "", test: false,
+               max: 0, known: false };         // known: the server has said who is here
 let BX_TS = { queue: null, failed: false, widget: null };
 function bxCryptoReady() {
   return typeof crypto !== "undefined" && !!crypto.subtle && !!crypto.getRandomValues &&
@@ -6407,10 +6409,15 @@ function bxTurnstileLoad(cb) {                 // the widget script, fetched onc
     setTimeout(() => { if (BX_TS.queue) done(window.turnstile || null); }, 10000);
 }
 function bxAccountLoad() {                     // who is this, and what does the check need
-  if (typeof fetch !== "function") return;
+  if (typeof fetch !== "function") {           // no server to ask: a guest, and that is that
+    BXACCT.known = true;
+    bxAccountSync();
+    return;
+  }
   const remembered = bxTokenRecall();
   fetch("/api/account").then(r => r.json()).then(d => {
-    if (!d || !d.ok) return;
+    BXACCT.known = true;                       // the server has spoken
+    if (!d || !d.ok) { bxAccountSync(); return; }
     BXACCT.site = d.site_key || "";
     BXACCT.test = !!d.test_keys;
     BXACCT.max = d.max_bytes || 0;
@@ -6425,10 +6432,11 @@ function bxAccountLoad() {                     // who is this, and what does the
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auth }) })
         .then(r => r.json())
         .then(l => { if (l && l.ok && l.user) return bxAccountSignedIn(l.user, remembered); })
-        .catch(() => {}));
-  }).catch(() => {});
+        .catch(() => { bxAccountSync(); }));
+  }).catch(() => { BXACCT.known = true; bxAccountSync(); });
 }
 async function bxAccountSignedIn(user, token) {
+  BXACCT.known = true;
   BXACCT.user = user || null;
   BXACCT.token = String(token || "");
   BXACCT.name = "";
@@ -6441,6 +6449,7 @@ async function bxAccountSignedIn(user, token) {
   bxAccountSync();
 }
 function bxAccountLocked(user) {
+  BXACCT.known = true;
   BXACCT.user = user || null;
   BXACCT.token = "";
   BXACCT.name = "";
@@ -6448,6 +6457,7 @@ function bxAccountLocked(user) {
   bxAccountSync();
 }
 function bxAccountOut() {
+  BXACCT.known = true;                         // a logout is a known guest
   BXACCT.user = null;
   BXACCT.name = "";
   BXACCT.token = "";
@@ -6456,9 +6466,12 @@ function bxAccountOut() {
   bxAccountSync();
 }
 function bxAccountSync() {
+  const wrap = $("bxuser");
   const b = $("bxtAccount");
   const nm = $("bxuname");
   if (!b || !nm) return;
+  if (wrap) wrap.hidden = !BXACCT.known;       // nothing until the guest is confirmed
+  if (!BXACCT.known) return;
   b.className = "bxuserbtn";
   if (!BXACCT.user) {
     nm.textContent = "guest";

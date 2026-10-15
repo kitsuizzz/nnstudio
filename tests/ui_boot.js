@@ -4507,7 +4507,12 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
   };
   // everyone starts a guest — nothing is saved for one
   eql(__t.BXACCT.user, null, "the account starts empty: a guest");
-  eql(getEl("bxuname").textContent, "guest", "the header's user block says guest");
+  ok(getEl("bxuser").hidden,
+     "the user block shows nothing until the server says who this is");
+  ok(__t.BXACCT.known === false, "\u2026the frontend is not sure yet");
+  await flush();                               // the account load settles
+  ok(!getEl("bxuser").hidden && getEl("bxuname").textContent === "guest",
+     "\u2026then the confirmed guest appears");
   eql(__t.bxAccountSaveForm(), false, "a guest has no save dialog");
   ok(__t.bxAccountLogin() === true, "the login dialog opens");
   eql(getEl("bxmenu").querySelectorAll(".bxinp")[0].type, "password",
