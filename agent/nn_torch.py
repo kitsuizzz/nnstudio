@@ -2663,11 +2663,13 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                           for src2, dst in _edge_pairs(canvas)):
             raise CanvasError("loss", "a vector target scores with mean squared "
                                   "error \u2014 a wired loss box computes cross entropy")
-        classes = None if paradigm == "rl" else (
-            list(hub.get("classes") or []) or None)
-        if vector and classes:
-            raise CanvasError("run", "classes are for a single label column, not "
-                                  "a vector target")
+        label_mode = bool(hub.get("y_class") or hub.get("classes"))
+        legacy_classes = list(hub.get("classes") or []) if isinstance(
+            hub.get("classes"), (list, tuple)) else []
+        if vector and label_mode:
+            raise CanvasError("run", "a class label wants a single y column, "
+                                  "not a vector target")
+        classes = None
         train_labels = None
 
         def _dbox(dn):
@@ -2685,6 +2687,9 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                                   "it has no rows to train on — paste some, "
                                   "or point it at a file")
             size = max(1, int(train_dn.get("batch") or 4))
+            if label_mode and paradigm != "rl":
+                classes = dataset_classes([train_dn, test_dn], y_col,
+                                          legacy_classes)
             if paradigm == "rl":
                 # the reward box is the signal in rl; a wired loss box is a
                 # supervised leftover, and its labels would not fit the
@@ -3059,6 +3064,37 @@ def _dataset_text(node):
     return str(node.get("text") or "")
 
 
+def _cell(r, col, default):
+    """One row's cell, by index — its own cells, else the named prompt/output."""
+    cells = r.get("cells")
+    if col is not None and cells and 0 <= col < len(cells):
+        return str(cells[col])
+    return str(default if default is not None else "")
+
+
+def dataset_classes(nodes, y_col, legacy=None):
+    """The class set of a class-label target: every distinct y value, in the
+    order a legacy list gives first (older designs keep the indices their
+    checkpoints were trained with), then the order the rows show it — the
+    train split first, the test after, so a label only the test carries still
+    counts. None when there is nothing to pick from."""
+    yc = y_col[0] if isinstance(y_col, (list, tuple)) else y_col
+    out = []
+    for name in (legacy or []):
+        s = str(name)
+        if s and s not in out:
+            out.append(s)
+    for node in nodes:
+        if not node:
+            continue
+        for r in dataset_rows(node):
+            v = _cell(r, yc, r.get("completion") if r.get("completion") is not None
+                      else r.get("output"))
+            if v and v not in out:
+                out.append(v)
+    return out or None
+
+
 def dataset_cols(node):
     """A dataset's column names, lowercased: its CSV header row. The other
     formats carry none of their own — a letter stands for position."""
@@ -3219,10 +3255,7 @@ def dataset_batch(node, rows, start, size, x_col=None, y_col=None, classes=None,
         want = rows[:size]
 
     def cell(r, col, default):
-        cells = r.get("cells")
-        if col is not None and cells and col < len(cells):
-            return str(cells[col])
-        return str(default if default is not None else "")
+        return _cell(r, col, default)
 
     def _cols(c, d):
         if c is None:
@@ -3591,11 +3624,16 @@ class DesignTrainer:
         if self.vector and self.paradigm == "rl":
             raise CanvasError("", "rl trains on prompt columns \u2014 a vector "
                                   "target is a supervised thing")
-        self.classes = list(cfg.get("classes") or []) or None
-        self.class_mode = bool(self.classes)
-        if self.vector and self.class_mode:
-            raise CanvasError("", "classes are for a single label column, not "
-                                  "a vector target")
+        # y is a class label: the values it takes are the classes, derived
+        # from the column (a legacy list, if the design carries one, fixes
+        # the order its checkpoints were trained with)
+        self.label_mode = bool(cfg.get("y_class") or cfg.get("classes"))
+        self.classes = None
+        legacy = (list(cfg.get("classes") or [])
+                  if isinstance(cfg.get("classes"), (list, tuple)) else [])
+        if self.vector and self.label_mode:
+            raise CanvasError("", "a class label wants a single y column, "
+                                  "not a vector target")
         if self.vector and self.loss_id:
             raise CanvasError("loss", "a vector target scores with mean squared "
                                   "error \u2014 a wired loss box computes cross entropy")
@@ -3610,6 +3648,12 @@ class DesignTrainer:
                 raise CanvasError("", "the train node's test dataset "
                                        "is not on the canvas")
             self.test_rows = dataset_rows(self.test_box.node)
+        self.classes = (dataset_classes(
+            [self.dataset_box.node,
+             self.test_box.node if self.test_box else None],
+            self.y_col, legacy)
+            if self.label_mode and self.paradigm != "rl" else None)
+        self.class_mode = bool(self.classes)
         # every dataset box on the graph runs in the forward and each one
         # wants a batch — the carrier wears the split that is being scored,
         # the idle ones ride along on the same labels

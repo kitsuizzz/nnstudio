@@ -4574,9 +4574,10 @@ check("the output's training tab: the switch, the plan, and the dataset dot", ()
   ok(String(__t.bxShape(out)).indexOf("training") >= 0,
      "\u2026and the card says so: " + __t.bxShape(out));
   eql(fill().querySelectorAll("label.rf").map(l => l.children.map(c => c.textContent).join(" ").trim()),
-      ["Enable Training", "data", "test data", "x col", "y col", "classes",
-       "training", "optimizer", "learning rate", "weight decay", "batch",
-       "steps", "grad clip", "save every", "eval every"],
+      ["Enable Training", "data", "test data", "x col", "y col",
+       "y is a class label", "training", "optimizer", "learning rate",
+       "weight decay", "batch", "steps", "grad clip", "save every",
+       "eval every"],
       "\u2026and the parameters show up, in order");
   // a picker binds the rows; the plan follows
   const sels = fill().querySelectorAll(".bxsel");
@@ -4594,7 +4595,7 @@ check("the output's training tab: the switch, the plan, and the dataset dot", ()
   eql(__t.bxConnect(ds.id, out.id, 0, 1), null, "a dataset wires into the dot");
   ok(!__t.bxErrorSet().has(out.id), "\u2026and the design stays whole");
   // every parameter lands on the node, and travels with the design
-  ok(__t.bxConfigure(out.id, { x_col: "a", y_col: "b", classes: "cat dog",
+  ok(__t.bxConfigure(out.id, { x_col: "a", y_col: "b", y_class: true,
                                optimizer: "sgd", lr: 0.01, batch: 8, steps: 40 }),
      "the parameters land");
   // a sequence of columns is a vector: x0 x1 x2 in, y0 y1 out
@@ -4613,10 +4614,24 @@ check("the output's training tab: the switch, the plan, and the dataset dot", ()
        .indexOf("cross entropy") >= 0, "\u2026and the loss line follows back");
   eql([out.x_col, out.y_col, out.optimizer, out.lr, out.batch, out.steps],
       ["A", "B", "sgd", 0.01, 8, 40], "\u2026on the node");
-  eql(out.classes, ["cat", "dog"], "\u2026and the classes as a list");
+  ok(!out.classes, "\u2026no list of classes to type any more");
+  const cks = fill().querySelectorAll(".bxtick");
+  ok(cks.length === 2 && cks[1].checked, "\u2026the switch shows it, checked");
+  ok(fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
+       .indexOf("the values it takes are the classes") >= 0,
+     "\u2026and the plan says where the classes come from");
+  cks[1].checked = false;
+  cks[1].dispatchEvent({ type: "change" });
+  eql(out.y_class, false, "\u2026the checkbox drives it");
+  ok(__t.bxConfigure(out.id, { y_class: true }), "\u2026and back on");
   const back = __t.bxJSONNodeFrom(__t.bxJSONNode(out));
   eql([back.train, back.dataset, back.optimizer, back.lr, back.batch, back.steps],
       [true, ds.id, "sgd", 0.01, 8, 40], "\u2026and they survive the design's JSON");
+  eql(back.y_class, true, "\u2026the switch with them");
+  // an older design keeps its list, and the order its checkpoints know
+  const leg = __t.bxJSONNode({ kind: "output", name: "legacy", train: true,
+                               y_col: "B", classes: ["cat", "dog"] });
+  eql(leg.classes, ["cat", "dog"], "a legacy design keeps its class list");
   // training off closes the dot, and its wire goes with it
   __t.bxConfigure(out.id, { train: false });
   eql(__t.bxPortDefs(out, "in").length, 1, "training off: the dot closes");

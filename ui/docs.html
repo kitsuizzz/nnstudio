@@ -269,7 +269,7 @@
         Open an <span class="pill">output</span> box, switch its window to the
         <b>training</b> tab and tick <b>Enable Training</b>: its parameters show
         up (the <code>dataset</code> that feeds the run and an optional test
-        split, the columns, the classes, the paradigm, and every knob — learning
+        split, the columns, whether y is a class label, the paradigm, and every knob — learning
         rate, optimizer, batch, steps…), a <b>dataset dot</b> opens on the box —
         wire a dataset into it, or bind one in the tab — and the controls
         (<b>start</b>, <b>save now</b>, <b>hold</b>, <b>detach</b>,
@@ -674,8 +674,9 @@
       <p>Its window has two tabs: <b>output</b> (the readout) and
       <b>training</b>. Tick <b>Enable Training</b> and this output becomes the
       <b>hub of a training run</b>: the parameters show up in the tab (the
-      dataset, the test split, the columns, the classes, the paradigm, the
-      optimizer, the learning rate, the batch, the steps, the save/eval cadence
+      dataset, the test split, the columns, whether y is a class label, the
+      paradigm, the optimizer, the learning rate, the batch, the steps, the
+      save/eval cadence
       — and in <b>rl</b> the reward box with the sampling knobs), the controls
       and the live curves follow, and the box grows a <b>dataset dot</b> — its
       second input — for the rows the run trains on. A dataset wired into that
@@ -684,7 +685,9 @@
       <p class="bfields"><b>Fields:</b> <code>din</code>, its name,
       <code>train</code> (the training tab), the training's own fields
       (<code>dataset</code>, <code>test_dataset</code>, <code>x_col</code>,
-      <code>y_col</code>, <code>classes</code>, <code>paradigm</code>,
+      <code>y_col</code>, <code>y_class</code> — y is a class label, and the
+      values the column takes are the classes; a legacy <code>classes</code>
+      list still fixes their order — <code>paradigm</code>,
       <code>reward</code>, <code>lr</code>, <code>optimizer</code>,
       <code>weight_decay</code>, <code>batch</code>, <code>steps</code>,
       <code>clip</code>, <code>save_every</code>, <code>eval_every</code>,
@@ -892,10 +895,11 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     <li>The network as in the recipe above, ending in a layer sized to the number
         of classes.</li>
     <li>The output box's training tab: tick <b>Enable Training</b>, bind the
-        dataset, <b>x</b> → A, <b>y</b> → B, and list the
-        classes — <code>cat dog bird</code>. With classes set, y is a label: the
-        run reports <b>accuracy</b> (the share of rows the model gets right)
-        alongside the loss, on the train split and the test split.</li>
+        dataset, <b>x</b> → A, <b>y</b> → B, and tick <b>y is a
+        class label</b>. The values y takes are the classes — no list to
+        type; the run reports <b>accuracy</b> (the share of rows the model
+        gets right) alongside the loss, on the train split and the test
+        split.</li>
     <li>Start it; watch the accuracy climb to the ceiling the data allows. Freeze
         the boxes you trust, train the rest.</li>
   </ol>
@@ -1060,7 +1064,8 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
     It owns the data (the <code>dataset</code> that feeds the run, and an optional
     <code>test_dataset</code> the trainer scores but never trains on), the columns
     (<code>x_col</code> conditions, <code>y_col</code> is the target), the
-    <code>classes</code> (when y is a label), the <code>paradigm</code>
+    <code>y_class</code> switch (when y is a class label — the values the
+    column takes are the classes), the <code>paradigm</code>
     (supervised | rl), and in <b>rl</b> the <code>reward</code> box that scores
     the model's samples (the policy samples from the output itself). A column
     spec may be a <b>sequence</b>: <code>x0 x1 x2</code> feeds the model a

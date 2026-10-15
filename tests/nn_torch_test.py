@@ -1701,6 +1701,67 @@ check("class mode left-pads X so the class falls at the sequence's end",
       hub_left_pads_the_class_input)
 
 
+def class_labels_derive_from_the_column():
+    # the switch, no list: the values y takes are the classes — the train
+    # split first, then the test, so a label only the test carries counts
+    ds = {"id": "d", "kind": "dataset", "name": "rows", "x": 0, "y": 0,
+          "vocab": "cdxyzabr", "text": "c\tx\ta\nd\ty\tb\nc\tz\ta"}
+    test = {"id": "t", "kind": "dataset", "name": "test", "x": 0, "y": 0,
+            "vocab": "cdxyzabr", "text": "c\tq\tb\nd\tr\tc"}
+    assert T.dataset_classes([ds, test], [2]) == ["a", "b", "c"], "train, then test"
+    assert T.dataset_classes([ds], [2], ["b", "a"]) == ["b", "a"], \
+        "a legacy list fixes the order its checkpoints know"
+    assert T.dataset_classes([], [2]) is None, "nothing to pick from"
+    # the run: the switch alone, and the probe reports accuracy
+    c = canvas([
+        n("input", "tok", dout=1),
+        n("embed", "emb", vocab=8, din=1, dout=4),
+        n("layer", "l1", din=4, dout=8),
+        n("output", "logits", din=8, train=True, dataset="data",
+          test_dataset="test", y_class=True, x_col="A", y_col="C", batch=2,
+          eval_every=0, save_every=0),
+        n("dataset", "data", vocab="cdxyzabr", text="c\tx\ta\nd\ty\tb\nc\tz\ta"),
+        n("dataset", "test", vocab="cdxyzabr", text="c\tq\tb\nd\tr\tc"),
+    ], [edge("tok", "emb"), edge("emb", "l1"), edge("l1", "logits")])
+    res = T.run(c, {}, mode="training")
+    probe = res.get("probe") or {}
+    assert probe.get("loss") is not None and probe.get("acc") is not None, probe
+    # the trainer: the same switch, no list anywhere on the canvas
+    import shutil
+    d = tempfile.mkdtemp()
+    try:
+        cfg = {"name": "cls", "checkpoints": d, "dataset": "data",
+               "test_dataset": "test", "x_col": "A", "y_col": "C",
+               "y_class": True, "target": "logits", "batch": 2, "lr": 0.05,
+               "eval_every": 1, "save_every": 0}
+        tr = T.DesignTrainer(c, cfg)
+        assert tr.label_mode and tr.class_mode, "the switch drives it"
+        assert tr.classes == ["a", "b", "c"], tr.classes
+        events = []
+        tr.run(steps=4, on_event=events.append)
+        ev = [e for e in events if e.get("tacc") is not None]
+        assert ev, "the test split scores too"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    # a vector y and the switch are refused together
+    c2 = canvas([
+        n("input", "vec", dout=2),
+        n("layer", "l1", din=2, dout=8),
+        n("output", "logits", din=8, train=True, dataset="rows", y_class=True,
+          x_col="x0 x1", y_col="y0"),
+        n("dataset", "rows", format="csv", text="x0,x1,y0\n0,1,a"),
+    ], [edge("vec", "l1"), edge("l1", "logits")])
+    try:
+        T.run(c2, {}, mode="training")
+        raise AssertionError("a class label rode on a vector target")
+    except T.CanvasError as e:
+        assert "single y column" in str(e), e
+
+
+check("a class label derives from its column: the switch, no list",
+      class_labels_derive_from_the_column)
+
+
 def training_setup_resolves_the_signal():
     c = _hub_canvas()
     hub = [x for x in c["nodes"] if x["kind"] == "train"][0]
@@ -1734,9 +1795,9 @@ def the_trainer_scores_both_splits():
     d = tempfile.mkdtemp()
     try:
         cfg = {"name": "hubrun", "checkpoints": d}
-        for key in ("dataset", "test_dataset", "x_col", "y_col", "classes",
-                    "target", "paradigm", "batch", "lr", "eval_every",
-                    "save_every"):
+        for key in ("dataset", "test_dataset", "x_col", "y_col", "y_class",
+                    "classes", "target", "paradigm", "batch", "lr",
+                    "eval_every", "save_every"):
             if hub.get(key) not in (None, "", []):
                 cfg[key] = hub[key]
         tr = T.DesignTrainer(c, cfg)
@@ -1921,8 +1982,8 @@ def _rl_canvas(hub_kw=None, with_test=True):
 def _rl_cfg(c, d, name="rltoy"):
     hub = [x for x in c["nodes"] if x["kind"] == "train"][0]
     cfg = {"name": name, "checkpoints": d}
-    for key in ("dataset", "test_dataset", "x_col", "y_col", "classes",
-                "target", "paradigm", "reward", "lr", "optimizer",
+    for key in ("dataset", "test_dataset", "x_col", "y_col", "y_class",
+                "classes", "target", "paradigm", "reward", "lr", "optimizer",
                 "weight_decay", "batch", "steps", "clip", "save_every",
                 "eval_every", "temperature", "max_tokens", "n_samples"):
         if hub.get(key) not in (None, "", []):

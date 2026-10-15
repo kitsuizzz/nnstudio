@@ -52,7 +52,7 @@ def main():
     hub = nn_torch.train_hub(canvas)
 
     cfg = {"name": a.name or a.task, "checkpoints": os.path.join(ROOT, "checkpoints")}
-    for key in ("dataset", "test_dataset", "x_col", "y_col", "classes",
+    for key in ("dataset", "test_dataset", "x_col", "y_col", "y_class", "classes",
                 "target", "paradigm", "reward", "lr", "optimizer",
                 "weight_decay", "batch", "clip", "save_every", "eval_every",
                 "temperature", "max_tokens", "n_samples"):

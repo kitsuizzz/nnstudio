@@ -2724,10 +2724,9 @@ function bxConfigure(id, vals) {
         n[key] = toks.join(" ");                  // x0 x1 x2 is a vector
     };
     col("x_col"); col("y_col");
-    if (vals.classes !== undefined) {
-      const cs = String(vals.classes == null ? "" : vals.classes)
-        .split(/\s+/).filter(x => x).map(x => bxClip(x, 40));
-      n.classes = cs.length ? cs : null;      // y is a class label, not a row
+    if (vals.y_class !== undefined) {
+      n.y_class = !!vals.y_class;             // y is a class label: the column
+      if (!n.y_class) n.classes = null;       // itself names the classes
     }
     if (vals.paradigm !== undefined)
       n.paradigm = String(vals.paradigm) === "rl" ? "rl" : "supervised";
@@ -3622,8 +3621,8 @@ function bxTrainSummary(h) {                       // what the engine will do, i
       }
       bits.push(rl ? "x " + (h.x_col || "A") + " only — the reward is the signal"
                    : "x " + (h.x_col || "A") + " \u2192 y " + (h.y_col || "B"));
-      if (h.classes && h.classes.length && !rl)
-        bits.push("y is a class label (" + h.classes.join(", ") + ")");
+      if ((h.y_class || (h.classes && h.classes.length)) && !rl)
+        bits.push("y is a class label — the values it takes are the classes");
       lines.push("data \u00b7 " + bits.join(" \u00b7 "));
       if (rows === 0) missing.push("the dataset has no rows");
     }
@@ -4367,8 +4366,15 @@ function bxOutputTrain(body, n) {              // the training tab: the switch, 
     "the input column(s) \u2014 A, or a sequence like x0 x1 x2 for a 3-wide vector"));
   field("y col", txt("y_col", n.y_col != null ? n.y_col : "B",
     "the label column(s) \u2014 B, or a sequence like y0 y1 for a 2-wide target"));
-  field("classes", txt("classes", Array.isArray(n.classes) ? n.classes.join(" ") : "",
-    "y is a class label, not a row \u2014 comma or space separated"));
+  const yrow = mk("label", { class: "rf" });
+  const yck = mk("input", { type: "checkbox", class: "bxtick",
+      title: "y's values are the labels to pick \u2014 the column itself names the "
+           + "classes, and accuracy comes with it" });
+  yck.checked = !!(n.y_class || (n.classes && n.classes.length));
+  yck.addEventListener("change", () => bxConfigure(n.id, { y_class: yck.checked }));
+  yrow.appendChild(yck);
+  yrow.appendChild(mk("span", { text: "y is a class label" }));
+  body.appendChild(yrow);
   const par = mk("select", { class: "bxsel" });
   par.appendChild(mk("option", { value: "supervised", text: "supervised" }));
   par.appendChild(mk("option", { value: "rl", text: "rl \u2014 scored by a reward box" }));
@@ -4789,7 +4795,8 @@ function bxTrainDoc(o, n) {                    // the training a host carries, o
     if (n[k]) o[k] = n[k];
   if (n.x_col) o.x_col = n.x_col;
   if (n.y_col) o.y_col = n.y_col;
-  if (n.classes && n.classes.length) o.classes = n.classes;
+  if (n.y_class) o.y_class = true;
+  if (n.classes && n.classes.length) o.classes = n.classes;   // legacy order
   if (n.paradigm) o.paradigm = n.paradigm;
   if (n.optimizer) o.optimizer = n.optimizer;
   for (const k of ["lr", "weight_decay", "batch", "steps", "clip",
@@ -4801,8 +4808,9 @@ function bxTrainNode(o, n) {                   // …and back, validated
     if (typeof o[k] === "string" && o[k]) n[k] = o[k];
   for (const k of ["x_col", "y_col"])
     if (typeof o[k] === "string" && o[k]) n[k] = o[k].trim().toUpperCase();
+  if (o.y_class === true) n.y_class = true;
   if (o.classes && typeof o.classes === "object" && o.classes.length)
-    n.classes = o.classes.map(x => String(x)).filter(x => x);
+    n.classes = o.classes.map(x => String(x)).filter(x => x);   // legacy order
   if (o.paradigm === "rl" || o.paradigm === "supervised") n.paradigm = o.paradigm;
   if (o.optimizer === "adamw" || o.optimizer === "sgd") n.optimizer = o.optimizer;
   for (const k of ["lr", "weight_decay", "batch", "steps", "clip",
