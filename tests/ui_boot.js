@@ -4699,6 +4699,29 @@ check("the order is toolbar, project tabs, canvas", () => {
      "\u2026and the + menu drops down from the strip");
 });
 
+check("the + sits right beside the last tab, and its menu drops from it", () => {
+  const h = fs.readFileSync(UI, "utf8");       // the strip's own order
+  const k1 = h.indexOf('id="bxtabrail"'), k2 = h.indexOf('id="bxtabadd"'),
+        k3 = h.indexOf('id="bxtabnote"');
+  ok(k1 >= 0 && k2 > k1 && k3 > k2, "the tabs, then the +, then the note");
+  const strip = getEl("bxtabs"), add = getEl("bxtabadd"), men = getEl("bxtabMenu");
+  const keep = { strip: strip.getBoundingClientRect, add: add.getBoundingClientRect,
+                 w: men.offsetWidth };
+  strip.getBoundingClientRect = () => ({ left: 40, top: 0, width: 900, height: 30 });
+  add.getBoundingClientRect = () => ({ left: 240, top: 0, width: 24, height: 24 });
+  men.offsetWidth = 180;
+  __t.bxtabToggle();
+  eql(men.style.left, "200px", "its menu lines up with the +: " + men.style.left);
+  __t.bxtDropsClose();
+  add.getBoundingClientRect = () => ({ left: 880, top: 0, width: 24, height: 24 });
+  __t.bxtabToggle();
+  eql(men.style.left, "714px", "\u2026and stops at the strip\u2019s right edge");
+  __t.bxtDropsClose();
+  strip.getBoundingClientRect = keep.strip;    // the stubs go back untouched
+  add.getBoundingClientRect = keep.add;
+  men.offsetWidth = keep.w;
+});
+
 check("the view cannot be lost: a tight world around origin and design", () => {
   __t.bxImportJSON(JSON.stringify({ type: "canvas", version: 1, nodes: [], edges: [] }), {});
   __t.BX.view = { cx: 999999, cy: -999999, k: 1 };

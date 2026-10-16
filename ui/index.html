@@ -1047,11 +1047,11 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
         <div class="bxvram" id="bxvram"></div>
       </div>
     </div>
-    <div class="bxtabs">
+    <div class="bxtabs" id="bxtabs">
       <div class="bxtabrail" id="bxtabrail"></div>
-      <span class="bxtabnote" id="bxtabnote"></span>
       <span class="bxtabadd" id="bxtabadd" title="open another canvas">+</span>
-      <div class="bxtdrop bxtdrop-r" id="bxtabMenu" hidden></div>
+      <span class="bxtabnote" id="bxtabnote"></span>
+      <div class="bxtdrop" id="bxtabMenu" hidden></div>
     </div>
     <div class="bxrow">
       <div class="bxwrap" id="bxwrap">
@@ -7414,9 +7414,9 @@ function bxtDropsClose(keep) {
     if (m) m.hidden = true;
   }
 }
-function bxtPlace(menuId, btnId) {             // under its own button, not the strip's left
+function bxtPlace(menuId, btnId, hostId) {     // under its own button, not the strip's left
   if (!btnId) return;
-  const m = $(menuId), b = $(btnId), w = $("bxtools");
+  const m = $(menuId), b = $(btnId), w = $(hostId || "bxtools");
   if (!m || !b || !w || !m.style) return;
   if (m.classList && m.classList.contains("bxtdrop-r")) return;   // the right-anchored one
   const br = b.getBoundingClientRect ? b.getBoundingClientRect() : null;
@@ -8288,6 +8288,7 @@ function bxtabToggle() {
     bxtabMenuBuild();
   }
   m.hidden = !open;
+  if (open) bxtPlace("bxtabMenu", "bxtabadd", "bxtabs");   // under the + itself
   return open;
 }
 function bxtabMenuBuild() {                    // the + : New Canvas, Saved Canvas
