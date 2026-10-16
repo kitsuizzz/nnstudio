@@ -6309,8 +6309,6 @@ function bxNodeW(n) {
     return Math.max(320, Number((n.box || {}).w) || 440);
   if (n && (n.kind === "select" || n.kind === "config"))    // …and their windows
     return Math.max(280, Number((n.box || {}).w) || 360);
-  if (n && n.kind === "custom" && n.model)                 // a model, with its pane
-    return Math.max(300, Number((n.box || {}).w) || 380);
   if (n && n.kind === "input" && !BX.up)   // …and the input's own editor: roomy
     return Math.max(240, Number((n.box || {}).w) || 420);   // by default, so its
   if (n && n.kind === "output" && !BX.up)  // content fits; the corner adjusts it

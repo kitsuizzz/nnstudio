@@ -5086,6 +5086,8 @@ check("a model and its config: the architecture nested, the training named", () 
   eql([__t.bxBoundary(m, "in").length, __t.bxBoundary(m, "out").length], [1, 1],
       "\u2026with the skeleton's one in and one out");
   ok(!__t.bxHasPane(m), "\u2026a plain card \u2014 no window inside it");
+  eql([__t.bxNodeW(m), __t.bxNodeH(m)], [160, 80],
+      "\u2026the standard card size, like every plain box");
   eql(__t.bxShape(m), "model \u00b7 1 in \u00b7 1 out",
       "the card reads its ports: " + __t.bxShape(m));
   // a config names it; its data dot is its own
