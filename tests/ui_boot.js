@@ -264,6 +264,7 @@ const paneText = (n) => {
   const d = document.createElement("div");
   __t.bxPaneFill(d, n);
   return d.querySelectorAll(".bxdata").map(e => e.textContent).join(" | ") + " || " +
+         d.querySelectorAll(".pc").map(e => e.textContent).join(", ") + " || " +
          d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
 };
 // the app now boots with its blank-network skeleton (input → output); the
@@ -671,6 +672,45 @@ check("a card's lines are clipped to the card's own width", () => {
   ok(shapes.length === 1 && shapes[0].length <= 23,
      "the drawn shape line fits too: " + shapes.join(","));
   __t.bxRemove(m.id);
+  eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
+});
+
+check("an output structures a matrix up to 2-D: cells, rows, columns", () => {
+  const keep = __t.BX.nodes.length;
+  const out = __t.bxAdd("output", 0, 0, { din: 6 });
+  const win = (st) => {
+    __t.bxRunValues[out.id] = st;
+    const d = document.createElement("div");
+    __t.bxOutputFill(d, out);
+    return d;
+  };
+  const d1 = win({ shape: [2, 3], mean: 3.5, min: 1, max: 6, peek: [1, 2, 3, 4, 5, 6] });
+  eql(d1.querySelectorAll(".pc").map(e => e.textContent), ["1", "2", "3", "4", "5", "6"],
+      "a 2\u00d73 lands as six cells, row-major");
+  eql(d1.querySelectorAll(".pi").map(e => e.textContent), ["0", "1"], "\u2026rows numbered");
+  eql(d1.querySelectorAll(".ph").map(e => e.textContent), ["", "0", "1", "2"],
+      "\u2026and the column numbers over them");
+  eql(d1.querySelectorAll(".bxdata").length, 0, "\u2026no flat dump beside the grid");
+  ok(d1.querySelectorAll(".panehint").map(e => e.textContent).join(" ").indexOf("shape [2\u00d73]") >= 0,
+     "\u2026the summary still names the shape");
+  // a vector is one numbered-less row
+  const d2 = win({ shape: [5], mean: 3, min: 1, max: 5, peek: [1, 2, 3, 4, 5] });
+  eql([d2.querySelectorAll(".pc").length, d2.querySelectorAll(".pi").length,
+       d2.querySelectorAll(".ph").length], [5, 0, 0], "a vector: five cells, no indices");
+  // deeper than 2-D, or too wide to mean anything: the flat readout stays
+  const d3 = win({ shape: [2, 3, 4], mean: 0, min: 0, max: 6, peek: [1, 2, 3, 4, 5, 6] });
+  ok(d3.querySelectorAll(".bxdata").length === 1 &&
+     d3.querySelectorAll(".bxdata")[0].textContent.slice(-1) === "\u2026",
+     "3-D keeps the flat preview: " + d3.querySelectorAll(".bxdata")[0].textContent);
+  eql(d3.querySelectorAll(".pc").length, 0, "\u2026and grows no grid");
+  const d4 = win({ shape: [4, 100], mean: 0, peek: [1, 2, 3] });
+  eql(d4.querySelectorAll(".pc").length, 0, "a 100-wide row stays flat too");
+  // a truncated peek fills the rows it can and says so once
+  const d5 = win({ shape: [10, 4], mean: 0, peek: [1, 2, 3, 4, 5, 6] });
+  eql([d5.querySelectorAll(".pc").length, d5.querySelectorAll(".pmore").length], [7, 1],
+      "a cut grid ends in one ellipsis cell");
+  delete __t.bxRunValues[out.id];
+  __t.bxRemove(out.id);
   eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
 });
 
@@ -2498,7 +2538,8 @@ check("re-placing a box keeps the last run's data (an edit still clears it)", ()
   const win = (n) => {
     const d = document.createElement("div");
     __t.bxPaneFill(d, n);
-    return d.querySelectorAll(".bxdata").map(e => e.textContent).join(" | ");
+    return d.querySelectorAll(".bxdata").map(e => e.textContent).join(" | ") + " " +
+           d.querySelectorAll(".pc").map(e => e.textContent).join(", ");
   };
   ok(win(o).indexOf("3, 4") >= 0, "the output shows what it received: " + win(o));
   // drag the output somewhere else: the run's marks are not stale — they move with it

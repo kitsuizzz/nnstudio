@@ -705,9 +705,10 @@ def _heatmap(x, box=""):
     return img.reshape(rows, cols, 3)
 
 
-def view_paths(canvas):
+def view_paths(canvas, kinds=("output", "heatmap")):
     """Every viewable node's path — an output box, or a box that draws a
-    picture of its own (the heatmap) — nested levels included."""
+    picture of its own (the heatmap) — nested levels included. `kinds`
+    widens the set (the inputs join it for their own windows)."""
     out = set()
 
     def walk(nodes, prefix):
@@ -716,19 +717,20 @@ def view_paths(canvas):
             if n.get("kind") == "custom":
                 walk((n.get("inner") or {}).get("nodes"), path + "/")
                 continue
-            if n.get("kind") in ("output", "heatmap"):
+            if n.get("kind") in kinds:
                 out.add(path)
 
     walk((canvas or {}).get("nodes"), "")
     return out
 
 
-def _stats_with_image(v, story, view=False):
+def _stats_with_image(v, story, view=False, peek=8):
     """One value's stats, with the picture attached when it is one: the marked
     story (an image input's own, blob and all) always; a matrix the backend
     determines to be a picture only where it will be shown (`view`), as a
-    small thumbnail."""
-    st = tensor_stats(v)
+    small thumbnail. `peek` is how many numbers ride along — the boxes whose
+    windows show them ask for more."""
+    st = tensor_stats(v, peek=peek)
     if st is None:
         return None
     meta = story.get(id(v)) if story else None
@@ -2985,6 +2987,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
     collected = graph.collect()
     story = image_story(canvas, collected)
     outs = view_paths(canvas)                    # the viewable nodes
+    shown = view_paths(canvas, ("input", "output", "heatmap"))   # their windows
     values = {}
     texts = {}
     for path, v in collected.items():
@@ -2994,7 +2997,8 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
             values[path] = {"text": v}
             texts[path] = v
             continue
-        st = _stats_with_image(v, story, view=(path in outs))
+        st = _stats_with_image(v, story, view=(path in outs),
+                               peek=(64 if path in shown else 8))
         if st is not None:
             values[path] = st
     out = {
@@ -3005,7 +3009,8 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
         "outputs": [{"id": n["id"], "name": n.get("name"),
                      "stats": ({"text": vals.get(n["id"])}
                                if isinstance(vals.get(n["id"]), str)
-                               else _stats_with_image(vals.get(n["id"]), story, view=True))}
+                               else _stats_with_image(vals.get(n["id"]), story,
+                                                      view=True, peek=64))}
                     for n in canvas.get("nodes", []) if n.get("kind") == "output"],
         "ms": int((time.time() - t0) * 1000),
         "timing": {"sweeps": timing["sweeps"],

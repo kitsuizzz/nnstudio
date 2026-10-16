@@ -605,6 +605,26 @@ check("an hf: file reference binds like any safetensors — cache first",
       hf_file_reference_binds)
 
 
+def output_peeks_are_richer():
+    # the boxes whose windows show numbers ask for more of them: an output (and
+    # the input it reads from) carries a 64-number preview — a matrix the pane
+    # can lay out as a grid — while the boxes behind stay light at 8
+    vals = "\n".join(" ".join(str(r * 10 + c) for c in range(10)) for r in range(10))
+    c = canvas([n("input", "i", dout=100, values=vals),
+                n("op", "t", op="transpose"),
+                n("output", "o", din=100)], [edge("i", "t"), edge("t", "o")])
+    res = T.run(c, {})
+    o, i2, t = res["values"]["o"], res["values"]["i"], res["values"]["t"]
+    assert o["shape"] == [10, 10] and len(o["peek"]) == 64, (o["shape"], len(o["peek"]))
+    assert o["peek"][:3] == [0.0, 10.0, 20.0], o["peek"][:3]   # the transposed rows
+    assert len(i2["peek"]) == 64, len(i2["peek"])      # an input's own window
+    assert len(t["peek"]) == 8, len(t["peek"])         # an inner box stays light
+
+
+check("the windows that show numbers peek deeper: 64 at the edges, 8 inside",
+      output_peeks_are_richer)
+
+
 def head_ops_do_attention_shapes():
     # permute: a general axis order, not just the last two
     c = canvas([n("input", "i", dout=6, values="1.0 2.0 3.0\n4.0 5.0 6.0"),

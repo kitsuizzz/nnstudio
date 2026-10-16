@@ -907,6 +907,16 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
 /* the data a box shows (the output's readout): plain, selectable numbers */
 .bxdata { font: 12px/1.6 var(--mono); color: #e5e5e5; white-space: pre-wrap;
           word-break: break-word; }
+/* a matrix reads as a grid when it is up to 2-D: cells with their rows and
+   columns numbered, and a sideways scroll when the row runs long */
+.peekwrap { overflow-x: auto; padding: 2px 0; }
+.peekgrid { display: grid; gap: 3px 4px; font: 11px var(--mono); width: max-content; }
+.peekgrid .pc { text-align: right; background: rgba(0,0,0,.22);
+                border: 1px solid var(--panel-brd); border-radius: 4px;
+                padding: 1px 5px; white-space: nowrap; color: var(--ink); }
+.peekgrid .ph { color: var(--ink-faint); text-align: center; padding: 0 2px; }
+.peekgrid .pi { color: var(--ink-faint); text-align: right; padding: 1px 2px; }
+.peekgrid .pmore { color: var(--ink-faint); border-style: dashed; }
 /* the Run box's own menu: Execute (the run) and Spec (the backend) */
 .runmenu { display: flex; gap: 2px; padding: 2px 4px 0;
            border-bottom: 1px solid var(--panel-brd); }
@@ -5053,6 +5063,43 @@ function bxImageActions(body, st, name) {      // the two ways to keep the pictu
   body.appendChild(row);
   return row;
 }
+function bxPeekBlock(st) {                     // a value's numbers: a matrix
+  const sh = ((st && st.shape) || []).map(Number);   // up to 2-D reads as a
+  const peek = (st && st.peek) || [];                // grid — rows of cells at
+  if (!peek.length) return null;                     // the matrix's own row
+  const count = sh.reduce((a, b) => a * b, 1);       // width, numbered; anything
+  const flat = mk("div", { class: "bxdata",          // wider or deeper stays a
+    text: peek.map(bxNumText).join(", ")             // flat, clipped readout
+        + (count > peek.length ? ", \u2026" : "") });
+  if (sh.length < 1 || sh.length > 2) return flat;
+  const rows = sh.length === 2 ? sh[0] : 1;
+  const cols = sh.length === 2 ? sh[1] : sh[0];
+  if (!cols || cols > 64 || rows < 1) return flat;
+  const wrap = mk("div", { class: "peekwrap" });
+  const g = mk("div", { class: "peekgrid" });
+  const lead = rows > 1 ? "auto " : "";
+  g.style.gridTemplateColumns = lead + "repeat(" + cols + ", max-content)";
+  if (rows > 1 && cols <= 32) {                // the column numbers, when they read
+    if (lead) g.appendChild(mk("div", { class: "ph", text: "" }));
+    for (let c = 0; c < cols; c++)
+      g.appendChild(mk("div", { class: "ph", text: String(c) }));
+  }
+  for (let r = 0; r < rows; r++) {
+    if (lead) g.appendChild(mk("div", { class: "pi", text: String(r) }));
+    let any = false;
+    for (let c = 0; c < cols; c++) {
+      const i = r * cols + c;
+      if (i >= peek.length) break;             // the peek runs out: the last
+      any = true;                              // cell says so once
+      g.appendChild(mk("div", { class: "pc", text: bxNumText(peek[i]) }));
+    }
+    if (!any) break;
+  }
+  if (count > peek.length)
+    g.appendChild(mk("div", { class: "pc pmore", text: "\u2026" }));
+  wrap.appendChild(g);
+  return wrap;
+}
 function bxOutputFill(pane, n) {               // the output's window: whatever data
   // the last run handed it \u2014 and, one tab over, the training it carries
   pane.innerHTML = "";
@@ -5114,11 +5161,9 @@ function bxOutputFill(pane, n) {               // the output's window: whatever 
   }
   const sh = (st.shape || []).map(Number);
   const peek = st.peek || [];
-  const count = sh.reduce((a, b) => a * b, 1);
-  if (peek.length) {
-    body.appendChild(mk("div", { class: "bxdata",
-      text: peek.map(bxNumText).join(", ") + (count > peek.length ? ", \u2026" : "") }));
-  } else if (st.scalar != null) {
+  const block = bxPeekBlock(st);               // the numbers, structured where
+  if (block) body.appendChild(block);          // a matrix can be read as one
+  else if (st.scalar != null) {
     body.appendChild(mk("div", { class: "bxdata", text: bxNumText(st.scalar) }));
   }
   const bits = [];                             // the summary under the numbers
