@@ -7305,7 +7305,10 @@ function bxPaneScrollRestore(root) {           // after a render is attached:
   // (The agent's and the server config's logs keep their own, autoscrolling
   // memories.)
   if (!root || !root.querySelectorAll) return;
-  for (const pane of root.querySelectorAll(".bxlogpane")) {
+  if (root.getBoundingClientRect) root.getBoundingClientRect();   // layout first:
+  for (const pane of root.querySelectorAll(".bxlogpane")) {      // an unlaid-out
+                                                                 // scroller clamps
+                                                                 // the offset to 0
     const id = pane.getAttribute ? pane.getAttribute("data-agent") : null;
     const n = id ? bxNode(id) : null;
     if (!n || n.kind === "agent" || n.kind === "train") continue;
