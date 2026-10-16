@@ -192,7 +192,7 @@ globalThis.__t = {
   bxAddTemplate, bxAddKind, bxGGUFImport, bxGGUFImportApply, bxGGUFLoad,
   bxAttentionDoc, bxStateDoc,
   bxMoEDoc, bxTemplateName, bxErrorSet,
-  bxMoveInto, bxDropTargetAt, bxStartWire, bxDotClick, bxDown, bxHasInside, bxUndoStep, bxRedoStep, bxUndoDepth, bxCommit,
+  bxMoveInto, bxDropTargetAt, bxStartWire, bxDotClick, bxDown, bxPaneScrollRestore, bxHasInside, bxUndoStep, bxRedoStep, bxUndoDepth, bxCommit,
   bxSnapMove, bxSnapGrid, bxClampView, bxSeedBlank, bxNodeH,
   get bxGuides() { return bxGuides; }, set bxGuides(v) { bxGuides = v; },
   bxSelectBoxes, bxSelectedIds, bxToggleSelect, bxMarqueeSelect, bxStartMove, bxMove, bxUp,
@@ -5122,8 +5122,9 @@ check("a window keeps its scroll through a rebuild: the poll never throws it awa
   body.dispatchEvent({ type: "scroll" });
   eql(Number(c._scroll && c._scroll.top), 40, "\u2026and its place is remembered");
   const g2 = __t.bxCard(c);                    // a poll, a run, any render: rebuild
+  __t.bxPaneScrollRestore(g2);                 // \u2026and the render's pass, post-attach
   eql(Number(g2.querySelectorAll(".bxinputbody")[0].scrollTop), 40,
-      "\u2026and picked right back up on the rebuild");
+      "\u2026picks the place right back up on the rebuild");
   __t.bxRemove(c.id);
 });
 
