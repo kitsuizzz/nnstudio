@@ -7234,16 +7234,6 @@ function bxCard(n) {
     const pane = mk("div", { class: "bxlogpane" });
     pane.setAttribute("data-agent", n.id);
     bxPaneFill(pane, n);
-    // the reader's place: saved live as they scroll — the restore itself
-    // happens at the end of the render (bxPaneScrollRestore), once the card is
-    // attached: a detached scroller has no layout to take the offset
-    const sc = (n.kind === "agent" || n.kind === "train") ? null
-             : (pane.querySelector ? pane.querySelector(".bxinputbody") : null);
-    if (sc) {
-      sc.addEventListener("scroll", () => {
-        (n._scroll = n._scroll || {}).top = sc.scrollTop;
-      });
-    }
     fo.appendChild(pane);
     g.appendChild(fo);
   }
@@ -7312,7 +7302,9 @@ function bxPaneScrollRestore(root) {           // after a render is attached:
     const id = pane.getAttribute ? pane.getAttribute("data-agent") : null;
     const n = id ? bxNode(id) : null;
     if (!n || n.kind === "agent" || n.kind === "train") continue;
-    const sc = pane.querySelector ? pane.querySelector(".bxinputbody") : null;
+    const sc = pane.querySelector
+      ? (pane.querySelector(".bxpbody") || pane.querySelector(".bxinputbody"))
+      : null;
     const want = Number((n._scroll || {}).top) || 0;
     if (sc && want && sc.scrollTop !== undefined) sc.scrollTop = want;
   }
@@ -10503,6 +10495,25 @@ function bxPaneFill(pane, n) {                 // one pane, filled by its kind �
     const grip = mk("div", { class: "bxgrip", title: "drag to resize the box" });
     grip.addEventListener("mousedown", (ev) => bxAgentGrip(ev, n));
     pane.appendChild(grip);
+  }
+  // the reader's place, wherever a window is rebuilt: saved live as they scroll,
+  // and picked back up here when the pane is already on screen (the live
+  // repaints — bxTrainRefresh, a poll's tick — rebuild in place, outside
+  // bxRender; the card's own build happens detached, and bxPaneScrollRestore
+  // restores that one once the render attaches it)
+  const sc = (n.kind === "agent" || n.kind === "train") ? null
+           : (pane.querySelector
+              ? (pane.querySelector(".bxpbody") || pane.querySelector(".bxinputbody"))
+              : null);   // a sheet scrolls in .bxpbody — the rest, in .bxinputbody
+  if (sc) {
+    sc.addEventListener("scroll", () => {
+      (n._scroll = n._scroll || {}).top = sc.scrollTop;
+    });
+    const want = Number((n._scroll || {}).top) || 0;
+    if (want && sc.scrollTop !== undefined && sc.isConnected !== false) {
+      if (sc.getBoundingClientRect) sc.getBoundingClientRect();   // layout first
+      sc.scrollTop = want;
+    }
   }
 }
 function bxVisionFill(pane, n) {               // the tower's facts, in its window

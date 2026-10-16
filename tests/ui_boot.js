@@ -5125,6 +5125,13 @@ check("a window keeps its scroll through a rebuild: the poll never throws it awa
   __t.bxPaneScrollRestore(g2);                 // \u2026and the render's pass, post-attach
   eql(Number(g2.querySelectorAll(".bxinputbody")[0].scrollTop), 40,
       "\u2026picks the place right back up on the rebuild");
+  // the live repaint path (bxTrainRefresh's own) rebuilds in place through
+  // bxPaneFill: the memory holds there too
+  c._scroll = { top: 60 };
+  const d2 = document.createElement("div");
+  __t.bxPaneFill(d2, c);
+  eql(Number(d2.querySelectorAll(".bxinputbody")[0].scrollTop), 60,
+      "\u2026and an in-place repaint keeps it too");
   __t.bxRemove(c.id);
 });
 
