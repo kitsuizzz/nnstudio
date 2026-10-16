@@ -6326,8 +6326,6 @@ function bxNodeH(n) {
     return Math.max(180, Number((n.box || {}).h) || 300);
   if (n && (n.kind === "select" || n.kind === "config"))
     return Math.max(140, Number((n.box || {}).h) || 240);
-  if (n && n.kind === "custom" && n.model)
-    return Math.max(150, Number((n.box || {}).h) || 220);
   if (n && n.kind === "input" && !BX.up)
     return Math.max(120, Number((n.box || {}).h) || 280);
   if (n && n.kind === "output" && !BX.up)
@@ -6788,11 +6786,10 @@ function bxHasPane(n) {                        // a box whose card holds an edit
   if (!n) return false;
   if (n.kind === "input" || n.kind === "output")
     return !BX.up;                             // inside a nested box they are the
-  return (n.kind === "agent" || n.kind === "train" ||   // boundary's ports: a box
-          n.kind === "dataset" || n.kind === "select" ||  // and nothing else —
-          n.kind === "config" || (n.kind === "custom" && n.model) ||  // no editor,
-          n.kind === "heatmap");               // no readout, no run button
-}
+  return (n.kind === "agent" || n.kind === "train" ||   // boundary's ports, and a
+          n.kind === "dataset" || n.kind === "select" ||  // model is a container:
+          n.kind === "config" || n.kind === "heatmap");   // both stay plain —
+}                                              // no editor, no readout inside
 function bxCard(n) {
   const preview = String(n.id || "").indexOf("pal-") === 0;   // palette chrome
   const off = preview ? !!n.off : bxBoxOff(n);
@@ -9866,46 +9863,10 @@ function bxTrainAddConfig(h) {                 // one click: a config box, wired
                    + " \u2014 wire a dataset (or a select col box) into its "
                    + "data dot, and name the columns in the config");
 }
-function bxModelFill(pane, n) {                // a model: what it is, and who
-  pane.innerHTML = "";                         // trains it — the architecture's box
-  bxBehaveInside(pane);
-  const ins = bxBoundary(n, "in"), outs = bxBoundary(n, "out");
-  const type = (b, dir) => bxTypeText(bxPortType(b, dir)) || "?";
-  pane.appendChild(mk("div", { class: "panehint",
-    text: "in " + (ins.length ? ins.map(b => type(b, "out")).join(" · ")
-                              : "— (add an input box inside)")
-        + "  →  out " + (outs.length ? outs.map(b => type(b, "in")).join(" · ")
-                                         : "— (add an output box inside)") }));
-  const pr = bxParamsOf(n);
-  let frozen = 0, tot = 0;
-  (function walk(nodes) {
-    for (const x of nodes || []) {
-      if (bxWeightedBox(x) && x.kind !== "custom") {
-        tot += 1;
-        if (x.frozen) frozen += 1;
-      }
-      if (x.kind === "custom") walk((x.inner || {}).nodes);
-    }
-  })((n.inner || {}).nodes);
-  pane.appendChild(mk("div", { class: "panehint",
-    text: (pr ? bxBig(pr) + " params" : "no weights inside yet")
-        + (tot ? " · " + frozen + " of " + tot + " weight boxes frozen" : "") }));
-  let cfg = null;
-  bxEveryBox(x => { if (!cfg && x.kind === "config" && x.model === n.id) cfg = x; });
-  const st = cfg ? ((BXRUN.trainState || {})[cfg.id] || {}) : {};
-  pane.appendChild(mk("div", { class: "panehint",
-    text: cfg ? ("training · " + (cfg.name || cfg.id)
-                 + (st.step != null ? " · step " + st.step : "")
-                 + (st.loss != null ? " · loss " + Number(st.loss).toFixed(4) : ""))
-              : "training · no train config names it yet" }));
-  pane.appendChild(mk("div", { class: "bxhint2",
-    text: "double-click to open it — the weights live in here" }));
-}
 function bxPaneFill(pane, n) {                 // one pane, filled by its kind —
   if (n.kind === "dataset") bxDatasetFill(pane, n);   // every renderer goes through
   else if (n.kind === "select") bxSelectFill(pane, n);
   else if (n.kind === "config") bxConfigFill(pane, n);
-  else if (n.kind === "custom") bxModelFill(pane, n);
   else if (n.kind === "train") bxTrainFill(pane, n);
   else if (n.kind === "input") bxInputFill(pane, n);
   else if (n.kind === "output") bxOutputFill(pane, n);

@@ -228,7 +228,7 @@ globalThis.__t = {
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
   bxSelectFill, bxConfigFill, bxTrainWired, bxInputLink, bxMatrixTell, bxTrainSummary,
-  bxTrainAddConfig, bxTrainWireConfig, bxBoundary, bxModelFill, bxWeightsBox, bxWrapModel,
+  bxTrainAddConfig, bxTrainWireConfig, bxBoundary, bxWeightsBox, bxWrapModel,
   bxHasPane, bxParamsOf,
   bxRunFeeds, bxInputFill, bxInputExpand, bxOutputFill, bxOutputExpand, bxPaneFill,
   bxHotSet, bxHotMove, bxTipHide, bxRunSet, bxRunCanvas, bxFeedsItself,
@@ -5085,16 +5085,9 @@ check("a model and its config: the architecture nested, the training named", () 
   ok(!!m && m.model === true, "a model box lands, marked as one");
   eql([__t.bxBoundary(m, "in").length, __t.bxBoundary(m, "out").length], [1, 1],
       "\u2026with the skeleton's one in and one out");
-  ok(__t.bxHasPane(m), "\u2026and a window of its own");
-  {
-    const d = document.createElement("div");
-    __t.bxModelFill(d, m);
-    const txt = d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
-    ok(txt.indexOf("in ") === 0 && txt.indexOf("out ") > 0,
-       "its ports read back: " + txt);
-    ok(txt.indexOf("no weights inside yet") >= 0, "\u2026its weights");
-    ok(txt.indexOf("no train config") >= 0, "\u2026and who trains it");
-  }
+  ok(!__t.bxHasPane(m), "\u2026a plain card \u2014 no window inside it");
+  eql(__t.bxShape(m), "model \u00b7 1 in \u00b7 1 out",
+      "the card reads its ports: " + __t.bxShape(m));
   // a config names it; its data dot is its own
   const cfg = __t.bxAdd("config", 480, 0, {});
   eql([__t.bxPortDefs(cfg, "in").length, __t.bxPortDefs(cfg, "out").length], [0, 1],
@@ -5107,10 +5100,8 @@ check("a model and its config: the architecture nested, the training named", () 
     eql(__t.bxConnect(bin.id, l1.id, 0, 0), null, "the boundary feeds the layer");
     eql(__t.bxConnect(l1.id, bout.id, 0, 0), null, "\u2026and the layer the out box");
     __t.bxLeave();
-    const d = document.createElement("div");
-    __t.bxModelFill(d, m);
-    ok(d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
-         .indexOf("16 params") >= 0, "the model counts its weights");
+    ok(String(__t.bxShape(m)).indexOf("16 params") >= 0,
+       "the card counts its weights: " + __t.bxShape(m));
   }
   ok(__t.bxConfigure(cfg.id, { model: m.id, paradigm: "supervised" }),
      "the model lands on the config");
@@ -5145,14 +5136,6 @@ check("a model and its config: the architecture nested, the training named", () 
     __t.bxConfigFill(d, cfg);
     const txt = d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
     ok(txt.indexOf("step ") >= 0, "\u2026and the experiment's strip is in the pane: " + txt);
-  }
-  // the model's window says who trains it now
-  {
-    const d = document.createElement("div");
-    __t.bxModelFill(d, m);
-    const txt = d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
-    ok(txt.indexOf("training \u00b7 " + cfg.name) >= 0,
-       "\u2026the model knows its config: " + txt);
   }
   // the run the job receives keeps them all
   {
