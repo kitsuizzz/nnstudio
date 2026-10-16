@@ -1463,16 +1463,15 @@ function bxShape(n) {
   if (n.kind === "custom") {
     if (n.model) {                             // a model's line reads three things
       const inner = n.inner || {};             // and nothing else: the shape its
-      const short = (pt) => {                  // dots take in, the shape they
+      const tell = (pt) => {                   // dots take in, the shape they
         if (!pt) return "?";                   // send out, and the weights' dtype
         if (pt.kind === "text" || pt.kind === "ids" || pt.kind === "settings")
           return pt.kind;
-        const m = pt.shape && /^\[\? × (\d+)\]$/.exec(pt.shape);
-        return m ? m[1] : (pt.shape || "?");
-      };
-      const ins = bxBoundary(n, "in").map(b => short(bxPortType(b, "out")));
+        return pt.shape || "?";                // [? × N] — the dot's true
+      };                                       // per-sample form, never bare N
+      const ins = bxBoundary(n, "in").map(b => tell(bxPortType(b, "out")));
       const outs = bxBoundary(n, "out").map(
-        b => short(bxOutputExpect(b, inner.edges) || bxPortType(b, "in")));
+        b => tell(bxOutputExpect(b, inner.edges) || bxPortType(b, "in")));
       return (ins.length ? ins.join("+") : "?") + " → "
            + (outs.length ? outs.join("+") : "?")
            + " · " + (n.dtype || bxModelDtype(n) || "f16");

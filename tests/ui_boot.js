@@ -555,8 +555,8 @@ check("the vision transformer: a whole trainable ViT from one card", () => {
   eql(named("patch embed").din, 192, "\u2026into the patch embedding");
   eql([__t.bxOpName(named("mean pool")), named("mean pool").dim], ["mean", -2],
       "\u2026and the patch row pools before the head");
-  eql(__t.bxShape(vit), "3072 \u2192 10 \u00b7 f16",
-      "the card reads in \u2192 out \u00b7 dtype: " + __t.bxShape(vit));
+  eql(__t.bxShape(vit), "[? × 3072] → [? × 10] · f16",
+      "the card reads in → out · dtype: " + __t.bxShape(vit));
   ok(__t.bxParamsOf(vit) > 20000, "\u2026with its weights counted: " + __t.bxParamsOf(vit));
   // it is a model a config can train
   const cfg = __t.bxAdd("config", 600, 0, {});
@@ -590,8 +590,8 @@ check("the Vision shelf: the three architectures land as whole models", () => {
       2, "\u2026and the decoder upsamples twice");
   eql(vae.inner.nodes.filter(n => n.kind === "output")[0].din, 32 * 32 * 3,
       "the output dot is a 32\u00d732 picture's worth");
-  eql(__t.bxShape(vae), "3072 \u2192 3 \u00b7 f16",
-      "its card reads in \u2192 out \u00b7 dtype: " + __t.bxShape(vae));
+  eql(__t.bxShape(vae), "[? × 3072] → [? × 3] · f16",
+      "its card reads in → out · dtype: " + __t.bxShape(vae));
   ok(__t.bxParamsOf(vae) > 1000, "\u2026with weights: " + __t.bxParamsOf(vae));
   __t.bxRemove(vae.id);
   // the UNet: two dots in, a prediction out
@@ -5128,7 +5128,7 @@ check("wrapping the weights: a flat design becomes a model, wired the same", () 
       "\u2026with the boundary the crossings made");
   eql(((m.inner || {}).nodes || []).map(n => n.kind).sort(),
       ["input", "layer", "layer", "output"], "\u2026the layers inside");
-  eql(__t.bxShape(m), "4 \u2192 4 \u00b7 f16",
+  eql(__t.bxShape(m), "[? × 4] → [? × 4] · f16",
       "the card reads its dots and dtype: " + __t.bxShape(m));
   eql(__t.bxParamsOf(m), 64, "\u2026and its weights counted");
   const edge = (from, to) => __t.BX.edges.find(e => e.from === from && e.to === to);
@@ -5176,7 +5176,7 @@ check("a model and its config: the architecture nested, the training named", () 
     eql(__t.bxShape(bin), "[? × 4]",
         "the boundary input reads its dot, batch axis and all: " + __t.bxShape(bin));
     __t.bxLeave();
-    eql(__t.bxShape(m), "4 \u2192 4 \u00b7 f16",
+    eql(__t.bxShape(m), "[? × 4] → [? × 4] · f16",
       "the card follows the wired shapes: " + __t.bxShape(m));
   }
   ok(__t.bxConfigure(cfg.id, { model: m.id, paradigm: "supervised" }),
