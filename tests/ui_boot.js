@@ -4674,17 +4674,11 @@ check("the project tabs: named, starred, switched \u2014 and saved from the tab"
   eql(__t.bxTabClose(t3.id), true, "…with a yes it closes");
   eql(__t.bxProject().name, "New Project 1", "…and the neighbour takes the screen");
   ok(__t.bxTabAnyDirty(), "\u2026the boot tab\u2019s own star is what is left");
-  // the last tab closing lands a fresh blank — then the boot canvas comes back
-  const doc = t1b.doc, view = t1b.view;
-  eql(__t.bxTabClose(t1b.id), true, "the last tab closes too");
-  const fresh = __t.bxProject();
-  ok(fresh && fresh.id !== t1b.id && fresh.name.indexOf("New Project ") === 0,
-     "…a fresh blank replaces it: " + (fresh && fresh.name));
-  __t.bxTabLoad(fresh, doc);                   // put the boot canvas back whole
-  fresh.name = "New Project 1";
-  fresh.view = view;
-  fresh.dirty = true;
-  __t.bxTabsRender();
+  // the last tab is not removable: no × on it, and the close refuses
+  eql(getEl("bxtabrail").querySelectorAll(".x").length, 0,
+      "the last tab wears no × at all");
+  eql(__t.bxTabClose(t1b.id), false, "…and closing it is refused");
+  ok(__t.bxProject() === t1b, "…the one canvas stays");
   delete global.confirm;
   eql(strip(), ["New Project 1*"], "the strip is tidy again");
 });

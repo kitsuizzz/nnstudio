@@ -8154,8 +8154,9 @@ function bxConfirm(msg) {                      // the browser's own question —
   return typeof confirm === "function" ? !!confirm(msg) : true;   // none in tests
 }
 function bxTabClose(id) {                      // ×: close one project, asking
-  const p = bxProject(id);                     // first when it holds unsaved work
-  if (!p) return false;
+  const p = bxProject(id);                     // first when it holds unsaved work —
+  if (!p) return false;                        // and never the last one: there is
+  if ((BX.projects || []).length <= 1) return false;   // always one canvas open
   if (p.dirty && !bxConfirm("“" + p.name + "” has changes that are not "
                             + "saved — close it anyway?"))
     return false;
@@ -8163,9 +8164,10 @@ function bxTabClose(id) {                      // ×: close one project, asking
   BX.projects = (BX.projects || []).filter(x => x.id !== p.id);
   if (wasActive) {
     const next = BX.projects[BX.projects.length - 1];
-    BX.active = next ? next.id : null;
-    if (next) bxTabLoad(next);                 // a neighbour keeps the screen
-    else bxTabNew();                           // the last one: a fresh blank
+    if (next) {                                // a neighbour keeps the screen
+      BX.active = next.id;
+      bxTabLoad(next);
+    }
   }
   bxTabsRender();
   return true;
@@ -8257,12 +8259,14 @@ function bxTabsRender() {                      // the strip, its stars, the note
     t.appendChild(mk("span", { class: "nm", text: p.name }));
     if (p.dirty)
       t.appendChild(mk("span", { class: "star", text: "*", title: "changes not saved" }));
-    const x = mk("span", { class: "x", text: "\u00d7", title: "close this project" });
-    x.addEventListener("click", (ev) => {
-      if (ev && ev.stopPropagation) ev.stopPropagation();
-      bxTabClose(p.id);
-    });
-    t.appendChild(x);
+    if ((BX.projects || []).length > 1) {      // the last tab is not removable:
+      const x = mk("span", { class: "x", text: "×", title: "close this project" });
+      x.addEventListener("click", (ev) => {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        bxTabClose(p.id);
+      });
+      t.appendChild(x);
+    }
     t.addEventListener("click", () => bxTabSelect(p.id));
     rail.appendChild(t);
   }
