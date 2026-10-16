@@ -685,10 +685,14 @@
   /* the Run box's run action: a green play button, and the outcome line */
   .chip.play { color: #07240f; background: #22c55e; border-color: #22c55e; font-weight: 600; }
   .chip.play:hover { color: #07240f; background: #16a34a; border-color: #16a34a; }
-  .chip.play.off { color: var(--ink-dim); background: rgba(34,197,94,.16);
-                   border-color: rgba(34,197,94,.45); font-weight: 400; }
-  .chip.play.off:hover { color: var(--ink); background: rgba(34,197,94,.24);
-                         border-color: rgba(34,197,94,.6); }
+  .chip.off { color: var(--ink-faint); background: rgba(0,0,0,.28);
+              border-color: var(--panel-brd); }
+  .chip.off:hover { color: var(--ink-faint); background: rgba(0,0,0,.28);
+                    border-color: var(--panel-brd); }
+  .chip.play.off { color: var(--ink-faint); background: rgba(255,255,255,.06);
+                   border-color: var(--panel-brd); font-weight: 400; }
+  .chip.play.off:hover { color: var(--ink-faint); background: rgba(255,255,255,.06);
+                         border-color: var(--panel-brd); }
   .runok { color: #4ade80; }
   .runbad { color: var(--err); }
   .lmcap { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; margin: 14px 0 0; }
