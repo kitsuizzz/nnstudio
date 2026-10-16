@@ -233,7 +233,7 @@ globalThis.__t = {
   bxSelectFill, bxConfigFill, bxTrainWired, bxInputLink, bxMatrixTell, bxTrainSummary,
   bxInputMode, bxSelectSource, bxAttached, bxIsDataset,
   bxTraining, bxTrainingFill, bxDockModel, bxTrainNotch, bxShape,
-  bxUndockModel, bxTrainPair, get bxDrag() { return bxDrag; },
+  bxUndockModel, bxTrainPair, bxTrainHostOf, get bxDrag() { return bxDrag; },
   bxTrainAddConfig, bxTrainWireConfig, bxBoundary, bxWeightsBox, bxWrapModel,
   bxHasPane, bxParamsOf,
   bxRunFeeds, bxInputFill, bxInputExpand, bxOutputFill, bxOutputExpand, bxPaneFill,
@@ -5579,21 +5579,39 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   ok(!g2.children.some(c => c._attrs && c._attrs.d != null),
      "\u2026the outline closes: the card is a rectangle now");
   eql(m.y, t.y, "\u2026the model flush with the top edge");
-  // the pair moves as one: drag either and both travel
+  // the pair travels one way: dragging the box carries the model\u2026
   const off = [m.x - t.x, m.y - t.y];
   __t.bxStartMove([t.id], t.id, 0, 0);
-  eql(__t.bxDrag.ids.length, 2, "a drag starts with both boxes");
+  eql(__t.bxDrag.ids.length, 2, "a drag of the box starts with both boxes");
   __t.bxMove({ clientX: 60, clientY: 80 });
   __t.bxUp({});
   eql([m.x - t.x, m.y - t.y], off, "dragging the box carries the model");
+  const ptip = getEl("bxtip");
+  const pnotes = () => ptip.querySelectorAll(".note")
+                            .map(e => String(e.textContent)).join(" | ");
+  __t.bxHotMove({ target: __t.bxCard(m), clientX: 120, clientY: 80 });
+  ok(pnotes().indexOf("drag it out to detach") >= 0,
+     "\u2026and its own card says how it comes out: " + pnotes());
+  __t.bxHotSet(null);
+  // \u2026a click alone never pulls it out\u2026
   __t.bxStartMove([m.id], m.id, 0, 0);
-  __t.bxMove({ clientX: -40, clientY: 20 });
   __t.bxUp({});
-  eql([m.x - t.x, m.y - t.y], off, "\u2026and dragging the model carries the box");
-  ok(__t.bxUndockModel(t.id), "undocking separates them");
+  eql(t.model, m.id, "\u2026a click on the model never pulls it out");
+  // \u2026but the drag that moves it does: the socket opens
+  const seated = [m.x, m.y], tpos = [t.x, t.y];
+  __t.bxStartMove([m.id], m.id, 0, 0);
+  eql(__t.bxDrag.ids.length, 1, "the model's own drag starts alone");
+  __t.bxMove({ clientX: 30, clientY: 10 });
+  eql(t.model, null, "\u2026and pulling it out detaches it");
+  eql([t.x, t.y], tpos, "\u2026the box stays put");
+  ok(m.x !== seated[0] || m.y !== seated[1], "\u2026and the model follows the cursor");
+  __t.bxUp({});
+  // the menu undock does the same, and docking puts it all back
+  ok(__t.bxDockModel(t.id, m.id), "docking it back");
+  ok(__t.bxUndockModel(t.id), "the menu's undock separates them");
   eql(t.model, null, "\u2026the box lets go");
   __t.bxStartMove([t.id], t.id, 0, 0);
-  eql(__t.bxDrag.ids.length, 1, "\u2026and the drag is alone again");
+  eql(__t.bxDrag.ids.length, 1, "\u2026and the box's drag is alone again");
   __t.bxUp({});
   ok(__t.bxDockModel(t.id, m.id), "docking again for the rest of the checks");
   // the dots explain themselves on hover: each says its purpose
