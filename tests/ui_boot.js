@@ -5554,6 +5554,30 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   eql(__t.bxDrag.ids.length, 1, "\u2026and the drag is alone again");
   __t.bxUp({});
   ok(__t.bxDockModel(t.id, m.id), "docking again for the rest of the checks");
+  // the dots explain themselves on hover: each says its purpose
+  const hits = (dir, port) => __t.bxCard(t).querySelectorAll(".dport")
+        .filter(d => String(d.className).indexOf("hit") >= 0
+                  && String(d.className).indexOf(" " + dir) >= 0
+                  && d.getAttribute("data-port") === String(port))[0];
+  const tip = getEl("bxtip");
+  const line = (cls) => {
+    const h = tip.querySelectorAll("." + cls)[0];
+    return h ? String(h.textContent) : null;
+  };
+  ok(hits("in", 1), "the box has its in dots");
+  __t.bxHotMove({ target: hits("in", 1), clientX: 120, clientY: 80 });
+  eql([line("who"), line("what")],
+      ["Training box \u00b7 in dot 2 of 3", "test data"],
+      "the middle dot reads as the test split");
+  eql(line("note"), "scored after every eval \u2014 never trained on",
+      "\u2026with its purpose");
+  __t.bxHotMove({ target: hits("in", 2), clientX: 120, clientY: 80 });
+  eql(line("what"), "validation data", "\u2026the third as validation");
+  __t.bxHotMove({ target: hits("out", 0), clientX: 120, clientY: 80 });
+  eql([line("what"), line("shp")],
+      ["the train result", "[\u00d7 2] \u2014 loss and accuracy"],
+      "\u2026and the out dot as the result");
+  __t.bxHotSet(null);
   // the wires land in the fields: train / test / validation
   const ds = __t.bxAdd("input", 0, 400, {});
   __t.bxConfigure(ds.id, { input_mode: "dataset" });

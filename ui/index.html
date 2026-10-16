@@ -6794,6 +6794,29 @@ function bxTipNode(target, ev) {               // a box: its name, and what it c
       bxTipAdd(tip, "note", "\u2026 and " + (rows.length - 10) + " more");
     else if (!rows.length)
       bxTipAdd(tip, "note", "no input or output boxes inside");
+  } else if (n.kind === "training" && target.part === "port") {
+    const dir = target.dir === "out" ? "out" : "in";
+    const p = target.port || 0;
+    const split = [["train", "the rows it learns on \u2014 the batch comes from here"],
+                   ["test", "scored after every eval \u2014 never trained on"],
+                   ["validation", "a second hold-out \u2014 scored beside the "
+                                  + "test split"]];
+    if (dir === "out") {
+      bxTipAdd(tip, "who", "Training box \u00b7 the result");
+      bxTipAdd(tip, "what", "the train result");
+      bxTipAdd(tip, "shp", "[\u00d7 2] \u2014 loss and accuracy");
+      bxTipAdd(tip, "note", "the run leaves it here; the trainer updates it every "
+                            + "step");
+    } else {
+      const sp = split[p] || [null, null];
+      bxTipAdd(tip, "who", "Training box \u00b7 in dot " + (p + 1) + " of 3");
+      bxTipAdd(tip, "what", sp[0] ? sp[0] + " data" : "a dataset dot");
+      bxTipAdd(tip, "shp", "any dataset \u2014 an input reading as one, or a "
+                           + "dataset box");
+      bxTipAdd(tip, "note", sp[1] || "wire a dataset in");
+    }
+    if (bxBoxOff(n) || (dir === "out" && bxPortOff(n, "out", p)))
+      bxTipAdd(tip, "note", "deactivated \u2014 no data");
   } else {
     let box = n, prefix = null;                // the box itself, or one inner box
     if (target.part === "port") {
@@ -6865,6 +6888,14 @@ function bxHoverTarget(n, t) {                 // which card a hovered box asks 
   if (t && t.closest && t.closest(".bxlogfo"))
     return null;                               // a box's own window is editing space
   if (n.kind === "input" || n.kind === "output") return { id: n.id, part: "box" };
+  if (n.kind === "training") {                 // its dots name the three splits
+    const d0 = t && t.closest ? t.closest(".dport") : null;   // \u2014 and the
+    if (!d0) return null;                      // result on the way out
+    const p0 = d0.getAttribute ? d0.getAttribute("data-port") : null;
+    const c0 = String((d0.getAttribute && d0.getAttribute("class")) || d0.className || "");
+    return { id: n.id, part: "port", port: Math.max(0, Number(p0) || 0),
+             dir: c0.indexOf("out") >= 0 ? "out" : "in" };
+  }
   if (n.kind !== "custom") return null;        // only an i/o box has a card
   const dot = t && t.closest ? t.closest(".dport") : null;
   const p = dot && dot.getAttribute ? dot.getAttribute("data-port") : null;
