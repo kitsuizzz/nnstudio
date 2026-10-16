@@ -5172,7 +5172,9 @@ check("a model and its config: the architecture nested, the training named", () 
     const bin = __t.bxBoundary(m, "in")[0], bout = __t.bxBoundary(m, "out")[0];
     const l1 = __t.bxAdd("layer", 160, 40, { din: 4, dout: 4 });
     eql(__t.bxConnect(bin.id, l1.id, 0, 0), null, "the boundary feeds the layer");
-    eql(__t.bxConnect(l1.id, bout.id, 0, 0), null, "\u2026and the layer the out box");
+    eql(__t.bxConnect(l1.id, bout.id, 0, 0), null, "…and the layer the out box");
+    eql(__t.bxShape(bin), "[? × 4]",
+        "the boundary input reads its dot, batch axis and all: " + __t.bxShape(bin));
     __t.bxLeave();
     eql(__t.bxShape(m), "4 \u2192 4 \u00b7 f16",
       "the card follows the wired shapes: " + __t.bxShape(m));
