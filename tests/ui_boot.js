@@ -205,7 +205,7 @@ globalThis.__t = {
   bxtDropsClose, bxtPaletteToggle, bxtImportToggle, bxtabToggle,
   bxTabsRender, bxTabNew, bxTabSave, bxTabSelect, bxTabOpenSaved, bxProject,
   bxTabClose, bxTabAnyDirty, bxTabLoad, bxSessionNow, bxSessionPush, bxSessionMatch,
-  bxSessionRead,
+  bxSessionRead, bxSessionRestore, bxSeal, bxAccountOpenApply,
   bxGGUFImport, bxGGUFImportApply, bxtVramToggle,
   bxSecret, bxCryptoReady, bxAuthCred, bxNameTag, bxSeal, bxUnseal,
   bxTokenRemember, bxTokenRecall, bxAccountLoad, bxtAccountToggle, bxAccountBuild,
@@ -274,6 +274,10 @@ const paneText = (n) => {
 for (const n of __t.BX.nodes.slice()) __t.bxRemove(n.id);
 let failed = 0;
 const pending = [];                             // async checks: the summary waits for them
+const serial = [];                              // async checks that play with the whole
+function checkAsync(name, fn) {                 // canvas: these run one at a time, after
+  serial.push([name, fn]);                      // every concurrent check has finished
+}
 function check(name, fn) {
   if (process.env.DUMP_TEMPLATES) return;    // a dump run only boots the script
   const done = (e) => {
@@ -4753,6 +4757,71 @@ check("the session remembers the saved tabs, in the browser and at the server", 
   eql(__t.bxProject().id, keepId, "the canvas is left as it was found");
 });
 
+checkAsync("a session restore lands the saved canvases, with their content", async () => {
+  // the real loop, end to end: a session and two designs, sealed for real,
+  // served by a stub — the restore takes its own fetcher, so no other check's
+  // fetch stub can land mid-flight (they run concurrently)
+  const token = "session-token-123";
+  const designA = { type: "canvas", version: 1,
+                    nodes: [{ id: "a1", kind: "input", name: "alpha in", x: 0, y: 0, dout: 4 }],
+                    edges: [] };
+  const designB = { type: "canvas", version: 1,
+                    nodes: [{ id: "b1", kind: "input", name: "beta in", x: 0, y: 0, dout: 6 }],
+                    edges: [] };
+  const rows = [
+    { name_tag: "aa" + "0".repeat(62), name_ct: await __t.bxSeal(token, "alpha"), updated: 2 },
+    { name_tag: "bb" + "0".repeat(62), name_ct: await __t.bxSeal(token, "beta"), updated: 1 },
+  ];
+  const blobs = { ["aa" + "0".repeat(62)]: await __t.bxSeal(token, designA),
+                  ["bb" + "0".repeat(62)]: await __t.bxSeal(token, designB) };
+  const session = await __t.bxSeal(token, { tabs: ["beta", "alpha"], active: "alpha" });
+  const stub = (url) => {
+    const u = String(url);
+    const send = (obj) => Promise.resolve({ ok: true, json: () => Promise.resolve(obj) });
+    if (u.indexOf("/api/account/session") === 0) return send({ ok: true, session });
+    if (u.indexOf("/api/account/canvases") === 0) return send({ ok: true, canvases: rows });
+    if (u.indexOf("/api/account/canvas?tag=") === 0)
+      return send({ ok: true, blob: blobs[decodeURIComponent(u.split("tag=")[1])] });
+    return send({ ok: false, error: "no route " + u });
+  };
+  const keepAcct = { user: __t.BXACCT.user, token: __t.BXACCT.token, locked: __t.BXACCT.locked };
+  __t.BXACCT.user = { id: "u-session" };
+  __t.BXACCT.token = token;
+  __t.BXACCT.locked = false;
+  const keepId = __t.bxProject().id;
+  const boot = __t.bxProject();                // make it read as a reload's boot tab:
+  boot.name = "New Project 99";                // clean, unsaved, named like a blank
+  boot.saved = false;
+  boot.dirty = false;
+  __t.bxTabsRender();
+  const restored = await __t.bxSessionRestore(stub);
+  ok(restored === true, "the restore opens the session's tabs");
+  const names = (__t.BX.projects || []).map(p => p.name);
+  eql(names, ["beta", "alpha"], "the boot blank steps aside, the saved order holds: "
+      + names.join(","));
+  eql(__t.bxProject().name, "alpha", "the recorded active tab is the one on screen");
+  ok(__t.BX.nodes.some(n => n.name === "alpha in"),
+     "and its canvas holds its boxes: " + __t.BX.nodes.map(n => n.name).join(","));
+  const beta = (__t.BX.projects || []).find(p => p.name === "beta");
+  __t.bxTabSelect(beta.id);
+  ok(__t.BX.nodes.some(n => n.name === "beta in"),
+     "switching to the other tab brings its own content: "
+     + __t.BX.nodes.map(n => n.name).join(","));
+  const alpha = (__t.BX.projects || []).find(p => p.name === "alpha");
+  __t.bxTabSelect(alpha.id);
+  ok(__t.BX.nodes.some(n => n.name === "alpha in"),
+     "\u2026and back again, stashed and restored: " + __t.BX.nodes.map(n => n.name).join(","));
+  // tidy: the boot tab stepped aside (that is the feature) \u2014 land a fresh
+  // blank tab instead, the state a reload boots into
+  __t.BX.projects = [];
+  __t.BX.active = null;
+  __t.bxTabNew();
+  for (const n of __t.BX.nodes.slice()) __t.bxRemove(n.id);   // the summary reads 0
+  __t.BXACCT.user = keepAcct.user;
+  __t.BXACCT.token = keepAcct.token;
+  __t.BXACCT.locked = keepAcct.locked;
+});
+
 check("the view cannot be lost: a tight world around origin and design", () => {
   __t.bxImportJSON(JSON.stringify({ type: "canvas", version: 1, nodes: [], edges: [] }), {});
   __t.BX.view = { cx: 999999, cy: -999999, k: 1 };
@@ -5653,7 +5722,17 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
   eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
 });
 
-Promise.all(pending).then(() => {            // async checks report with the rest
+Promise.all(pending).then(async () => {      // async checks report with the rest
+  for (const [name, fn] of serial) {           // …then the serial ones, one at a time
+    try {
+      await fn();
+      console.log("  ok   " + name);
+    } catch (e) {
+      failed++;
+      console.log("  FAIL " + name + " — " + e.message);
+      if (process.env.STACK) console.log(e.stack);
+    }
+  }
   if (process.env.DUMP_TEMPLATES) {          // the vision docs ride out whole,
     const out = {};                          // for the engine tests to run them
     for (const tpl of ["vit", "vae", "unet", "dit"]) {

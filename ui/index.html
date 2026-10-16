@@ -8132,18 +8132,19 @@ function bxSessionMatch(sn, rows, names) {     // the session's tabs, in their s
   }
   return out;
 }
-async function bxSessionRestore() {            // at sign-in: open what was open
-  if (typeof fetch !== "function" || !BXACCT.user || !BXACCT.token || BXACCT.locked)
+async function bxSessionRestore(fetcher) {     // at sign-in: open what was open
+  fetcher = fetcher || (typeof fetch === "function" ? fetch : null);
+  if (!fetcher || !BXACCT.user || !BXACCT.token || BXACCT.locked)
     return false;
   let sn = null;
   try {
-    const d = await fetch("/api/account/session").then(r => r.json());
+    const d = await fetcher("/api/account/session").then(r => r.json());
     if (d && d.ok && d.session) sn = await bxUnseal(BXACCT.token, d.session);
   } catch (e) {}
   if (!sn) sn = bxSessionRead();               // the browser's own memory
   let rows = [];
   try {
-    const d = await fetch("/api/account/canvases").then(r => r.json());
+    const d = await fetcher("/api/account/canvases").then(r => r.json());
     if (d && d.ok) rows = d.canvases || [];
   } catch (e) { return false; }
   if (!sn || !rows.length) return false;
@@ -8155,8 +8156,8 @@ async function bxSessionRestore() {            // at sign-in: open what was open
   let opened = 0, activeId = null;
   for (const w of want) {
     try {
-      const d = await fetch("/api/account/canvas?tag="
-                            + encodeURIComponent(w.row.name_tag)).then(r => r.json());
+      const d = await fetcher("/api/account/canvas?tag="
+                              + encodeURIComponent(w.row.name_tag)).then(r => r.json());
       if (!d || !d.ok || !d.blob) continue;
       const design = await bxUnseal(BXACCT.token, d.blob);
       const pr = bxTabOpenSaved(w.name, design);
@@ -8164,15 +8165,23 @@ async function bxSessionRestore() {            // at sign-in: open what was open
     } catch (e) {}
   }
   if (opened) {
+    bxTabStash();                              // the open screen belongs to its tab
     const blank = (BX.projects || []).find(x => !x.saved && !x.dirty &&
                   String(x.name || "").indexOf("New Project ") === 0);
     if (blank && BX.projects.length > 1) {     // the boot blank steps aside
       BX.projects = BX.projects.filter(x => x !== blank);
       if (BX.active === blank.id) BX.active = null;
     }
-    BX.active = activeId || BX.active ||
-                ((BX.projects[BX.projects.length - 1] || {}).id || null);
-    if (bxProject()) bxTabLoad(bxProject());   // the saved screen is what shows
+    const want = (activeId && bxProject(activeId)) ? activeId
+               : (bxProject() ? BX.active
+                              : ((BX.projects[BX.projects.length - 1] || {}).id || null));
+    if (want && want !== BX.active) {
+      bxTabStash();                            // \u2026and the one being left, too:
+      BX.active = want;                        // a tab's doc lives in its own stash
+      bxTabLoad(bxProject(want));
+    } else {
+      bxTabsRender();                          // the screen is already the right one
+    }
   }
   BXSESSION.hold = false;
   return opened > 0;
