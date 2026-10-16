@@ -1499,6 +1499,11 @@ function bxShape(n) {
     return i + " in · " + o + " out";
   }
   if (n.kind === "input") {
+    if (bxIsDataset(n)) {                        // an input reading as a sheet
+      if (n.file) return "rows · file";
+      const t = bxTableRead(n);
+      return t.rows.length + " × " + t.cols.length;
+    }
     if (n.input_mode === "text") return "text";
     if (n.input_mode === "image") return "image";
     const m = bxMatrixShape(n.values);
@@ -1522,7 +1527,7 @@ function bxShape(n) {
   }
   if (n.kind === "sample")
     return n.temperature != null ? "t " + n.temperature : "greedy";
-  if (n.kind === "dataset") {
+  if (bxIsDataset(n)) {                         // its sheet, box or input alike
     if (n.file) return "rows \u00b7 file";
     const t = bxTableRead(n);
     return t.rows.length + " \u00d7 " + t.cols.length;
@@ -1690,12 +1695,16 @@ function bxFindBox(id) {                     // one box anywhere, by id
   if (id) bxEveryBox(x => { if (x.id === id) out = x; });
   return out;
 }
+function bxIsDataset(n) {                      // a dataset: the dataset box, or
+  return !!n && (n.kind === "dataset" ||      // an input whose datatype reads as
+                 (n.kind === "input" && n.input_mode === "dataset"));  // one
+}
 function bxSelectSource(n) {                  // a select col box's dataset: wired,
   if (!n) return null;                        // else the one it binds
   for (const e of (BX.edges || [])) {
     if (e.to !== n.id) continue;
     const s = bxNode(e.from);
-    if (s && s.kind === "dataset") return s;
+    if (bxIsDataset(s)) return s;
   }
   return n.dataset ? bxFindBox(n.dataset) : null;
 }
@@ -1710,7 +1719,7 @@ function bxColIndex(tok, names, width) {      // a name wins; a letter is a posi
 }
 function bxMatrixTell(n) {                    // a matrix box: what it hands out
   if (!n) return null;
-  const ds = n.kind === "dataset" ? n : bxSelectSource(n);
+  const ds = bxIsDataset(n) ? n : bxSelectSource(n);
   if (!ds)
     return { node: null, ds: null, cols: null, rows: null,
              bad: n.kind === "select" ? "no dataset — wire one in, or bind one"
@@ -1795,6 +1804,8 @@ function bxTrainWired() {                     // the design's training wiring:
     if (p === 0 && a.kind === "config") { if (!out.cfg) { out.cfg = a; out.input = b; } }
     else if (out.input && b.id === out.input.id && p === 1) out.data = a;
   }
+  if (out.input && !out.data && bxIsDataset(out.input))
+    out.data = out.input;                      // the input is its own data sheet
   return out;
 }
 function bxWrapModel(ids) {                   // the weights, into one model box
@@ -1925,14 +1936,17 @@ function bxInputLink(n) {                     // one input's own training dots
     if (p === 0 && s && s.kind === "config") out.cfg = s;
     else if (p === 1) out.data = s;
   }
-  out.on = trainOn || !!out.cfg;
+  if (bxIsDataset(n)) out.data = out.data || n;   // an input that is a sheet is
+  out.on = trainOn || !!out.cfg;                  // its own data
   return out;
 }
 function bxPortDefs(n, dir, seen) {
   if (!n) return [];
   if (n.kind === "agent" || n.kind === "train" || n.kind === "reward")
     return [];                                  // a display or a scorer: no wires
-  if (n.kind === "dataset")  // its rows ride out to a loss box's second dot
+  if (bxIsDataset(n) && n.kind === "dataset")
+    // the box's rows ride out to a loss box's second dot — an input that
+    // reads as a dataset keeps its own hub dots (below) and sends rows instead
     return dir === "out" ? [{ size: null, node: n, field: "dout", act: true }] : [];
   if (n.kind === "loss")     // the model's scores, then the dataset's labels
     return dir === "in"
@@ -1944,7 +1958,9 @@ function bxPortDefs(n, dir, seen) {
   seen.add(n.id);
   if (n.kind === "input") {                  // a source — and, training on, its
     if (dir === "out")                       // hub: the train config, then data
-      return [{ size: n.dout, node: n, field: "dout" }];
+      return [bxIsDataset(n)
+              ? { size: null, node: n, field: "dout", act: true }   // its own rows
+              : { size: n.dout, node: n, field: "dout" }];
     const link = bxInputLink(n);
     if (!link.on) return [];
     const ports = [{ size: null, node: n, field: "din", act: true, opt: true }];
@@ -2496,7 +2512,7 @@ function bxAdd(kind, x, y, v) {
   }
   if (kind === "input") {                     // the input's own definition, set at add time
     const mode = String(v.input_mode || "");
-    if (mode === "text" || mode === "image") n.input_mode = mode;
+    if (mode === "text" || mode === "image" || mode === "dataset") n.input_mode = mode;
     else if (mode) n.input_mode = "matrix";  // matrix — and the old python/random
     if (v.text != null && String(v.text)) n.text = bxClip(String(v.text), 4096);
     if (v.values != null && String(v.values).trim()) n.values = bxClip(String(v.values), 4096);
@@ -3418,7 +3434,7 @@ function bxConfigure(id, vals) {
   if (n.kind === "input") {                  // how this input's value is made
     if (vals.input_mode !== undefined) {
       const m = String(vals.input_mode || "");
-      n.input_mode = (m === "text" || m === "image") ? m : "matrix";
+      n.input_mode = ["text", "image", "dataset"].indexOf(m) >= 0 ? m : "matrix";
     }
     if (vals.text !== undefined) {
       const t = String(vals.text == null ? "" : vals.text);
@@ -3505,7 +3521,7 @@ function bxConfigure(id, vals) {
     if (vals.dataset !== undefined) {
       const id = String(vals.dataset == null ? "" : vals.dataset).trim();
       let hit = null;
-      bxEveryBox(x => { if (x.id === id && x.kind === "dataset") hit = x; });
+      bxEveryBox(x => { if (x.id === id && bxIsDataset(x)) hit = x; });
       n.dataset = hit ? id : null;             // a stale id is dropped, not kept
     }
     if (vals.cols !== undefined) {
@@ -4324,7 +4340,7 @@ function bxTrainTintInfo() {                      // who carries the signal, at 
   let wired = null;
   for (const e of (BX.edges || [])) {             // a dataset→loss wire beats the binding
     const s = bxNode(e.from), d = bxNode(e.to);
-    if (s && d && s.kind === "dataset" && d.kind === "loss") { wired = [s, d]; break; }
+    if (s && d && bxIsDataset(s) && d.kind === "loss") { wired = [s, d]; break; }
   }
   if (wired) {
     mark(wired[0].id, "tsrc");
@@ -4359,7 +4375,7 @@ function bxTrainSummary(h) {                       // what the engine will do, i
   let vector = false;
   const lossBox = (function () {
     for (const p of bxEdgePairs())
-      if (p[0].kind === "dataset" && p[1].kind === "loss") return p;
+      if (bxIsDataset(p[0]) && p[1].kind === "loss") return p;
     return null;
   })();
   if (wired.cfg || isModel) {
@@ -4779,6 +4795,7 @@ function bxMatrixShape(text) {                 // its shape, as the card reads i
   return m.r > 1 ? m.r + "\u00d7" + m.c : String(m.count);
 }
 function bxInputMode(n) {                      // the input's data type — matrix is the
+  if (n && n.input_mode === "dataset") return "dataset";   // its own sheet
   if (n && n.input_mode === "text") return "text";    // plain one; the old python/
   if (n && n.input_mode === "image") return "image";  // random/values read as it
   return "matrix";
@@ -4790,7 +4807,8 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
   const mrow = mk("label", { class: "rf" });
   mrow.appendChild(mk("span", { text: "data" }));
   const sel = mk("select", { class: "bxsel" });
-  for (const [k, t] of [["matrix", "matrix"], ["text", "text"], ["image", "image"]])
+  for (const [k, t] of [["matrix", "matrix"], ["text", "text"], ["image", "image"],
+                        ["dataset", "dataset"]])
     sel.appendChild(mk("option", { value: k, text: t }));
   sel.value = bxInputMode(n);
   mrow.appendChild(sel);
@@ -4819,6 +4837,10 @@ function bxInputFill(pane, n) {                // the input box's own editor, in
     return inp;
   };
   const mode = bxInputMode(n);
+  if (mode === "dataset") {                    // the input reads as a sheet: the
+    bxDatasetFill(body, n);                    // same table the dataset box edits
+    return;                                    // \u2014 cells, paste, files and all
+  }
   if (mode === "matrix") {
     // the matrix itself, typed right here: one row per line, numbers split by
     // spaces or commas. The box carries it and the run sends it as data
@@ -5675,6 +5697,10 @@ function bxJSONNode(n) {
     if (n.values) o.values = n.values;
     if (n.text) o.text = n.text;
     if (n.image) o.image = n.image;
+    if (imode === "dataset") {                 // the sheet rides the input too
+      if (n.file) o.file = n.file;
+      if (n.format) o.format = n.format;
+    }
     for (const k of ["image_size", "patch_size", "image_mean", "image_std"])
       if (n[k] != null) o[k] = n[k];
     if (n.box) o.box = { w: Math.round(n.box.w || 420), h: Math.round(n.box.h || 280) };
@@ -6031,8 +6057,10 @@ function bxJSONNodeFrom(o) {
   }
   else if (o.kind === "input") {
     n.dout = bxSize(o.dout);
-    if (o.input_mode === "text" || o.input_mode === "image") n.input_mode = o.input_mode;
+    if (["text", "image", "dataset"].indexOf(o.input_mode) >= 0) n.input_mode = o.input_mode;
     else if (o.input_mode != null) n.input_mode = "matrix";   // legacy python/random/values
+    if (typeof o.file === "string" && o.file) n.file = bxClip(o.file, 300);
+    if (["csv", "tsv", "jsonl"].indexOf(o.format) >= 0) n.format = o.format;
     if (typeof o.values === "string" && o.values.trim()) n.values = bxClip(o.values, 4096);
     if (typeof o.text === "string") n.text = bxClip(o.text, 4096);
     if (typeof o.image === "string" && o.image) n.image = bxClip(o.image, 300);
@@ -9932,9 +9960,11 @@ function bxConfigFill(pane, n) {               // the train config: every settin
   // of the run \u2014 paradigm, cadence, knobs; the data rides the input's own dots
   pane.innerHTML = "";
   bxBehaveInside(pane);
-  const boxesOf = (kind) => {
-    const out = [];
-    bxEveryBox(x => { if (x.kind === kind) out.push(x); });
+  const boxesOf = (kind) => {                  // "dataset" means either shape:
+    const out = [];                            // the box, or an input reading as
+    bxEveryBox(x => {                          // one
+      if (kind === "dataset" ? bxIsDataset(x) : x.kind === kind) out.push(x);
+    });
     return out;
   };
   const pick = (key, value, nodes, title) => {
@@ -10769,9 +10799,10 @@ function bxForm(kind, ev, node, mode) {
     const lab = mk("label", { text: "input" });
     const sel = mk("select", { class: "bxsel" });
     for (const [k, t] of [["matrix", "matrix \u2014 type its numbers"],
-                          ["text", "text \u2014 a string"]])
+                          ["text", "text \u2014 a string"],
+                          ["dataset", "dataset \u2014 a sheet of rows"]])
       sel.appendChild(mk("option", { value: k, text: t }));
-    sel.value = value === "text" ? "text" : "matrix";
+    sel.value = value === "text" ? "text" : value === "dataset" ? "dataset" : "matrix";
     lab.appendChild(sel);
     wrap.appendChild(lab);
     return sel;
@@ -11208,7 +11239,7 @@ const BX_PALETTE = () => [
   ["Vision", [["vit", "vision transformer box"], ["vae", "vae box"],
               ["unet", "unet box"], ["dit", "dit box"]]],
   ["Text", [["tokenize", "tokenizer box"], ["detokenize", "de-tokenizer box"]]],
-  ["Data", [["dataset", "dataset box"], ["select", "select col box"]]],
+  ["Data", [["select", "select col box"]]],   // a dataset is an input's datatype
   ["Training", [["config", "train config box"], ["loss", "loss box"],
                 ["reward", "reward box"]]],
   ["Analysis", [["heatmap", "heatmap box"]]],

@@ -2050,6 +2050,50 @@ check("a vision transformer runs: patches in, class scores out, all differentiab
       a_vision_transformer_runs)
 
 
+def an_input_carries_the_dataset():
+    # the palette's dataset box is gone: an input whose datatype is dataset
+    # feeds the very same wiring — the columns resolve, the batch batches, and
+    # the loss falls like the box's always did
+    data = "\n".join(["x0,x1,x2,y0,y1"] +
+                     ["%d,%d,%d,%d,%d" % (a, b, c, 2 * a - b, c)
+                      for a, b, c in [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1),
+                                      (1, 1, 0), (1, 0, 1), (0, 1, 1), (1, 1, 1)]])
+    c = canvas([
+        n("custom", "model", name="model", inner={
+            "nodes": [n("input", "min", dout=3),
+                      n("layer", "h", din=3, dout=8),
+                      n("layer", "o", din=8, dout=2),
+                      n("output", "mout", din=2)],
+            "edges": [edge("min", "h"), edge("h", "o"), edge("o", "mout")]}),
+        n("input", "rows", input_mode="dataset", format="csv", text=data),
+        n("config", "cfg", paradigm="supervised", model="model", batch=8,
+          lr=0.02, x_col="x0 x1 x2", y_col="y0 y1", save_every=0, eval_every=0),
+    ], [edge("rows", "cfg", 0, 0)])
+    src2 = T.matrix_source(c, c["nodes"][1])
+    assert src2["node"] and src2["node"]["id"] == "rows", src2
+    hub = T.train_hub(c)
+    src3 = T.train_sources(c, hub)
+    assert src3["x"]["node"]["id"] == "rows" == src3["y"]["node"]["id"], src3
+    assert src3["x"]["cols"] == [0, 1, 2] and src3["y"]["cols"] == [3, 4], src3
+    res = T.run(c, {}, mode="training")
+    assert (res.get("probe") or {}).get("loss") is not None, res.get("probe")
+    import shutil
+    d = tempfile.mkdtemp()
+    try:
+        tr = T.DesignTrainer(c, {"batch": 8, "lr": 0.02, "save_every": 10 ** 9,
+                                 "eval_every": 0, "name": "m", "checkpoints": d})
+        events = []
+        tr.run(steps=150, on_event=events.append)
+        losses = [e["loss"] for e in events if e.get("type") == "loss"]
+        assert len(losses) == 150 and losses[-1] < losses[0], (losses[0], losses[-1])
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+check("an input carries the dataset: the same wiring, the loss still falls",
+      an_input_carries_the_dataset)
+
+
 def a_model_trains_through_its_node():
     # the new shape: a nested model node holds the architecture; the train
     # config names it, the data wires into the config, and the batch enters the

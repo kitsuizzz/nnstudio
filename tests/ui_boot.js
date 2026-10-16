@@ -231,6 +231,7 @@ globalThis.__t = {
   bxAgentFill, bxAgentSync, bxAgentResize, bxAgentGrip, bxNodeW, bxNodeH, bxDblClick,
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
   bxSelectFill, bxConfigFill, bxTrainWired, bxInputLink, bxMatrixTell, bxTrainSummary,
+  bxInputMode, bxSelectSource, bxAttached, bxIsDataset,
   bxTrainAddConfig, bxTrainWireConfig, bxBoundary, bxWeightsBox, bxWrapModel,
   bxHasPane, bxParamsOf,
   bxRunFeeds, bxInputFill, bxInputExpand, bxOutputFill, bxOutputExpand, bxPaneFill,
@@ -1210,11 +1211,11 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output", "tokenize", "detokenize"],
     "Text holds the tokenizer pair");
-  // Data holds the sheet and the select col box
+  // Data holds the select col box — a dataset is an input's datatype now
   menu.children.find(c => c.textContent === "Data").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
-    ["input", "output", "dataset", "select"],
-    "Data holds the sheet and the select col box");
+    ["input", "output", "select"],
+    "Data holds the select col box — the dataset is an input's datatype");
   // Training holds the config and the two signals, real cards now
   menu.children.find(c => c.textContent === "Training").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
@@ -1300,10 +1301,12 @@ check("no hf or custom card in the Palette \u2014 Import covers models, model co
   }
   ok(items.indexOf("huggingface model box") < 0 && items.indexOf("nested box") < 0,
      "\u2026the canvas menu neither \u2014 no hf, no plain nested: " + items.join(", "));
-  ok(items.indexOf("model box") >= 0 && items.indexOf("dataset box") >= 0
+  ok(items.indexOf("model box") >= 0 && items.indexOf("select col box") >= 0
      && items.indexOf("loss box") >= 0 && items.indexOf("reward box") >= 0
      && items.indexOf("heatmap box") >= 0,
-     "\u2026and it has the cards it used to miss");
+     "…and it has the cards it used to miss");
+  ok(items.indexOf("dataset box") < 0,
+     "…the dataset card itself is gone — it is an input datatype now");
   __t.bxMenuClose();
 });
 
@@ -1732,7 +1735,8 @@ check("the matrix input: numbers typed in the box, one row per line", () => {
   __t.bxForm("input", null, null, "add");      // adding one asks the same form
   const fsel = getEl("bxmenu").querySelectorAll(".bxsel")[0];
   eql(fsel.children.map(o => o.textContent),
-      ["matrix \u2014 type its numbers", "text \u2014 a string"],
+      ["matrix — type its numbers", "text — a string",
+       "dataset — a sheet of rows"],
       "adding an input asks its data type");
   __t.bxMenuClose();
   const i = __t.bxAdd("input", 0, 0, {});
@@ -2323,8 +2327,8 @@ check("the input box edits its data right on the canvas", () => {
   const fill = () => { const d = document.createElement("div"); __t.bxInputFill(d, i); return d; };
   const sel = fill().querySelectorAll(".bxsel")[0];
   ok(sel && sel.value === "matrix", "the box shows the datatype: " + (sel && sel.value));
-  eql(sel.children.map(o => o.textContent), ["matrix", "text", "image"],
-      "…matrix, text or a picture");
+  eql(sel.children.map(o => o.textContent), ["matrix", "text", "image", "dataset"],
+      "…matrix, text, a picture — or a dataset");
   const vals = fill().querySelectorAll(".bxmat")[0];
   eql(vals.value, "4 5 6", "…with the matrix it carries, editable in place");
   vals.value = "7 8";
@@ -5439,6 +5443,52 @@ check("a model and its config: the architecture nested, the training named", () 
   __t.bxRemove(m.id);
   __t.bxRemove(cfg.id);
   __t.bxRemove(ds.id);
+});
+
+check("an input reads as a dataset: the sheet, the wiring, the design's JSON", () => {
+  const keep = __t.BX.nodes.length;
+  const ds = __t.bxAdd("input", 0, 0, {});
+  __t.bxConfigure(ds.id, { input_mode: "dataset" });
+  eql(__t.bxInputMode(ds), "dataset", "the datatype sticks: " + __t.bxInputMode(ds));
+  ok(__t.bxIsDataset(ds), "\u2026and it counts as a dataset now");
+  eql(__t.bxShape(ds), "0 \u00d7 2", "an empty sheet to start \u2014 the letter columns "
+      + "waiting: " + __t.bxShape(ds));
+  __t.bxTableWrite(ds, { cols: ["x", "y"], rows: [["1", "2"], ["3", "4"]] });
+  eql(__t.bxShape(ds), "2 \u00d7 2", "\u2026and the card counts the rows");
+  const tell = __t.bxMatrixTell(ds);
+  eql([tell.rows, tell.cols.length], [2, 2], "the sheet hands out its matrix");
+  const sel = __t.bxAdd("select", 240, 0, { cols: "y" });
+  eql(__t.bxConnect(ds.id, sel.id, 0, 0), null, "a select sources it");
+  eql(__t.bxSelectSource(sel).id, ds.id, "\u2026and resolves it");
+  // the modern wiring: the config names the model, and the input feeds its
+  // data dot — the config detects the input as its own sheet
+  const cfg = __t.bxAdd("config", 480, 0, {});
+  const m = __t.bxAddTemplate("model", 720, 0, "net");
+  ok(__t.bxConfigure(cfg.id, { model: m.id }), "a config names the model");
+  eql(__t.bxConnect(ds.id, cfg.id, 0, 0), null, "the input feeds its data dot");
+  const w = __t.bxTrainWired();
+  ok(w.cfg && w.data && w.data.id === ds.id,
+     "\u2026and the config's data is the input itself: " + (w.data && w.data.name));
+  const at = __t.bxAttached();
+  eql(at.ds && at.ds.id, ds.id, "the config detects it");
+  eql(at.rows, 2, "\u2026rows and all: " + at.rows);
+  // the legacy hub path: an output's training switch opens the input's dots,
+  // and the input counts as its own data there too
+  const out = __t.bxAdd("output", 0, 240, { din: 2 });
+  out.train = true;
+  ok(__t.bxInputLink(ds).data && __t.bxInputLink(ds).data.id === ds.id,
+     "the hub sees the input as its own data");
+  // the sheet rides the input's own JSON
+  // the sheet rides the input's own JSON
+  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(ds));
+  eql([back.kind, back.input_mode], ["input", "dataset"], "the design carries the mode");
+  eql(__t.bxTableRead(back).rows.length, 2, "\u2026cells and all");
+  __t.bxRemove(out.id);
+  __t.bxRemove(cfg.id);
+  __t.bxRemove(sel.id);
+  __t.bxRemove(m.id);
+  __t.bxRemove(ds.id);
+  eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
 });
 
 check("the veterans' way plans too: a wired dataset→loss needs no config", () => {

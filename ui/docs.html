@@ -227,7 +227,8 @@
         (attention, state space, MoE), <b>Vision</b> (whole vision
         architectures: a vision transformer, a VAE, a UNet and a DiT — each
         card lands one model box), <b>Text</b> (the tokenizer pair),
-        <b>Data</b> (a sheet, and rows as a matrix), <b>Training</b> (the train
+        <b>Data</b> (the select col box — a dataset is an input's datatype
+        now), <b>Training</b> (the train
         config, and the two signals it can use: a loss box and a reward box),
         <b>Analysis</b> (the heatmap) and <b>AI</b> (the agent). The canvas's
         right-click menu is the same nine shelves.</li>
@@ -241,9 +242,12 @@
         tower. It never makes a canvas and never adds boundary boxes: the rest of
         your design stays exactly as it is, and cancelling leaves it untouched
         too.</li>
-    <li><b>Add training data</b> — the Palette's <b>Data</b> shelf holds the
-        <span class="pill">dataset</span> box (and the select col box that turns
-        rows into a matrix). Right-click it any time to <i>set the rows …</i>.</li>
+    <li><b>Add training data</b> — an <span class="pill">input</span> box
+        whose <b>data</b> dropdown reads <code>dataset</code>: its window is the
+        sheet itself, cells and all. The Palette's <b>Data</b> shelf keeps the
+        <b>select col box</b> that turns columns into a matrix. (Older designs'
+        <span class="pill">dataset</span> boxes still open and train — the
+        engine reads both.)</li>
     <li><b>Move / resize</b> — drag a box by its body; drag its corner to
         resize (the display boxes — input, output, dataset, agent — resize with
         their window). The <b>input</b> and <b>output</b> boxes open roomy by
@@ -436,8 +440,11 @@
       per thing you want to test, and its data rides with the design: the run
       hands it to the backend, and the output shows exactly what arrives. Its own
       window holds the editor — a <b>data</b> dropdown
-      (<code>matrix</code> / <code>text</code> / <code>image</code>) and the data
-      itself, typed right on the canvas: a <b>matrix</b> is one row per line,
+      (<code>matrix</code> / <code>text</code> / <code>image</code> /
+      <code>dataset</code>) and the data itself, typed right on the canvas:
+      <code>dataset</code> turns the box into a <b>sheet</b> (the same table the
+      dataset box edits — cells, paste, drag &amp; drop; its out-dot carries
+      the rows a config or a loss box reads); a <b>matrix</b> is one row per line,
       numbers split by spaces or commas — one line is a vector
       (<code>1 2 3</code>), two lines a 2-D matrix (whole numbers stay whole,
       ids and all). In <code>image</code> mode you pick a picture from your
@@ -505,6 +512,10 @@
       <div class="bwires">0 in · 1 out (labels → loss)</div>
     </div>
     <div class="bdet">
+      <p><i>Legacy:</i> the palette no longer hands this box out — an
+      <span class="pill">input</span> whose datatype is <code>dataset</code> is
+      the new way to place one, and the engine reads both. Designs that already
+      hold a dataset box keep opening, training and saving exactly as before.</p>
       <p>Your training data. Each row is a <code>prompt</code> and a
       <code>completion</code> — what the model reads, and what it should learn to
       write. A training run feeds its rows to the <span class="pill">loss</span> box;
@@ -979,10 +990,10 @@
         <span class="pill">layer</span> boxes → whatever produces scores over
         the vocabulary (a layer sized to the vocab), back out through its output
         box. Weights are only placeable in here.</li>
-    <li>Open <span class="pill grey">Palette ▾</span> → <b>Data</b>, drag out
-        the <span class="pill">dataset</span> box; give it rows
-        (<code>prompt&lt;TAB&gt;completion</code> or JSONL). A second dataset box
-        is the held-out test split, if you have one.</li>
+    <li>Drop an <span class="pill">input</span> box and set its <b>data</b>
+        dropdown to <code>dataset</code>; give it rows
+        (<code>prompt&lt;TAB&gt;completion</code> or JSONL). A second
+        dataset-input is the held-out test split, if you have one.</li>
     <li>Drop a <span class="pill">train config</span> box (palette →
         <b>training</b>) and <b>pick the model</b> in its window: that is where
         every knob lives — the paradigm, the learning rate, the optimizer,

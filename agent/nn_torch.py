@@ -1028,7 +1028,8 @@ class Box(nn.Module):
             # a float (embed keeps its ids)
             xs = tuple(x.float() if torch.is_tensor(x) and not torch.is_floating_point(x) else x
                        for x in xs)
-        if k in ("input", "output"):
+        if k in ("input", "output") and not (k == "input"
+                                             and self.node.get("input_mode") == "dataset"):
             out = xs[0] if xs else None
         elif k == "layer":
             if not xs:
@@ -1063,7 +1064,8 @@ class Box(nn.Module):
             scale = self.node.get("embed_scale")
             if scale is not None:
                 out = out * float(scale)
-        elif k == "dataset":
+        elif k == "dataset" or (k == "input"
+                                and self.node.get("input_mode") == "dataset"):
             # its labels ride to the loss box; a training run sets `batch`
             out = getattr(self, "batch", None)
             if out is None:
@@ -1759,7 +1761,7 @@ class Graph(nn.Module):
             for e in edges:
                 outs.setdefault(e.get("from"), []).append(e)
             for n in nodes:
-                if n.get("kind") != "dataset":
+                if not _is_ds(n):
                     continue
                 es = outs.get(n.get("id")) or []
                 if es and all(self._train_dot(by_id, e) for e in es):
@@ -1771,9 +1773,9 @@ class Graph(nn.Module):
         self.idle_inputs = set()
         if train:
             for n in nodes:
-                if n.get("kind") != "input":
-                    continue
-                mode = n.get("input_mode")
+                if n.get("kind") != "input" or n.get("input_mode") == "dataset":
+                    continue                           # a dataset input is no batch
+                mode = n.get("input_mode")             # taker: the trainer feeds it
                 if mode == "image":
                     empty = not n.get("image")
                 elif mode == "text":
@@ -2095,9 +2097,13 @@ class Graph(nn.Module):
                     if e.nid is None:
                         e.nid = nid
                     raise
+            elif box.kind == "input" and box.node.get("input_mode") == "dataset" \
+                    and nid not in feeds:
+                v = box()                          # its rows ride as a value, the
+                                                   # same as the dataset box's do
             elif box.kind == "input":
                 if nid not in feeds:
-                    self._fail(nid, "no value was given for this input \u2014 "
+                    self._fail(nid, "no value was given for this input — "
                                     "type its matrix on the box")
                 v = feeds[nid]
                 if torch.is_tensor(v):
@@ -2842,7 +2848,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
             # is not the test split
             ds = (next((n for n in all_nodes if n.get("id") == hub.get("dataset")), None)
                   if hub.get("dataset") else
-                  next((n for n in all_nodes if n.get("kind") == "dataset"
+                  next((n for n in all_nodes if _is_ds(n)
                         and n.get("id") != test_id), None))
             if ds is not None:
                 named = dataset_cols(ds)
@@ -2860,8 +2866,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
         x_col = x_src["cols"] if x_src else [0]
         y_col = y_src["cols"] if y_src else [1]
         if train_dn is None and (src["wired"]
-                                 or any(n.get("kind") == "dataset"
-                                        for n in all_nodes)):
+                                 or any(_is_ds(n) for n in all_nodes)):
             # a design with data somewhere must hand the run some — a bare
             # canvas just trains nothing (a forward that keeps its grads)
             raise CanvasError("run", "training has no rows to read \u2014 wire a "
@@ -2877,7 +2882,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
         if vector and paradigm == "rl":
             raise CanvasError("run", "rl draws samples token by token \u2014 a "
                                   "matrix X has no tokens to sample from")
-        if vector and any(src2.get("kind") == "dataset" and dst.get("kind") == "loss"
+        if vector and any(_is_ds(src2) and dst.get("kind") == "loss"
                           for src2, dst in _edge_pairs(canvas)):
             raise CanvasError("loss", "a vector target scores with mean squared "
                                   "error \u2014 a wired loss box computes cross "
@@ -2921,7 +2926,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                 # the reward box is the signal in rl; a wired loss box is a
                 # supervised leftover, and its labels would not fit the
                 # growing samples the probe draws
-                if any(src2.get("kind") == "dataset" and dst.get("kind") == "loss"
+                if any(_is_ds(src2) and dst.get("kind") == "loss"
                        for src2, dst in _edge_pairs(canvas)):
                     raise CanvasError("loss",
                                       "the reward is the signal in rl \u2014 a "
@@ -2941,7 +2946,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
             # every dataset box carries the train batch, so an idle test split
             # cannot fail wanting rows
             for dn in all_nodes:
-                if dn.get("kind") == "dataset":
+                if _is_ds(dn):
                     b = _dbox(dn)
                     if b is not None:
                         b.batch = train_labels.to(b.device or "cpu")
@@ -3331,6 +3336,14 @@ def dataset_classes(nodes, y_col, legacy=None):
     return out or None
 
 
+def _is_ds(n):
+    """A dataset source: the dataset box, or an input whose datatype reads as
+    one — the palette no longer hands out the box."""
+    n = n or {}
+    return (n.get("kind") == "dataset"
+            or (n.get("kind") == "input" and n.get("input_mode") == "dataset"))
+
+
 def dataset_cols(node):
     """A dataset's column names, lowercased: its CSV header row. The other
     formats carry none of their own — a letter stands for position."""
@@ -3689,13 +3702,13 @@ def matrix_source(canvas, node):
     if not node:
         return {"node": None, "cols": None, "spec": ""}
     kind = node.get("kind")
-    if kind == "dataset":
+    if _is_ds(node):
         return {"node": node, "cols": None, "spec": ""}
     if kind != "select":
         return {"node": None, "cols": None, "spec": ""}
     ds = None
     for src, dst, _fp, _tp in _edges_full(canvas):
-        if dst.get("id") == node.get("id") and src.get("kind") == "dataset":
+        if dst.get("id") == node.get("id") and _is_ds(src):
             ds = src
             break
     if ds is None and node.get("dataset"):
@@ -3826,7 +3839,7 @@ def train_hub(canvas):
         hub["target"] = host.get("id")          # an output trains on itself
         if not hub.get("dataset"):              # a dataset wired into its dot
             for src, dst in _edge_pairs(canvas):    # beats the picker
-                if dst.get("id") == host.get("id") and src.get("kind") == "dataset":
+                if dst.get("id") == host.get("id") and _is_ds(src):
                     hub["dataset"] = src.get("id")
                     break
         return hub
@@ -3841,7 +3854,7 @@ def training_setup(canvas, hub):
     dataset box that carries the labels, and whether the loss is implicit."""
     hub = hub or {}
     for src, dst in _edge_pairs(canvas):
-        if src.get("kind") == "dataset" and dst.get("kind") == "loss":
+        if _is_ds(src) and dst.get("kind") == "loss":
             return {"loss_id": dst.get("id"), "target_id": None,
                     "carrier_id": src.get("id"), "implicit": False}
     target = hub.get("target")
@@ -3856,7 +3869,7 @@ def _probe_loss(canvas, hub, vals, labels, graph=None):
     hub = hub or {}
     loss_id = None
     for src, dst in _edge_pairs(canvas):
-        if src.get("kind") == "dataset" and dst.get("kind") == "loss":
+        if _is_ds(src) and dst.get("kind") == "loss":
             loss_id = dst.get("id")
             break
     if loss_id is not None and vals.get(loss_id) is not None:
@@ -4001,7 +4014,7 @@ class DesignTrainer:
         # the signal and a wired loss box is a supervised leftover.
         setup = training_setup(canvas, cfg)
         if self.paradigm == "rl":
-            if any(src.get("kind") == "dataset" and dst.get("kind") == "loss"
+            if any(_is_ds(src) and dst.get("kind") == "loss"
                    for src, dst in _edge_pairs(canvas)):
                 raise CanvasError("loss",
                                   "the reward is the signal in rl — a wired "
@@ -4022,7 +4035,7 @@ class DesignTrainer:
                 raise CanvasError("", "the train node's reward box "
                                        "is not on the canvas")
             ds_id = ((src["x"]["node"]["id"] if src.get("x") else None)
-                     or cfg.get("dataset") or _find_kind(canvas, "dataset"))
+                     or cfg.get("dataset") or _find_ds(canvas))
         else:
             self.loss_id = cfg.get("loss") or setup["loss_id"]
             self.target_id = setup["target_id"]
@@ -4034,7 +4047,7 @@ class DesignTrainer:
             self.reward_node = None
             ds_id = ((src["x"]["node"]["id"] if src.get("x") else None)
                      or setup["carrier_id"] or cfg.get("dataset")
-                     or _find_kind(canvas, "dataset"))
+                     or _find_ds(canvas))
         if not self.input_id or not ds_id:
             raise CanvasError("", "training needs an input box the model reads, "
                                   "and a dataset with rows")
@@ -4109,7 +4122,8 @@ class DesignTrainer:
         # every dataset box on the graph runs in the forward and each one
         # wants a batch — the carrier wears the split that is being scored,
         # the idle ones ride along on the same labels
-        self.dataset_boxes = [self._box(nid) for nid in _find_kinds(canvas, "dataset")]
+        self.dataset_boxes = [self._box(n.get("id"))
+                              for n in _find_nodes(canvas) if _is_ds(n)]
         self.dataset_boxes = [b for b in self.dataset_boxes if b is not None]
         self._tpos = 0
         self.trainable = [(n, p) for n, p in self.graph.named_parameters()
@@ -4434,6 +4448,27 @@ def _node_by_id(canvas, nid):
                     return hit
         return None
     return walk((canvas or {}).get("nodes"))
+
+
+def _find_nodes(canvas):
+    """Every node, at every nesting level."""
+    found = []
+
+    def walk(nodes):
+        for n in nodes or []:
+            found.append(n)
+            if isinstance(n.get("inner"), dict):
+                walk((n.get("inner") or {}).get("nodes"))
+    walk((canvas or {}).get("nodes"))
+    return found
+
+
+def _find_ds(canvas):
+    """The first dataset source — the box, or an input reading as one."""
+    for n in _find_nodes(canvas):
+        if _is_ds(n):
+            return n.get("id")
+    return None
 
 
 def _find_kind(canvas, kind):
