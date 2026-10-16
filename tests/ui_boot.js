@@ -5113,6 +5113,20 @@ check("the dataset table: csv rows, columns, dtypes — and the cells edit", () 
   ok(String(thumbs[0].src).indexOf(id) >= 0, "…served by its id");
 });
 
+check("a window keeps its scroll through a rebuild: the poll never throws it away", () => {
+  const c = __t.bxAdd("config", 0, 0, {});
+  const g = __t.bxCard(c);
+  const body = g.querySelectorAll(".bxinputbody")[0];
+  ok(body, "the config's window has its scrolling body");
+  body.scrollTop = 40;                         // the reader scrolled a third down
+  body.dispatchEvent({ type: "scroll" });
+  eql(Number(c._scroll && c._scroll.top), 40, "\u2026and its place is remembered");
+  const g2 = __t.bxCard(c);                    // a poll, a run, any render: rebuild
+  eql(Number(g2.querySelectorAll(".bxinputbody")[0].scrollTop), 40,
+      "\u2026and picked right back up on the rebuild");
+  __t.bxRemove(c.id);
+});
+
 check("a vision tower and its image input survive the design round trip", () => {
   const tow = { id: "vision", kind: "vision", name: "Qwen vision", x: 40, y: 40,
                 file: "models/mmproj/mmproj-x.gguf", projector: "qwen3vl_merger",

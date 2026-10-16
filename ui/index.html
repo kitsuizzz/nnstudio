@@ -7234,6 +7234,19 @@ function bxCard(n) {
     const pane = mk("div", { class: "bxlogpane" });
     pane.setAttribute("data-agent", n.id);
     bxPaneFill(pane, n);
+    // every render rebuilds these windows — a running poll mid-scroll must
+    // not throw the reader's place away: one scroll memory per box, picked back
+    // up here (the agent's and the server config's logs keep their own,
+    // autoscrolling ones)
+    const sc = (n.kind === "agent" || n.kind === "train") ? null
+             : (pane.querySelector ? pane.querySelector(".bxinputbody") : null);
+    if (sc) {
+      const want = Number((n._scroll || {}).top) || 0;
+      if (want && sc.scrollTop !== undefined) sc.scrollTop = want;
+      sc.addEventListener("scroll", () => {
+        (n._scroll = n._scroll || {}).top = sc.scrollTop;
+      });
+    }
     fo.appendChild(pane);
     g.appendChild(fo);
   }
