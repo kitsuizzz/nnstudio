@@ -228,7 +228,8 @@
         architectures: a vision transformer, a VAE, a UNet and a DiT — each
         card lands one model box), <b>Text</b> (the tokenizer pair),
         <b>Data</b> (the select col box — a dataset is an input's datatype
-        now), <b>Training</b> (the train
+        now), <b>Training</b> (the training
+        box \u2014 a model in its slot, datasets on its dots \u2014 the train
         config, and the two signals it can use: a loss box and a reward box),
         <b>Analysis</b> (the heatmap) and <b>AI</b> (the agent). The canvas's
         right-click menu is the same nine shelves.</li>
@@ -853,6 +854,35 @@
       <p class="bfields"><b>Fields:</b> <code>temperature</code> (0 = always take
       the best token; higher = more adventurous), <code>sample_seed</code>
       (reproducible picks).</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
+      <div class="bname">training</div>
+      <div class="bwires">3 in (train, test, validation) \u00b7 1 out (the result)</div>
+    </div>
+    <div class="bdet">
+      <p>The whole run in one box: its top edge steps in to a square
+      <b>slot</b> \u2014 drop a <span class="pill">model</span> box into it and
+      that architecture is what trains. Drag the model onto the notch: it docks
+      (and snaps into the socket); the model picker in its window does the same
+      thing. Its three dots take <b>datasets</b>, in order: <b>train</b> (the rows
+      it learns on), <b>test</b> and <b>validation</b> (hold-outs, scored \u2014
+      never trained). Wire an input whose datatype is <code>dataset</code>, or a
+      legacy dataset box, into any of them.</p>
+      <p>Everything else lives in its window, exactly like a train config's: the
+      paradigm, the x/y columns, the class switch, optimizer, learning rate,
+      batch, steps, save/eval cadence \u2014 and the same experiment readout, with
+      the live step, loss, test and validation numbers, plus the start/pause
+      controls. A training task runs from here, and the result also rides out of
+      its dot: a little <code>[loss, acc]</code> the run leaves behind, so you
+      can wire it anywhere and watch it.</p>
+      <p class="bfields"><b>Fields:</b> <code>model</code> (the slotted box),
+      <code>dataset</code> / <code>test_dataset</code> / <code>val_dataset</code>
+      (set by the dots), plus <code>paradigm</code>, <code>x_col</code>,
+      <code>y_col</code>, <code>lr</code>, <code>batch</code> and the rest of the
+      training knobs.</p>
     </div>
   </div>
 

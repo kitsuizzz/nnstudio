@@ -1064,6 +1064,12 @@ class Box(nn.Module):
             scale = self.node.get("embed_scale")
             if scale is not None:
                 out = out * float(scale)
+        elif k == "training":
+            # the train result rides the out-dot: a small [loss, acc] the run
+            # (or the trainer's events) leaves here; zeros until one does
+            out = getattr(self, "result", None)
+            if out is None:
+                out = torch.zeros(2)
         elif k == "dataset" or (k == "input"
                                 and self.node.get("input_mode") == "dataset"):
             # its labels ride to the loss box; a training run sets `batch`
@@ -1940,7 +1946,7 @@ class Graph(nn.Module):
         training ports (its train config and its X/Y matrices)."""
         dst = by_id.get(e.get("to")) or {}
         port = int(e.get("toPort") or 0)
-        if dst.get("kind") in ("select", "config"):
+        if dst.get("kind") in ("select", "config", "training"):
             return True
         if dst.get("kind") == "input":
             return port >= 1               # port 0 is the train config itself
@@ -2843,13 +2849,16 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
         test_id = hub.get("test_dataset")
         test_dn = (next((n for n in all_nodes if n.get("id") == test_id), None)
                    if test_id else None)
+        val_id = hub.get("val_dataset")
+        val_dn = (next((n for n in all_nodes if n.get("id") == val_id), None)
+                  if val_id else None)
         if src["x"] is None and not src["wired"]:
             # older designs: the hub names the dataset, else the first one that
             # is not the test split
             ds = (next((n for n in all_nodes if n.get("id") == hub.get("dataset")), None)
                   if hub.get("dataset") else
                   next((n for n in all_nodes if _is_ds(n)
-                        and n.get("id") != test_id), None))
+                        and n.get("id") not in (test_id, val_id)), None))
             if ds is not None:
                 named = dataset_cols(ds)
                 xc = col_indexes(hub.get("x_col"), named) if hub.get("x_col") else [0]
@@ -3027,7 +3036,8 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
         # the probe: this batch's signal, and the test split's — one extra
         # forward each, so the console can show the setup before it's started
         try:
-            probe = {"loss": None, "acc": None, "tloss": None, "tacc": None}
+            probe = {"loss": None, "acc": None, "tloss": None, "tacc": None,
+                     "vloss": None, "vacc": None}
             if paradigm == "rl":
                 # the rl probe is the policy itself: one sample from the first
                 # row, scored by the reward box
@@ -3038,6 +3048,25 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                 if train_labels is not None:
                     probe["loss"], probe["acc"] = _probe_loss(canvas, hub, vals,
                                                                train_labels, graph)
+                if val_dn is not None:
+                    vbox = _dbox(val_dn)
+                    vrows = dataset_rows(val_dn) if vbox is not None else []
+                    if vrows:
+                        vsize = max(1, int((hub.get("batch") if src["wired"]
+                                            else None)
+                                           or val_dn.get("batch") or 4))
+                        vids, vlabels = dataset_batch(val_dn, vrows, 0, vsize,
+                                                      x_col, y_col, classes,
+                                                      x_only=x_only)
+                        vbox.batch = vlabels.to(vbox.device or "cpu")
+                        vfeeds = dict(feeds)
+                        fid = _feed_target(canvas, hub)
+                        if fid:
+                            vfeeds[fid] = vids
+                        with torch.no_grad():
+                            vvals = graph(feeds=vfeeds)
+                        probe["vloss"], probe["vacc"] = _probe_loss(
+                            canvas, hub, vvals, vlabels, graph)
                 if test_dn is not None:
                     tbox = _dbox(test_dn)
                     trows = dataset_rows(test_dn) if tbox is not None else []
@@ -3058,6 +3087,11 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
                         probe["tloss"], probe["tacc"] = _probe_loss(
                             canvas, hub, tvals, tlabels, graph)
             out["probe"] = probe
+            hub_id = hub.get("id")
+            if hub_id and hub_id in graph.boxes:
+                graph.boxes[hub_id].result = torch.tensor(
+                    [float(probe.get("loss") or 0.0),
+                     float(probe.get("acc") or 0.0)])
         except Exception:
             pass                       # a broken probe must not kill the run
     return out
@@ -3812,15 +3846,24 @@ def train_hub(canvas):
                     yield m
 
     nodes = list(_all((canvas or {}).get("nodes")))
-    cfg = next((n for n in nodes if n.get("kind") == "config" and n.get("model")),
+    cfg = next((n for n in nodes
+                if n.get("kind") in ("config", "training") and n.get("model")),
                None)
     if cfg is not None:
         hub = dict(cfg)
         hub["_config"] = True
         hub["_model"] = True
         hub["target"] = cfg.get("model")        # a model trains on its own out
+        if cfg.get("kind") == "training":       # its dots name the splits: train,
+            for src, dst, _fp, tp in _edges_full(canvas):   # test, validation
+                if dst.get("id") == cfg.get("id") and src is not None:
+                    key = {0: "dataset", 1: "test_dataset",
+                           2: "val_dataset"}.get(int(tp or 0))
+                    if key:
+                        hub[key] = src.get("id")
         return hub
-    cfg = next((n for n in nodes if n.get("kind") == "config"), None)
+    cfg = next((n for n in nodes
+                if n.get("kind") in ("config", "training")), None)
     if cfg is not None and any(src.get("id") == cfg.get("id")
                                and dst.get("kind") == "input"
                                for src, dst, _fp, _tp in _edges_full(canvas)):
@@ -3984,6 +4027,7 @@ class DesignTrainer:
         hub = train_hub(canvas) or {}
         cfg = dict({**hub, **dict(cfg or {})})
         self.canvas = canvas
+        self.hub_id = hub.get("id") or None   # the training box's own out-dot
         self.cfg = cfg
         self.device = device
         self.paradigm = str(cfg.get("paradigm") or "supervised")
@@ -4113,6 +4157,17 @@ class DesignTrainer:
                 raise CanvasError("", "the train node's test dataset "
                                        "is not on the canvas")
             self.test_rows = dataset_rows(self.test_box.node)
+        # the validation split: scored beside the test one, never trained
+        self.val_id = cfg.get("val_dataset") or None
+        self.val_box = None
+        self.val_rows = []
+        if (self.val_id and self.paradigm != "rl"
+                and self.val_id != self.test_id):
+            self.val_box = self._box(self.val_id)
+            if self.val_box is None:
+                raise CanvasError("", "the training box's validation "
+                                       "dataset is not on the canvas")
+            self.val_rows = dataset_rows(self.val_box.node)
         self.classes = (dataset_classes(
             [self.y_node or self.dataset_box.node,
              self.test_box.node if self.test_box else None],
@@ -4126,6 +4181,7 @@ class DesignTrainer:
                               for n in _find_nodes(canvas) if _is_ds(n)]
         self.dataset_boxes = [b for b in self.dataset_boxes if b is not None]
         self._tpos = 0
+        self._vpos = 0
         self.trainable = [(n, p) for n, p in self.graph.named_parameters()
                           if p.requires_grad]
         if not self.trainable:
@@ -4165,6 +4221,14 @@ class DesignTrainer:
         self._pos = (self._pos + self.batch_size) % max(len(self.rows), 1)
         return ids.to(self.device), labels.to(self.device)
 
+    def _val_batch(self):
+        ids, labels = dataset_batch(self.val_box.node, self.val_rows,
+                                    self._vpos, self.batch_size,
+                                    self.x_col, self.y_col, self.classes,
+                                    x_only=self.x_only)
+        self._vpos = (self._vpos + self.batch_size) % max(len(self.val_rows), 1)
+        return ids.to(self.device), labels.to(self.device)
+
     def _test_batch(self):
         ids, labels = dataset_batch(self.test_box.node, self.test_rows,
                                     self._tpos, self.batch_size,
@@ -4199,13 +4263,16 @@ class DesignTrainer:
             return _vector_loss(logits, labels), None    # a vector target: mse
         return _cross_entropy(logits, labels), None
 
-    def _eval(self):
-        """One pass over the test split: its loss (and accuracy) without
-        touching the weights. The carrier box wears the test labels for the
-        pass, so a wired loss box scores the split too."""
-        if self.test_box is None or not self.test_rows:
+    def _eval(self, which="test"):
+        """One pass over the test (or validation) split: its loss (and
+        accuracy) without touching the weights. The carrier box wears the
+        split's labels for the pass, so a wired loss box scores it too."""
+        box = self.test_box if which == "test" else self.val_box
+        rows = self.test_rows if which == "test" else self.val_rows
+        if box is None or not rows:
             return None, None
-        ids, labels = self._test_batch()
+        ids, labels = (self._test_batch() if which == "test"
+                       else self._val_batch())
         for b in self.dataset_boxes:
             b.batch = labels       # the whole graph wears the test labels for the pass
         with torch.no_grad():
@@ -4310,6 +4377,10 @@ class DesignTrainer:
               "reward": mean_r, "baseline": self.baseline,
               "sample": best[2][:120],
               "tloss": mean_r, "tacc": self.baseline}
+        hb = self._box(self.hub_id) if self.hub_id else None
+        if hb is not None and hb.kind == "training":
+            hb.result = torch.tensor([float(ev.get("loss") or 0.0),
+                                      float(ev.get("reward") or 0.0)])
         say(ev)
         if self.step % max(1, int(self.cfg.get("save_every") or 50)) == 0:
             say({"type": "checkpoint", "path": self.save()})
@@ -4358,6 +4429,17 @@ class DesignTrainer:
                     ev["tloss"] = float(tloss.detach())
                 if tacc is not None:
                     ev["tacc"] = tacc
+            if (self.val_box is not None and self.val_rows
+                    and self.step % max(1, int(self.cfg.get("eval_every") or 50)) == 0):
+                vloss, vacc = self._eval("val")
+                if vloss is not None:
+                    ev["vloss"] = float(vloss.detach())
+                if vacc is not None:
+                    ev["vacc"] = vacc
+            hb = self._box(self.hub_id) if self.hub_id else None
+            if hb is not None and hb.kind == "training":
+                hb.result = torch.tensor([float(ev.get("loss") or 0.0),
+                                          float(ev.get("acc") or 0.0)])
             say(ev)
             if self.step % max(1, int(self.cfg.get("save_every") or 50)) == 0:
                 say({"type": "checkpoint", "path": self.save()})

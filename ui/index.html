@@ -261,6 +261,9 @@
   .bxwrap svg foreignObject, .bxwrap .bxlogpane,
   .bxwrap .bxlogpane * { user-select: auto; -webkit-user-select: auto; }
   .drect { fill: rgba(30,30,30,.97); stroke: rgba(255,255,255,.16); }
+  .dslot { fill: none; stroke: rgba(255,255,255,.28); stroke-dasharray: 3 3;
+           pointer-events: none; }
+  .dnode.dropin .dslot { stroke: rgba(249,115,22,.9); }
   .dnode:hover .drect { stroke: rgba(249,115,22,.8); }
   /* a fill on the base class, so no kind of box can ever fall back to black */
   .dtype { font: 600 10px var(--mono); fill: var(--ink-dim); }
@@ -1185,6 +1188,8 @@ let bxRunErr = null;                           // the block a failed run pointed
 let bxAudit = null;                            // connection problems on the design
 function bxCommit(keep) {
   if (bxUndoLock) return;                      // a composite action is still running
+  bxHubFieldsSync();                           // the Training box's dots become its
+                                               // fields before anything is saved
   if (!keep) {                                 // `keep`: a re-placement only looks
     bxDataState = {};                          // different — the last run's data, its
     bxRunValues = {};                          // marks and its verdict still hold
@@ -1334,6 +1339,7 @@ function bxKindLabel(kind) {
        : kind === "conv" ? "Convolution"
        : kind === "select" ? "Select columns"
        : kind === "config" ? "Train config"
+       : kind === "training" ? "Training"
        : kind === "model" ? "Model"
        : kind === "heatmap" ? "Heatmap"
        : kind === "custom" ? "Nested"
@@ -1478,6 +1484,17 @@ function bxShape(n) {
     return p + (n.y_class ? " \u00b7 class" : "")
          + (n.lr != null ? " \u00b7 lr " + n.lr : "")
          + (n.batch != null ? " \u00b7 batch " + n.batch : "");
+  }
+  if (n.kind === "training") {                // the run it sets up: the live
+    const st = (BXRUN.trainState || {})[n.id] || {};    // state wins the line
+    if (st.step != null)
+      return "step " + st.step
+           + (st.loss != null ? " \u00b7 loss " + Number(st.loss).toFixed(3) : "")
+           + (st.tloss != null ? " \u00b7 test " + Number(st.tloss).toFixed(3)
+                               : "");
+    const m = n.model ? bxFindBox(n.model) : null;
+    return m ? (m.name || m.id) + " \u00b7 " + (n.paradigm || "supervised")
+             : "no model in the slot";
   }
   if (n.kind === "custom") {
     if (n.model) {                             // a model's line reads three things
@@ -1683,6 +1700,7 @@ function bxDefaultName(kind) {
              : kind === "conv" ? "convolution"
              : kind === "select" ? "matrix"
              : kind === "config" ? "train config"
+             : kind === "training" ? "training"
              : kind === "heatmap" ? "heatmap"
              : kind === "custom" ? "nested"
              : kind === "vision" ? "vision tower" : kind;
@@ -1789,7 +1807,8 @@ function bxTrainWired() {                     // the design's training wiring:
   const out = { cfg: null, model: null, input: null, data: null };
   const every = [];
   bxEveryBox(x => { every.push(x); });
-  const cfg = every.find(x => x.kind === "config" && x.model) || null;
+  const cfg = every.find(x => (x.kind === "config" || x.kind === "training")
+                              && x.model) || null;
   if (cfg) {
     out.cfg = cfg;
     out.model = bxFindBox(cfg.model);
@@ -1925,6 +1944,45 @@ function bxAnyModel() {                       // any nested model on the canvas
   bxEveryBox(x => { if (!hit && x.kind === "custom" && x.model) hit = x; });
   return hit;
 }
+function bxTrainNotch(w) {                     // the Training box's slot: a
+  const nw = 84, d = 30;                       // square gap at the top's middle
+  return { x: Math.round((Math.max(120, w) - nw) / 2), w: nw, d };
+}
+function bxDockModel(tid, mid) {               // a model into that gap: it becomes
+  const t = bxNode(tid), m = bxNode(mid);      // the architecture the box trains
+  if (!t || !m || t.kind !== "training" || m.kind !== "custom") return false;
+  const slot = bxTrainNotch(bxNodeW(t));
+  t.model = m.id;
+  m.x = Math.round(t.x + slot.x + (slot.w - bxNodeW(m)) / 2);
+  m.y = Math.round(t.y + 8 - bxNodeH(m));      // its foot sits in the socket
+  const at = BX.nodes.indexOf(m), tt = BX.nodes.indexOf(t);
+  if (at >= 0 && tt >= 0 && at < tt) {         // …and it draws over the card
+    BX.nodes.splice(at, 1);
+    BX.nodes.push(m);
+  }
+  bxSelectBoxes([m.id]);
+  bxSettleSizes();
+  bxRender();
+  bxCommit();
+  return true;
+}
+function bxHubFieldsSync() {                   // the Training box's dots are its
+  const keys = ["dataset", "test_dataset", "val_dataset"];   // three splits: the
+  const boxes = [];                                          // wires land in the
+  bxEveryBox(x => { if (x.kind === "training") boxes.push(x); });   // fields
+  if (!boxes.length) return;
+  for (const n of boxes) {
+    const got = {};
+    for (const e of (BX.edges || [])) {
+      if (e.to !== n.id) continue;
+      const p = e.toPort || 0;
+      if (p < 0 || p > 2) continue;
+      const from = bxNode(e.from);
+      if (from && bxIsDataset(from)) got[keys[p]] = from.id;
+    }
+    for (const k of keys) if (got[k]) n[k] = got[k];
+  }
+}
 function bxInputLink(n) {                     // one input's own training dots
   const out = { on: false, cfg: null, data: null };
   let trainOn = false;
@@ -1953,6 +2011,12 @@ function bxPortDefs(n, dir, seen) {
       ? [{ size: null, node: n, field: "din", act: true },
          { size: null, node: n, field: "din", act: true }]
       : [{ size: 1, node: n }];
+  if (n.kind === "training")                 // train / test / validation in,
+    return dir === "in"                      // the run's result out
+      ? [{ size: null, node: n, field: "din", act: true },
+         { size: null, node: n, field: "din", act: true },
+         { size: null, node: n, field: "din", act: true }]
+      : [{ size: null, node: n, field: "dout", act: true }];
   seen = seen || new Set();
   if (seen.has(n.id)) return [];                 // a loop of pass-throughs stops here
   seen.add(n.id);
@@ -2459,7 +2523,8 @@ function bxAdd(kind, x, y, v) {
     if (cs.length) n.cols = cs.join(" ");
     if (typeof v.dataset === "string" && v.dataset) n.dataset = v.dataset;
   }
-  if (kind === "config" && v.paradigm) n.paradigm = v.paradigm;
+  if ((kind === "config" || kind === "training") && v.paradigm)
+    n.paradigm = v.paradigm;
   if (kind === "op") {
     n.op = BX_OPS.indexOf(v.op) >= 0 ? v.op : BX_OPS[0];
     const d = bxDims(v.dims);
@@ -3300,7 +3365,8 @@ function bxDropTargetAt(ev) {
   const el = t && t.closest ? t.closest(".dnode") : null;
   const id = el && el.getAttribute ? el.getAttribute("data-id") : null;
   const n = id ? bxNode(id) : null;
-  if (!n || n.kind !== "custom" || n.id === bxDrag.id) return null;
+  if (!n || (n.kind !== "custom" && n.kind !== "training")
+      || n.id === bxDrag.id) return null;
   const dragging = bxNode(bxDrag.id);
   if (!dragging || dragging.kind === "train") return null;   // the Run box stays at the top
   if (bxHasInside(dragging, n.id)) return null;
@@ -3364,7 +3430,7 @@ function bxConfigure(id, vals) {
     n.train = !!vals.train;
     bxPruneWires();              // training off: the dataset dot goes, with its wire
   }
-  if (n.kind === "train" || n.kind === "config" ||
+  if (n.kind === "train" || n.kind === "config" || n.kind === "training" ||
       (n.kind === "output" && n.train)) {
     // the training: data, columns, signal, parameters. A train config box
     // carries them for the new wiring; the output's tab (and, before that, the
@@ -3381,7 +3447,8 @@ function bxConfigure(id, vals) {
       const id = String(vals[key] == null ? "" : vals[key]).trim();
       n[key] = id && onCanvas(id) ? id : null;
     };
-    bind("dataset"); bind("test_dataset"); bind("reward"); bind("model");
+    bind("dataset"); bind("test_dataset"); bind("val_dataset");
+    bind("reward"); bind("model");
     if (!isOut) bind("target");               // an output trains on itself
     const col = (key) => {
       if (vals[key] === undefined) return;
@@ -3396,7 +3463,8 @@ function bxConfigure(id, vals) {
       n.y_class = !!vals.y_class;             // y is a class label: the column
       if (!n.y_class) n.classes = null;       // itself names the classes
     }
-    if (vals.classes !== undefined && n.kind === "config") {
+    if (vals.classes !== undefined
+        && (n.kind === "config" || n.kind === "training")) {
       const cs = String(vals.classes == null ? "" : vals.classes)
         .split(/\s+/).filter(x => x).map(x => bxClip(x, 40));
       n.classes = cs.length ? cs : null;      // a legacy list: its index order
@@ -4263,6 +4331,7 @@ function bxTraining(n) {                          // a box that carries a traini
   // a train config (the model world), an output whose training tab is on, or
   // the train node the oldest designs carry
   return !!n && (n.kind === "train" || n.kind === "config" ||
+                 n.kind === "training" ||
                  (n.kind === "output" && n.train));
 }
 function bxTrainHost() {                          // where the training is set up:
@@ -4365,8 +4434,9 @@ function bxTrainSummary(h) {                       // what the engine will do, i
   // Older designs keep their stored fields (and their own note to move on).
   const lines = [], missing = [];
   const wired = bxTrainWired();
-  const isModel = h.kind === "config" && !!h.model;
-  const c = h.kind === "config" ? h : (wired.cfg || h);   // where the settings live
+  const isModel = (h.kind === "config" || h.kind === "training") && !!h.model;
+  const c = (h.kind === "config" || h.kind === "training") ? h
+                                                           : (wired.cfg || h);
   const rl = c.paradigm === "rl";
   const unsup = c.paradigm === "unsupervised";
   const targetId = isModel ? h.model
@@ -4386,7 +4456,8 @@ function bxTrainSummary(h) {                       // what the engine will do, i
     const at = bxAttached();
     if (!wired.data) {
       missing.push("wire the dataset (or a select col box) into the "
-                   + (isModel ? "config's" : "input's (the second one)") + " "
+                   + (h.kind === "training" ? "training box's"
+                      : isModel ? "config's" : "input's (the second one)") + " "
                    + "data dot");
     } else if (at.bad || !at.ds) {
       missing.push("the data matrix: " + (at.bad || "not a dataset box"));
@@ -5650,10 +5721,11 @@ const BX_JSON_VERSION = 1;
 const BX_KINDS = ["input", "embed", "layer", "act", "op", "norm", "script",
                   "tokenize", "detokenize", "sample", "hf", "agent", "custom", "output",
                   "dataset", "loss", "reward", "train", "vision", "heatmap",
-                  "select", "config", "conv"];
+                  "select", "config", "training", "conv"];
 function bxTrainDoc(o, n) {                    // the training a host carries, out
   if (n.task_id) o.task_id = n.task_id;
-  for (const k of ["dataset", "test_dataset", "target", "reward"])
+  if (typeof n.model === "string" && n.model) o.model = n.model;   // the slot's
+  for (const k of ["dataset", "test_dataset", "val_dataset", "target", "reward"])
     if (n[k]) o[k] = n[k];
   if (n.x_col) o.x_col = n.x_col;
   if (n.y_col) o.y_col = n.y_col;
@@ -5666,7 +5738,8 @@ function bxTrainDoc(o, n) {                    // the training a host carries, o
     if (n[k] != null) o[k] = n[k];
 }
 function bxTrainNode(o, n) {                   // …and back, validated
-  for (const k of ["dataset", "test_dataset", "target", "reward"])
+  if (typeof o.model === "string" && o.model) n.model = o.model;   // its model
+  for (const k of ["dataset", "test_dataset", "val_dataset", "target", "reward"])
     if (typeof o[k] === "string" && o[k]) n[k] = o[k];
   for (const k of ["x_col", "y_col"])
     if (typeof o[k] === "string" && o[k]) n[k] = o[k].trim().toUpperCase();
@@ -5786,9 +5859,10 @@ function bxJSONNode(n) {
     if (n.panel) o.panel = n.panel;      // {lines, autoscroll, debug, expand}
     if (n.collapsed) o.collapsed = true;
   }
-  else if (n.kind === "train" || n.kind === "config") {
+  else if (n.kind === "train" || n.kind === "config" || n.kind === "training") {
     bxTrainDoc(o, n);                    // a hub carries the same fields, old or new
-    const d = n.kind === "config" ? { w: 360, h: 240 } : { w: 480, h: 320 };
+    const d = n.kind === "config" ? { w: 360, h: 240 }
+            : n.kind === "training" ? { w: 340, h: 260 } : { w: 480, h: 320 };
     if (n.box) o.box = { w: Math.round(n.box.w || d.w), h: Math.round(n.box.h || d.h) };
     if (n.kind === "train") {
       if (n.panel) o.panel = n.panel;    // {expand} — the display's size
@@ -6207,9 +6281,10 @@ function bxJSONNodeFrom(o) {
     }
     if (o.collapsed) n.collapsed = true;
   }
-  else if (o.kind === "train" || o.kind === "config") {
+  else if (o.kind === "train" || o.kind === "config" || o.kind === "training") {
     bxTrainNode(o, n);
-    const dw = o.kind === "config" ? 360 : 480, dh = o.kind === "config" ? 240 : 320;
+    const dw = o.kind === "config" ? 360 : o.kind === "training" ? 340 : 480;
+    const dh = o.kind === "config" ? 240 : o.kind === "training" ? 260 : 320;
     if (o.box && typeof o.box === "object")
       n.box = { w: bxSize(o.box.w, dw), h: bxSize(o.box.h, dh) };
     if (o.kind === "train" && o.panel && typeof o.panel === "object") {
@@ -6436,6 +6511,8 @@ function bxNodeW(n) {
     return Math.max(320, Number((n.box || {}).w) || 480);
   if (n && n.kind === "dataset")           // …and so is the dataset's sheet
     return Math.max(320, Number((n.box || {}).w) || 440);
+  if (n && n.kind === "training")          // the slot's box: wide enough for the
+    return Math.max(300, Number((n.box || {}).w) || 340);   // model, tall for the pane
   if (n && (n.kind === "select" || n.kind === "config"))    // …and their windows
     return Math.max(280, Number((n.box || {}).w) || 360);
   if (n && n.kind === "input" && !BX.up)   // …and the input's own editor: roomy
@@ -6451,6 +6528,8 @@ function bxNodeH(n) {
     return Math.max(160, Number((n.box || {}).h) || 320);
   if (n && n.kind === "dataset")
     return Math.max(180, Number((n.box || {}).h) || 300);
+  if (n && n.kind === "training")
+    return Math.max(170, Number((n.box || {}).h) || 260);
   if (n && (n.kind === "select" || n.kind === "config"))
     return Math.max(140, Number((n.box || {}).h) || 240);
   if (n && n.kind === "input" && !BX.up)
@@ -6562,7 +6641,11 @@ function bxPortType(n, dir, i) {               // what a dot is built to carry
     if (n.kind === "tokenize") return { kind: "ids", shape: null };
     if (n.kind === "detokenize" || n.kind === "hf") return { kind: "text", shape: null };
     if (n.kind === "config") return { kind: "settings", shape: null };
+    if (n.kind === "training")                 // the train result: [loss, acc]
+      return { kind: "matrix", shape: "[2]" };
   }
+  if (n.kind === "training" && dir === "in")   // the three splits, by position
+    return { kind: "rows", shape: null };
   if (n.kind === "select") {
     const tell = bxMatrixTell(n);
     if (dir === "out")
@@ -6915,7 +6998,8 @@ function bxHasPane(n) {                        // a box whose card holds an edit
     return !BX.up;                             // inside a nested box they are the
   return (n.kind === "agent" || n.kind === "train" ||   // boundary's ports, and a
           n.kind === "dataset" || n.kind === "select" ||  // model is a container:
-          n.kind === "config" || n.kind === "heatmap");   // both stay plain —
+          n.kind === "config" || n.kind === "training" || // both stay plain —
+          n.kind === "heatmap");
 }                                              // no editor, no readout inside
 function bxCard(n) {
   const preview = String(n.id || "").indexOf("pal-") === 0;   // palette chrome
@@ -6951,10 +7035,28 @@ function bxCard(n) {
     g.appendChild(svg("rect", { x: n.x + w - 9, y: n.y + 2, width: 18, height: h - 4, rx: 7,
                                 class: "drail out", "data-node": n.id }));
   const isSheet = n.kind === "dataset";       // its sheet is inset inside the card
-  g.appendChild(svg("rect", { x: n.x, y: n.y, width: w, height: h,
-                              rx: 9, class: "drect" }));
+  const slot = n.kind === "training" ? bxTrainNotch(w) : null;   // the model's
+  if (slot)                                   // socket: the top edge steps in
+    g.appendChild(svg("path", { class: "drect", "data-node": n.id,
+                                d: "M " + n.x + " " + (n.y + h)
+                                 + " L " + n.x + " " + n.y
+                                 + " L " + (n.x + slot.x) + " " + n.y
+                                 + " L " + (n.x + slot.x) + " " + (n.y + slot.d)
+                                 + " L " + (n.x + slot.x + slot.w) + " "
+                                 + (n.y + slot.d)
+                                 + " L " + (n.x + slot.x + slot.w) + " " + n.y
+                                 + " L " + (n.x + w) + " " + n.y
+                                 + " L " + (n.x + w) + " " + (n.y + h) + " Z" }));
+  else
+    g.appendChild(svg("rect", { x: n.x, y: n.y, width: w, height: h,
+                                rx: 9, class: "drect" }));
+  if (slot && !(n.model && bxFindBox(n.model)))   // an empty slot says so
+    g.appendChild(svg("rect", { x: n.x + slot.x, y: n.y + 1.5,
+                                width: slot.w, height: slot.d - 1.5,
+                                class: "dslot" }));
   g.appendChild(svgText(n.x + 9, n.y + 15,
-                        bxKindLabel(n.model ? "model" : n.kind),
+                        slot ? bxClipFit(bxKindLabel(n.kind), slot.x - 12, 7)
+                             : bxKindLabel(n.model ? "model" : n.kind),
                         "dtype " + (n.model ? "model" : n.kind)));
   let rightX = w - 9;                          // the corner marks stack right-to-left
   if (tint) {                                  // the training signal's mark
@@ -9078,16 +9180,19 @@ function bxRunDoc(nodes, edges) {              // one level, the run's boxes onl
   for (const n of nodes) {
     if (n.kind === "train" || (n.kind === "output" && n.train))
       [n.dataset, n.test_dataset].forEach(x => { if (x) named.add(x); });
-    if (n.kind === "config") {                 // a config names its model, and
-      if (n.model) named.add(n.model);         // reads its own data dot
-      if (n.test_dataset) named.add(n.test_dataset);
+    if (n.kind === "config" || n.kind === "training") {   // a config (or a
+      if (n.model) named.add(n.model);         // Training box) names its model,
+      if (n.test_dataset) named.add(n.test_dataset);   // and reads its own dots
+      if (n.val_dataset) named.add(n.val_dataset);
     }
   }
   const extra = new Set();                     // the experiment's own boxes:
-  for (const n of nodes)                       // a config that names a model
-    if (n.kind === "config" && n.model) extra.add(n.id);
+  for (const n of nodes)                       // a host that names a model
+    if ((n.kind === "config" || n.kind === "training") && n.model)
+      extra.add(n.id);
   if (nodes.some(n => n.kind === "train" || (n.kind === "output" && n.train)
-                      || (n.kind === "config" && n.model)))
+                      || ((n.kind === "config" || n.kind === "training")
+                          && n.model)))
     for (const e of edges) {                   // …and the matrix boxes it reads
       const a = nodes.find(x => x.id === e.from), b = nodes.find(x => x.id === e.to);
       if (!a || !b) continue;
@@ -9096,9 +9201,9 @@ function bxRunDoc(nodes, edges) {              // one level, the run's boxes onl
     }
   for (const e of edges) {                     // …and one wired into a host's dot
     const a = nodes.find(x => x.id === e.from), b = nodes.find(x => x.id === e.to);
-    if (a && b && a.kind === "dataset" &&
+    if (a && b && bxIsDataset(a) &&
         (b.kind === "train" || (b.kind === "output" && b.train) ||
-         b.kind === "select" || b.kind === "config"))
+         b.kind === "select" || b.kind === "config" || b.kind === "training"))
       named.add(a.id);
   }
   const run = bxRunSet(nodes, edges);
@@ -10092,6 +10197,8 @@ function bxConfigFill(pane, n) {               // the train config: every settin
   }
   field("test data", pick("test_dataset", n.test_dataset, boxesOf("dataset"),
     "scored after every eval \u2014 never trained on"));
+  field("validation", pick("val_dataset", n.val_dataset, boxesOf("dataset"),
+    "a second hold-out \u2014 scored beside the test split"));
   if (rl)
     field("reward", pick("reward", n.reward, boxesOf("reward"),
       "scores every sample \u2014 the signal in rl"));
@@ -10113,6 +10220,15 @@ function bxConfigFill(pane, n) {               // the train config: every settin
     field("n samples (rl)", num("n_samples", n.n_samples != null ? n.n_samples : 4));
   }
   if (n.model) bxTrainPlan(body, n);          // the experiment's own readout
+}
+function bxTrainingFill(pane, n) {             // the Training box's window: the
+  bxConfigFill(pane, n);                       // config's knobs, and the slot's
+  const m = n.model ? bxFindBox(n.model) : null;   // state \u2014 the shape of
+  pane.appendChild(mk("div", { class: "panehint", text: m   // the box on canvas
+    ? "slot: " + (m.name || m.id) + " \u2014 the architecture this trains"
+    : "the slot is empty \u2014 drop a model box into the notch above" }));
+  pane.appendChild(mk("div", { class: "panehint",
+    text: "its dots: train / test / validation \u2014 wire datasets in" }));
 }
 function bxTrainWireConfig(cfg) {              // one click: into the input's first dot
   let input = null;
@@ -10164,6 +10280,7 @@ function bxPaneFill(pane, n) {                 // one pane, filled by its kind �
   if (n.kind === "dataset") bxDatasetFill(pane, n);   // every renderer goes through
   else if (n.kind === "select") bxSelectFill(pane, n);
   else if (n.kind === "config") bxConfigFill(pane, n);
+  else if (n.kind === "training") bxTrainingFill(pane, n);
   else if (n.kind === "train") bxTrainFill(pane, n);
   else if (n.kind === "input") bxInputFill(pane, n);
   else if (n.kind === "output") bxOutputFill(pane, n);
@@ -11240,8 +11357,8 @@ const BX_PALETTE = () => [
               ["unet", "unet box"], ["dit", "dit box"]]],
   ["Text", [["tokenize", "tokenizer box"], ["detokenize", "de-tokenizer box"]]],
   ["Data", [["select", "select col box"]]],   // a dataset is an input's datatype
-  ["Training", [["config", "train config box"], ["loss", "loss box"],
-                ["reward", "reward box"]]],
+  ["Training", [["training", "training box"], ["config", "train config box"],
+                ["loss", "loss box"], ["reward", "reward box"]]],
   ["Analysis", [["heatmap", "heatmap box"]]],
   ["AI", [["agent", "agent box"]]],
 ];
@@ -11532,7 +11649,11 @@ function bxUp(ev) {
     bxCommit(true);                           // a whole group moved: one step, the run's
   } else if (bxDrag && bxDrag.moved && bxDrag.kind === "move") {   // marks stay put
     const into = bxDropTargetAt(ev);          // dropped on a nested box: move it in
-    if (into) bxMoveInto(bxDrag.id, into);    // (a structural change: the data is stale)
+    const tgt = into ? bxNode(into) : null, dra = bxNode(bxDrag.id);
+    if (tgt && tgt.kind === "training" && dra && dra.kind === "custom")
+      bxDockModel(tgt.id, dra.id);            // a model into the slot
+    else if (into && !(tgt && tgt.kind === "training"))
+      bxMoveInto(bxDrag.id, into);            // (a structural change: the data is stale)
     else bxCommit(true);                      // just a move
   } else if (bxDrag && !bxDrag.moved) {
     if (bxDrag.kind === "move") bxSelectBoxes([bxDrag.id]);   // a click leaves just that box

@@ -2094,6 +2094,72 @@ check("an input carries the dataset: the same wiring, the loss still falls",
       an_input_carries_the_dataset)
 
 
+def a_training_box_trains_and_reports():
+    # the Training box: a model in its slot and train / test / validation on
+    # its three dots — the probe scores all three, the trainer’s events
+    # carry the validation split, and the result lands on its out-dot
+    def table(rows):
+        return "\n".join(["x0,x1,x2,y0,y1"] +
+                         ["%d,%d,%d,%d,%d" % (a, b, c, 2 * a - b, c)
+                          for a, b, c in rows])
+    c = canvas([
+        n("custom", "model", name="model", inner={
+            "nodes": [n("input", "min", dout=3),
+                      n("layer", "h", din=3, dout=8),
+                      n("layer", "o", din=8, dout=2),
+                      n("output", "mout", din=2)],
+            "edges": [edge("min", "h"), edge("h", "o"), edge("o", "mout")]}),
+        n("input", "rows", input_mode="dataset", format="csv",
+          text=table([(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1),
+                      (1, 1, 0), (1, 0, 1), (0, 1, 1), (1, 1, 1)])),
+        n("input", "holdout", input_mode="dataset", format="csv",
+          text=table([(1, 0, 0), (0, 1, 0)])),
+        n("input", "valrows", input_mode="dataset", format="csv",
+          text=table([(0, 0, 1), (1, 1, 0)])),
+        n("training", "hub", model="model", paradigm="supervised", batch=8,
+          lr=0.02, x_col="x0 x1 x2", y_col="y0 y1", save_every=0, eval_every=0),
+    ], [edge("rows", "hub", 0, 0), edge("holdout", "hub", 0, 1),
+        edge("valrows", "hub", 0, 2)])
+    hub = T.train_hub(c)
+    assert hub.get("dataset") == "rows", hub
+    assert hub.get("test_dataset") == "holdout", hub
+    assert hub.get("val_dataset") == "valrows", hub
+    res = T.run(c, {}, mode="training")
+    probe = res.get("probe") or {}
+    assert probe.get("loss") is not None, probe
+    assert probe.get("tloss") is not None and probe.get("vloss") is not None, probe
+    # an inference run stands the splits down: nothing complains about the
+    # dataset \u2014 what a plain run lacks is the model's own input value
+    try:
+        T.run(c, {}, mode="")
+        raise AssertionError("the model's input should have wanted a value")
+    except T.CanvasError as e:
+        msg = str(e)
+        assert "rows" not in msg and "holdout" not in msg and "valrows" not in msg, msg
+    import shutil
+    d = tempfile.mkdtemp()
+    try:
+        tr = T.DesignTrainer(c, {"batch": 8, "lr": 0.02, "save_every": 10 ** 9,
+                                 "eval_every": 50, "name": "m", "checkpoints": d})
+        assert tr.hub_id == "hub", tr.hub_id
+        assert tr.val_box is not None and tr.val_rows, (tr.val_box, tr.val_rows)
+        events = []
+        tr.run(steps=150, on_event=events.append)
+        losses = [e["loss"] for e in events if e.get("type") == "loss"]
+        assert len(losses) == 150 and losses[-1] < losses[0], (losses[0], losses[-1])
+        with_val = [e for e in events if e.get("vloss") is not None]
+        assert with_val, "the validation split rides the events"
+        hb = tr._box("hub")
+        assert hb is not None and hb.kind == "training", hb
+        assert hb.result is not None and float(hb.result[0]) == losses[-1], \
+            (None if hb.result is None else hb.result.tolist(), losses[-1])
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+check("a Training box trains: three splits, validation in the events, the result on its dot",
+      a_training_box_trains_and_reports)
+
 def a_model_trains_through_its_node():
     # the new shape: a nested model node holds the architecture; the train
     # config names it, the data wires into the config, and the batch enters the

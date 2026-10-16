@@ -232,6 +232,7 @@ globalThis.__t = {
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
   bxSelectFill, bxConfigFill, bxTrainWired, bxInputLink, bxMatrixTell, bxTrainSummary,
   bxInputMode, bxSelectSource, bxAttached, bxIsDataset,
+  bxTraining, bxTrainingFill, bxDockModel, bxTrainNotch, bxShape,
   bxTrainAddConfig, bxTrainWireConfig, bxBoundary, bxWeightsBox, bxWrapModel,
   bxHasPane, bxParamsOf,
   bxRunFeeds, bxInputFill, bxInputExpand, bxOutputFill, bxOutputExpand, bxPaneFill,
@@ -1216,11 +1217,11 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output", "select"],
     "Data holds the select col box — the dataset is an input's datatype");
-  // Training holds the config and the two signals, real cards now
+  // Training leads with the Training box, then the config and the two signals
   menu.children.find(c => c.textContent === "Training").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
-    ["input", "output", "config", "loss", "reward"],
-    "Training holds the config, the loss and the reward");
+    ["input", "output", "training", "config", "loss", "reward"],
+    "Training holds the training box, the config, the loss and the reward");
   // one category at a time: opening another closes the first
   menu.children.find(c => c.textContent === "Model").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
@@ -5493,6 +5494,65 @@ check("an input reads as a dataset: the sheet, the wiring, the design's JSON", (
   __t.bxRemove(sel.id);
   __t.bxRemove(m.id);
   __t.bxRemove(ds.id);
+  eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
+});
+
+check("the Training box: a slot for the model, three dataset dots, its own knobs", () => {
+  const keep = __t.BX.nodes.length;
+  const t = __t.bxAdd("training", 0, 0, {});
+  eql(t.kind, "training", "it lands as its own kind");
+  eql([__t.bxNodeW(t), __t.bxNodeH(t)], [340, 260], "roomy by default");
+  ok(__t.bxTraining(t), "it carries a training run");
+  eql([__t.bxPortDefs(t, "in").length, __t.bxPortDefs(t, "out").length], [3, 1],
+      "three splits in, the result out");
+  const g = __t.bxCard(t);
+  ok(g.children.some(c => c._attrs && c._attrs.d != null),
+     "the card's outline is a stepped path \u2014 the U");
+  eql(g.querySelectorAll(".dslot").length, 1, "\u2026with a dashed slot for the model");
+  eql(__t.bxShape(t), "no model in the slot", "and the card says so: " + __t.bxShape(t));
+  // the slot: a model dropped in becomes the architecture
+  const m = __t.bxAdd("custom", 700, 0, {});
+  m.name = "net";
+  ok(__t.bxDockModel(t.id, m.id), "a model docks into the notch");
+  eql(t.model, m.id, "\u2026and the box names it");
+  const slot = __t.bxTrainNotch(__t.bxNodeW(t));
+  eql(m.y, Math.round(t.y + 8 - __t.bxNodeH(m)), "\u2026snapping to the socket");
+  eql(__t.bxShape(t), "net \u00b7 supervised", "the card reads the model: " + __t.bxShape(t));
+  eql(__t.bxCard(t).querySelectorAll(".dslot").length, 0, "\u2026and the slot fills");
+  // the wires land in the fields: train / test / validation
+  const ds = __t.bxAdd("input", 0, 400, {});
+  __t.bxConfigure(ds.id, { input_mode: "dataset" });
+  const d2 = __t.bxAdd("input", 200, 400, {});
+  __t.bxConfigure(d2.id, { input_mode: "dataset" });
+  const d3 = __t.bxAdd("input", 400, 400, {});
+  __t.bxConfigure(d3.id, { input_mode: "dataset" });
+  eql(__t.bxConnect(ds.id, t.id, 0, 0), null, "a train split wires in");
+  eql(__t.bxConnect(d2.id, t.id, 0, 1), null, "\u2026a test split");
+  eql(__t.bxConnect(d3.id, t.id, 0, 2), null, "\u2026a validation split");
+  eql([t.dataset, t.test_dataset, t.val_dataset], [ds.id, d2.id, d3.id],
+      "the dots became the fields");
+  const w = __t.bxTrainWired();
+  ok(w.cfg && w.cfg.id === t.id, "the wiring sees its model");
+  eql(w.data && w.data.id, ds.id, "\u2026and its train split");
+  const trimmed = __t.bxRunCanvas(__t.BX);
+  const kept = new Set((trimmed.nodes || []).map(x => x.id));
+  ok(kept.has(t.id) && kept.has(m.id) && kept.has(ds.id),
+     "the run's canvas keeps the box, its model and its splits");
+  // the pane: the config's knobs, and the slot's state
+  const pane = document.createElement("div");
+  __t.bxTrainingFill(pane, t);
+  const text = pane.querySelectorAll(".panehint").map(e => e.textContent).join("|");
+  ok(text.indexOf("slot: net") >= 0, "the window reads the slot: " + text.slice(0, 90));
+  // the design's JSON carries it all
+  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(t));
+  eql([back.kind, back.model, back.dataset, back.test_dataset, back.val_dataset],
+      ["training", m.id, ds.id, d2.id, d3.id], "\u2026and the design carries them");
+  eql([__t.bxNodeW(back), __t.bxNodeH(back)], [340, 260], "\u2026its own size, too");
+  __t.bxRemove(d3.id);
+  __t.bxRemove(d2.id);
+  __t.bxRemove(ds.id);
+  __t.bxRemove(m.id);
+  __t.bxRemove(t.id);
   eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
 });
 
