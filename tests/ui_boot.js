@@ -205,7 +205,8 @@ globalThis.__t = {
   bxtDropsClose, bxtPaletteToggle, bxtImportToggle, bxtabToggle,
   bxTabsRender, bxTabNew, bxTabSave, bxTabSelect, bxTabOpenSaved, bxProject,
   bxTabClose, bxTabAnyDirty, bxTabLoad, bxSessionNow, bxSessionPush, bxSessionMatch,
-  bxSessionRead, bxSessionRestore, bxSeal, bxAccountOpenApply,
+  bxSessionRead, bxSessionRestore, bxSeal, bxAccountOpenApply, bxSplash, BXSESSION,
+  bxAccountSync,
   bxGGUFImport, bxGGUFImportApply, bxtVramToggle,
   bxSecret, bxCryptoReady, bxAuthCred, bxNameTag, bxSeal, bxUnseal,
   bxTokenRemember, bxTokenRecall, bxAccountLoad, bxtAccountToggle, bxAccountBuild,
@@ -4757,6 +4758,27 @@ check("the session remembers the saved tabs, in the browser and at the server", 
   eql(__t.bxProject().id, keepId, "the canvas is left as it was found");
 });
 
+check("the boot veil: only a remembered key waits behind it", () => {
+  eql(getEl("bxsplash").hidden, true, "the harness booted unveiled (no key in store)");
+  __t.bxSplash(true, "opening your canvases \u2026");
+  eql([getEl("bxsplash").hidden, getEl("bxsplashnote").textContent],
+      [false, "opening your canvases \u2026"], "\u2026up with its note when asked");
+  __t.BXACCT.known = true;                     // the harness boot never settles its
+  __t.BXACCT.user = null;                      // own fetch: stand in for the answer
+  __t.bxAccountSync();
+  eql(getEl("bxsplash").hidden, true, "\u2026and down once the answer is a guest");
+  const keepUser = __t.BXACCT.user;
+  __t.BXACCT.user = { id: "u-locked" };
+  __t.BXACCT.locked = true;
+  __t.bxSplash(true);
+  __t.bxAccountSync();
+  eql(getEl("bxsplash").hidden, true, "a locked account does not wait either");
+  __t.BXACCT.user = keepUser;                  // the world goes back as it was:
+  __t.BXACCT.locked = false;                   // a pristine boot is "not sure yet"
+  __t.BXACCT.known = false;                    // and the block says nothing
+  getEl("bxuser").hidden = true;
+});
+
 checkAsync("a session restore lands the saved canvases, with their content", async () => {
   // the real loop, end to end: a session and two designs, sealed for real,
   // served by a stub — the restore takes its own fetcher, so no other check's
@@ -4784,9 +4806,13 @@ checkAsync("a session restore lands the saved canvases, with their content", asy
       return send({ ok: true, blob: blobs[decodeURIComponent(u.split("tag=")[1])] });
     return send({ ok: false, error: "no route " + u });
   };
+  const keepFetch = global.fetch;              // serial: every other check is done,
+  global.fetch = stub;                         // so this stub cannot be stomped
   const keepAcct = { user: __t.BXACCT.user, token: __t.BXACCT.token, locked: __t.BXACCT.locked };
-  __t.BXACCT.user = { id: "u-session" };
-  __t.BXACCT.token = token;
+  const keepRestored = __t.BXSESSION.restored;
+  __t.BXSESSION.restored = false;
+  __t.BXACCT.user = null;
+  __t.BXACCT.token = "";
   __t.BXACCT.locked = false;
   const keepId = __t.bxProject().id;
   const boot = __t.bxProject();                // make it read as a reload's boot tab:
@@ -4794,8 +4820,15 @@ checkAsync("a session restore lands the saved canvases, with their content", asy
   boot.saved = false;
   boot.dirty = false;
   __t.bxTabsRender();
-  const restored = await __t.bxSessionRestore(stub);
-  ok(restored === true, "the restore opens the session's tabs");
+  __t.bxSplash(true, "opening your canvases \u2026");   // the boot veil, as on a reload
+  ok(getEl("bxsplash").hidden === false, "the veil is up while the session is on its way");
+  await __t.bxAccountSignedIn({ id: "u-session", name_ct: await __t.bxSeal(token, "tester") },
+                              token);
+  for (let i = 0; i < 300 &&                         // the restore's own promise
+       ((__t.BX.projects || []).length < 2 || getEl("bxsplash").hidden === false); i++)
+    await new Promise(r => setImmediate(r));         // chain, veil and all
+  ok((__t.BX.projects || []).length >= 2, "the restore opens the session's tabs");
+  eql(getEl("bxsplash").hidden, true, "\u2026and the veil drops the moment they land");
   const names = (__t.BX.projects || []).map(p => p.name);
   eql(names, ["beta", "alpha"], "the boot blank steps aside, the saved order holds: "
       + names.join(","));
@@ -4820,6 +4853,10 @@ checkAsync("a session restore lands the saved canvases, with their content", asy
   __t.BXACCT.user = keepAcct.user;
   __t.BXACCT.token = keepAcct.token;
   __t.BXACCT.locked = keepAcct.locked;
+  __t.BXSESSION.restored = keepRestored;
+  if (keepFetch === undefined) delete global.fetch;
+  else global.fetch = keepFetch;
+  __t.bxSplash(false);
 });
 
 check("the view cannot be lost: a tight world around origin and design", () => {

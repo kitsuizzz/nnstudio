@@ -816,7 +816,19 @@ body { display: flex; flex-direction: column; }
 main { max-width: none; margin: 0; padding: 6px 14px 14px; flex: 1 1 auto;
        min-height: 0; display: flex; }
 header { padding: 18px 16px 10px; flex: 0 0 auto; }
-.view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+        position: relative; }
+/* the boot veil: while a remembered key's session is on its way, so no ghost
+   blank canvas shows for a moment before the saved tabs land */
+.bxsplash { position: absolute; inset: 0; z-index: 60; display: flex;
+            flex-direction: column; align-items: center; justify-content: center;
+            gap: 14px; background: rgba(12,12,12,.88); }
+.bxsplash[hidden] { display: none; }
+.bxspin { width: 26px; height: 26px; border: 2px solid var(--panel-brd);
+          border-top-color: var(--accent); border-radius: 50%;
+          animation: bxspin .9s linear infinite; }
+@keyframes bxspin { to { transform: rotate(360deg); } }
+.bxsplashnote { font: 12px var(--mono); color: var(--ink-dim); }
 .bxrow { flex: 1 1 auto; min-height: 0; height: auto; }
 /* the canvas toolbar: a reserved strip above the canvas — export/import of
    the design as JSON for now, room for later tools on the right */
@@ -1059,6 +1071,10 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
         <div class="bxmenu" id="bxmenu" hidden></div>
         <div class="bxtip" id="bxtip" hidden></div>
       </div>
+    </div>
+    <div class="bxsplash" id="bxsplash" hidden>
+      <div class="bxspin"></div>
+      <div class="bxsplashnote" id="bxsplashnote">opening your canvases \u2026</div>
     </div>
   </section>
 </main>
@@ -7548,6 +7564,15 @@ function bxTurnstileLoad(cb) {                 // the widget script, fetched onc
   if (typeof setTimeout === "function")
     setTimeout(() => { if (BX_TS.queue) done(window.turnstile || null); }, 10000);
 }
+function bxSplash(show, note) {                // the boot veil: up while the
+  const el = $("bxsplash");                    // session's tabs are on their way,
+  if (!el) return;                             // down the moment they are (or the
+  if (note) {                                  // answer is "there are none")
+    const n = $("bxsplashnote");
+    if (n) n.textContent = String(note);
+  }
+  el.hidden = !show;
+}
 function bxAccountLoad() {                     // who is this, and what does the check need
   if (typeof fetch !== "function") {           // no server to ask: a guest, and that is that
     BXACCT.known = true;
@@ -7588,8 +7613,11 @@ async function bxAccountSignedIn(user, token) {
   bxTokenRemember(BXACCT.token);
   bxAccountSync();
   if (!BXSESSION.restored) {                   // the tabs come back where they
-    BXSESSION.restored = true;                 // were \u2014 once per page
-    bxSessionRestore().then(() => bxSessionPush());
+    BXSESSION.restored = true;                 // were — once per page
+    bxSessionRestore().then(() => { bxSplash(false); bxSessionPush(); })
+                     .catch(() => bxSplash(false));
+  } else {
+    bxSplash(false);
   }
 }
 function bxAccountLocked(user) {
@@ -7618,11 +7646,13 @@ function bxAccountSync() {
   if (!BXACCT.known) return;
   b.className = "bxuserbtn";
   if (!BXACCT.user) {
+    bxSplash(false);                           // a guest has no session to wait for
     nm.textContent = "guest";
     b.title = "a guest: drawing and running are free, saving takes an account";
     return;
   }
   if (BXACCT.locked) {
+    bxSplash(false);                           // locked: nothing can be unsealed
     nm.textContent = "account 🔒";
     b.title = "signed in — paste your token once so this browser can read your designs";
     b.className = "bxuserbtn locked";
@@ -9363,7 +9393,10 @@ function bxtInit() {
   bxtDropsClose();                             // all menus start closed
   bxtRefresh();
   bxAccountSync();                             // the tool strip already says guest
+  bxSplash(!!bxTokenRecall(), "opening your canvases \u2026");   // a remembered key may
   bxAccountLoad();                             // …and the server says who it is
+  if (typeof setTimeout === "function")        // bring saved tabs back: hold the veil,
+    setTimeout(() => bxSplash(false), 6000);   // but never longer than a breath
   fetchBackend();                              // who is connected right now
   if (typeof setInterval === "function") setInterval(fetchBackend, 5000);
 }
