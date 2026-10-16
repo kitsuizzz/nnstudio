@@ -214,22 +214,28 @@
   <h2>Moving around</h2>
   <ul>
     <li><b>Add a box</b> — open <span class="pill grey">Palette ▾</span>, expand a
-        category, and drag a card onto the canvas. Categories follow the boxes'
-        jobs: <b>AI</b>, <b>weights</b>, <b>text</b>, <b>Dataset</b>,
-        <b>tensor ops</b>, <b>blocks</b>, <b>analysis</b> (the heatmap), and
-        <b>containers</b>.</li>
-    <li><b>Bring a model in</b> — <span class="pill grey">Import ▾</span> →
-        <b>GGUF model …</b> opens one pop-up with the machine's
+        shelf, and drag a card onto the canvas. The shelves follow where a box
+        lives in the pipeline: <b>Model</b> (the architecture's box),
+        <b>Layers</b> (what goes inside it — the table-carrying ones grey
+        out at the top level: weights live inside a model), <b>Blocks</b>
+        (attention, state space, MoE), <b>Text</b> (the tokenizer pair),
+        <b>Data</b> (a sheet, and rows as a matrix), <b>Training</b> (the train
+        config, and the two signals it can use: a loss box and a reward box),
+        <b>Analysis</b> (the heatmap) and <b>AI</b> (the agent). The canvas's
+        right-click menu is the same eight shelves.</li>
+    <li><b>Bring a model in</b> — <span class="pill grey">Import ▾</span>
+        offers two doors: <b>GGUF model …</b> and
+        <b>Hugging Face model …</b> (a repo — a model box lands with its
+        text pipeline inside). The GGUF door opens one pop-up with the machine's
         <code>.gguf</code> files, each recognized by its own header. Importing
         adds <b>one nested box</b> with the file's structure inside — a model
         its blocks, a vision encoder (<code>mmproj</code>, shown as such) its
         tower. It never makes a canvas and never adds boundary boxes: the rest of
         your design stays exactly as it is, and cancelling leaves it untouched
         too.</li>
-    <li><b>Add training data</b> — the Palette's
-        <span class="pill grey">Dataset ▾</span> category holds the
-        <span class="pill">dataset</span> box. Right-click it any time to
-        <i>set the rows …</i>.</li>
+    <li><b>Add training data</b> — the Palette's <b>Data</b> shelf holds the
+        <span class="pill">dataset</span> box (and the select col box that turns
+        rows into a matrix). Right-click it any time to <i>set the rows …</i>.</li>
     <li><b>Move / resize</b> — drag a box by its body; drag its corner to
         resize (the display boxes — input, output, dataset, agent — resize with
         their window). The <b>input</b> and <b>output</b> boxes open roomy by
@@ -251,7 +257,7 @@
         config excepted), changes its settings (the activation, the operation, the embedding…),
         and offers <b>freeze</b> (keep its weights fixed) and <b>off</b> (skip it on runs).</li>
     <li><b>Step inside a model</b> — double-click a
-        <span class="pill">model</span> box (palette → <b>models</b>). A
+        <span class="pill">model</span> box (palette → <b>Model</b>). A
         nested box is a whole network of its own — that's the "nested" in
         nnstudio, and a model is where the trainable weights live. Double-clicking
         again goes deeper; the strip above the canvas shows where you are and
@@ -271,7 +277,7 @@
         wired through the <b>input box</b>. Open the
         <span class="pill">output</span>, switch its window to the
         <b>training</b> tab and see where it lives: the architecture sits in a
-        <span class="pill">model</span> box (palette → <b>models</b>) and a
+        <span class="pill">model</span> box (palette → <b>Model</b>) and a
         <span class="pill">train config</span> box names it. The config carries
         every knob of the run (the paradigm, the optimizer, the learning rate,
         the batch, the steps, the save/eval cadence, the optional test split) and
@@ -686,8 +692,11 @@
       edit its insides; from outside it behaves like a single box. This is how large
       models stay legible — a 27-billion-parameter model is one nested box that
       you can open into blocks, each block open into its attention and MLP.
-      Tagged as a <span class="pill">model</span> (palette → <b>models</b>),
-      it is where trainable weights live.</p>
+      Tagged as a <span class="pill">model</span> (palette → <b>Model</b>),
+      it is where trainable weights live; there is no palette card for a plain
+      nested box — the model box nests inside itself just as well. The kind
+      stays for the <b>Blocks</b> templates and for the designs that predate
+      models.</p>
       <p class="bfields"><b>Fields:</b> its <code>inner</code> network; where its
       weights read from (<code>file</code>, <code>t</code>), and the source
       <code>repo</code> when it came from a huggingface canvas. A whole model
@@ -835,11 +844,15 @@
       <div class="bwires">0 in · text result</div>
     </div>
     <div class="bdet">
-      <p>A complete Hugging Face model, run by the backend as a whole — no wires
-      needed. The quick way to get a baseline answer (or a reference for your own
-      canvas to match).</p>
+      <p>A complete Hugging Face model, run by the backend as a whole — the
+      quick way to get a baseline answer (or a reference for your own canvas to
+      match). It comes in through
+      <span class="pill grey">Import ▾</span> →
+      <b>Hugging Face model …</b>: one repo, and a <span class="pill">model</span>
+      box lands with the text pipeline inside (a text port in, the next token's
+      text out). No palette card — it is a model, and models arrive by import.</p>
       <p class="bfields"><b>Fields:</b> <code>repo</code>, a prompt
-      <code>text</code>, <code>temperature</code>.</p>
+      <code>text</code>, <code>temperature</code>. Inside a model, as ever.</p>
     </div>
   </div>
 
@@ -917,13 +930,13 @@
   <h2>Train a network on your own data</h2>
   <ol>
     <li>Build the network <b>inside a model</b>: drop a
-        <span class="pill">model</span> (palette → <b>models</b>), double-click
+        <span class="pill">model</span> (palette → <b>Model</b>), double-click
         it, and build in there — <span class="pill">input</span> →
         <span class="pill">embed</span> → one or more
         <span class="pill">layer</span> boxes → whatever produces scores over
         the vocabulary (a layer sized to the vocab), back out through its output
         box. Weights are only placeable in here.</li>
-    <li>Open <span class="pill grey">Palette ▾</span> → <b>Dataset</b>, drag out
+    <li>Open <span class="pill grey">Palette ▾</span> → <b>Data</b>, drag out
         the <span class="pill">dataset</span> box; give it rows
         (<code>prompt&lt;TAB&gt;completion</code> or JSONL). A second dataset box
         is the held-out test split, if you have one.</li>
@@ -981,7 +994,8 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         nothing to do and must not be wired to the dataset.</li>
     <li>The network as in the recipe above, ending in the model's output box
         the policy samples from.</li>
-    <li>Add a <span class="pill">reward</span> box; pick its kind and write it —
+    <li>Add a <span class="pill">reward</span> box (palette →
+        <b>Training</b>); pick its kind and write it —
         e.g. <code>expr = "1.0 if output.strip().endswith('!') else 0.0"</code>.
         The score is deterministic — the same output always earns the same reward,
         so runs are reproducible. Keep it partly soft (a little reward even for
@@ -1124,7 +1138,7 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
   <p>
     Training needs one place to say <i>what</i> the model learns from and
     <i>how</i>. The <i>what</i> is a <span class="pill">model</span> box (palette
-    → <b>models</b>): a nested box holding the architecture, the only place
+    → <b>Model</b>): a nested box holding the architecture, the only place
     trainable weights may live. The <i>how</i> is a
     <span class="pill">train config</span> box (palette → <b>training</b>):
     it <b>names the model</b> in its window, and holds every knob of the run
@@ -1316,7 +1330,7 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
   <p>Fifteen minutes, no GPU required (CPU is fine for this one):</p>
   <ol>
     <li><b>Meet the canvas</b> — open <span class="pill grey">Palette ▾</span>,
-        drop a <span class="pill">model</span> (the <b>models</b> category) and
+        drop a <span class="pill">model</span> (the <b>Model</b> shelf) and
         double-click into it. In there, drag out an
         <span class="pill">input</span>, an
         <span class="pill">embed</span> (vocab 64, dout 16), a
@@ -1329,8 +1343,9 @@ POST /api/tasks/cmd   { "task": "t_…", "cmd": "resume" }   // continue exactly
         (type them as <code>prompt&lt;TAB&gt;completion</code>), with
         <code>vocab</code> <code>abcd</code>. A <span class="pill">detokenize</span>
         box wired from the model reads the text back.</li>
-    <li><b>Add the loss</b> — a <span class="pill">loss</span> box; wire the
-        model's output into dot one, the dataset into dot two.</li>
+    <li><b>Add the loss</b> — a <span class="pill">loss</span> box (palette
+        → <b>Training</b>); wire the model's output into dot one, the
+        dataset into dot two.</li>
     <li><b>Watch it learn</b> — drop a <span class="pill">train config</span>
         (palette → <b>training</b>), pick the model in its window, wire the
         dataset into its <b>data dot</b>, and start from the <b>start</b> chip.

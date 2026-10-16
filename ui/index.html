@@ -2050,6 +2050,26 @@ const BX_TPL_WORD = { attn: "attention", ssm: "state space", moe: "mixture",
 function bxTemplateName(tpl) {
   return BX_TPL_WORD[tpl] + " " + (BX.nodes.filter(n => n.name && n.name.indexOf(BX_TPL_WORD[tpl]) === 0).length + 1);
 }
+function bxAddHFModel(x, y, v) {              // a huggingface model: a model box,
+  bxUndoLock++;                                // its text pipeline inside
+  const repo = String(v.repo || "").trim();
+  const n = bxAdd("custom", x, y, { name: v.name || repo.split("/").pop() || "hf model" });
+  if (!n) { bxUndoLock--; return null; }
+  n.model = true;
+  const i = bxId(), h = bxId(), o = bxId();
+  n.inner = {
+    nodes: [{ id: i, kind: "input", name: "text", x: -240, y: 0, input_mode: "text" },
+            { id: h, kind: "hf", name: "model", x: 40, y: 0, repo },
+            { id: o, kind: "output", name: "next text", x: 320, y: 0 }],
+    edges: [{ from: i, to: h, fromPort: 0, toPort: 0 },
+            { from: h, to: o, fromPort: 0, toPort: 0 }] };
+  bxSettleSizes();
+  bxSelectBoxes([n.id]);
+  bxRender();
+  bxUndoLock--;
+  bxCommit();
+  return n;
+}
 function bxAddTokenizerPair(x, y, v) {        // one repo, the pair that belongs
   // together: the tokenizer (text -> ids) and the de-tokenizer (ids -> text)
   v = v || {};
@@ -6875,32 +6895,18 @@ function bxMenuBuild(mode, id, ev) {
   }
   // the add menu: categories that drop down, one at a time
   const again = () => bxMenuBuild("canvas", null, ev);
-  section("boundaries", "boundaries", [           // the graph's edges
-    ["input box", () => bxForm("input", ev, null)],
-    ["output box", () => bxForm("output", ev, null)],
-  ], again);
-  section("weights", "weights", [                 // boxes that carry a table
-    ["embedding box", () => bxForm("embed", ev, null)],
-    ["fully connected box", () => bxForm("layer", ev, null)],
-    ["norm box", () => bxForm("norm", ev, null)],
-  ], again);
-  section("text", "text", [                       // text <-> ids
-    ["load a tokenizer …", () => bxForm("tokenize", ev, null, "loadtok")],
-    ["huggingface model box", () => bxForm("hf", ev, null)],
-  ], again);
-  section("tensor ops", "tensor ops", [           // stateless operations
-    ["activation box", () => bxForm("act", ev, null)],
-    ["operation box", () => bxForm("op", ev, null)],
-    ["script box", () => bxForm("script", ev, null)],
-    ["sample box", () => bxForm("sample", ev, null)],
-  ], again);
-  section("blocks", "blocks", [                   // the templates
-    ["attention box", () => { const w = bxPoint(ev); bxMenuClose(); bxAddTemplate("attn", w.x, w.y); }],
-    ["state space box", () => { const w = bxPoint(ev); bxMenuClose(); bxAddTemplate("ssm", w.x, w.y); }],
-    ["mixture of experts box", () => { const w = bxPoint(ev); bxMenuClose(); bxAddTemplate("moe", w.x, w.y); }],
-  ], again);
-  section("containers", "containers",          // a whole model loads from Import \u25be
-          [["nested box", () => bxForm("custom", ev, null)]], again);
+  // the shelves, the same list the palette shows \u2014 one taxonomy, both doors
+  for (const [name, cards] of BX_PALETTE()) {
+    const entries = cards.map(([kind, label]) => [label, () => {
+      const w = bxPoint(ev);
+      bxMenuClose();
+      bxAddKind(kind, w.x, w.y);
+    }]);
+    if (name === "Text")                         // the shortcut the pair deserves
+      entries.push(["load a tokenizer \u2026",
+                    () => bxForm("tokenize", ev, null, "loadtok")]);
+    section(name, name, entries, again);
+  }
   const design = [];
   if (bxCopied) design.push(["paste", () => {     // at the point you right-clicked
     const w = ev ? bxPoint(ev) : null;
@@ -8773,6 +8779,9 @@ function bxtInit() {
     imenu.appendChild(item("GGUF model \u2026",
       "pick one .gguf from the backend machine \u2014 it lands as a nested box",
       () => { bxtDropsClose(); bxGGUFImport(); }));
+    imenu.appendChild(item("Hugging Face model \u2026",
+      "one repo \u2014 a model box lands with its text pipeline inside",
+      () => { bxtDropsClose(); bxForm("hf", null, null, "loadhf"); }));
   }
   const wire = (id, toggle) => {
     const btn = $(id);
@@ -10128,7 +10137,7 @@ function bxForm(kind, ev, node, mode) {
   const m = $("bxmenu");
   if (!m) return;
   mode = mode || (node ? "resize" : "add");
-  const world = ev ? bxPoint(ev) : { x: 0, y: 0 };
+  const world = ev ? bxPoint(ev) : { x: bxCenter().cx, y: bxCenter().cy };
   m.innerHTML = "";
   const wrap = mk("div", { class: "bf" });
   const actField = (value) => {
@@ -10373,6 +10382,13 @@ function bxForm(kind, ev, node, mode) {
           + "de-tokenizer the ids come back out of." });
     wrap.appendChild(hint);
     f.repo = hfField("");
+  } else if (mode === "loadhf") {             // one repo: a model box lands, the
+    hint = mk("div", { class: "panehint",     // text pipeline inside of it
+      text: "one repo makes a model box: the prompt goes in, the next token's "
+          + "text comes out." });
+    wrap.appendChild(hint);
+    f.repo = hfField("");
+    f.name = nameField("");
   } else if (mode === "add" && kind === "sample") {
     f.name = nameField(bxDefaultName(kind));
     f.temp = numField("temperature", null);
@@ -10481,6 +10497,17 @@ function bxForm(kind, ev, node, mode) {
       bxAddTokenizerPair(world.x, world.y, v);
       return;
     }
+    if (mode === "loadhf") {                   // \u2026and so does the model box
+      if (!String(v.repo || "").trim()) {
+        if (hint)
+          hint.textContent = "paste a huggingface repo first \u2014 the model "
+                           + "reads its weights from there";
+        return;
+      }
+      bxMenuClose();
+      bxAddHFModel(world.x, world.y, v);
+      return;
+    }
     bxMenuClose();
     if (node) bxConfigure(node.id, v); else bxAddKind(kind, world.x, world.y, v);
   };
@@ -10500,7 +10527,9 @@ function bxForm(kind, ev, node, mode) {
     row.appendChild(w);
   }
   const go = mk("span", { class: "chip tiny",
-                          text: node ? "save" : (mode === "loadtok" ? "load" : "add") });
+                          text: node ? "save"
+                                     : (mode === "loadtok" || mode === "loadhf"
+                                        ? "load" : "add") });
   go.addEventListener("click", commit);
   row.appendChild(cancel);
   row.appendChild(go);
@@ -10553,20 +10582,19 @@ function bxPreview(kind) {
              bxCard(fake));
 }
 const BX_PALETTE = () => [
-  ["AI", [["agent", "agent box"]]],
-  ["models", [["model", "model box"]]],
-  ["weights", [["embed", "embedding box"], ["layer", "fully connected box"],
-               ["norm", "norm box"]]],
-  ["text", [["tokenize", "tokenizer box"], ["detokenize", "de-tokenizer box"],
-            ["hf", "huggingface model box"]]],
-  ["Dataset", [["dataset", "dataset box"], ["select", "select col box"]]],
-  ["training", [["config", "train config box"]]],
-  ["tensor ops", [["act", "activation box"], ["op", "operation box"],
-                  ["script", "script box"], ["sample", "sample box"]]],
-  ["blocks", [["attn", "attention box"], ["ssm", "state space box"],
+  ["Model", [["model", "model box"]]],                 // the architecture's box
+  ["Layers", [["embed", "embedding box"],              // what goes inside it
+              ["layer", "fully connected box"], ["norm", "norm box"],
+              ["act", "activation box"], ["op", "operation box"],
+              ["script", "script box"], ["sample", "sample box"]]],
+  ["Blocks", [["attn", "attention box"], ["ssm", "state space box"],
               ["moe", "mixture of experts box"]]],
-  ["analysis", [["heatmap", "heatmap box"]]],
-  ["containers", [["custom", "nested box"]]],
+  ["Text", [["tokenize", "tokenizer box"], ["detokenize", "de-tokenizer box"]]],
+  ["Data", [["dataset", "dataset box"], ["select", "select col box"]]],
+  ["Training", [["config", "train config box"], ["loss", "loss box"],
+                ["reward", "reward box"]]],
+  ["Analysis", [["heatmap", "heatmap box"]]],
+  ["AI", [["agent", "agent box"]]],
 ];
 function bxPalCard(kind, label) {
   const locked = !BX.up && bxWeightsKind(kind);   // weights live inside a model

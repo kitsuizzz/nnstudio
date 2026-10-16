@@ -409,18 +409,20 @@ check("the right-click menus: three add items, or remove", () => {
   const heads = () => menu.children.filter(c => String(c.className).split(/\s+/).includes("drop"));
   const openItems = () => menu.children.filter(c => c.className === "mi").map(c => c.textContent);
   eql(menu.children.map(c => c.textContent),
-    ["boundaries", "weights", "text", "tensor ops", "blocks", "containers", "the design"],
-    "the categories are listed, all collapsed");
+    ["Model", "Layers", "Blocks", "Text", "Data", "Training", "Analysis", "AI",
+     "the design"],
+    "the shelves are listed, all collapsed — the same ones the palette shows");
   ok(openItems().length === 0, "…with no items in sight");
   heads()[0].click();
   eql(menu.children.map(c => c.textContent),
-    ["boundaries", "input box", "output box", "weights", "text", "tensor ops",
-     "blocks", "containers", "the design"],
-    "boundaries drops down into its boxes");
+    ["Model", "model box", "Layers", "Blocks", "Text", "Data", "Training",
+     "Analysis", "AI", "the design"],
+    "Model drops down into its box");
   eql(heads()[0].querySelectorAll(".chev")[0].textContent, "\u25be", "…and wears the open chevron");
-  heads().find(c => c.textContent === "tensor ops").click();
-  eql(openItems(), ["activation box", "operation box", "script box", "sample box"],
-    "tensor ops replaces boundaries — one category at a time");
+  heads().find(c => c.textContent === "Layers").click();
+  eql(openItems(), ["embedding box", "fully connected box", "norm box",
+                    "activation box", "operation box", "script box", "sample box"],
+    "Layers replaces Model — one category at a time, weights and math together");
   heads().find(c => c.textContent === "the design").click();
   eql(openItems(),
     ["export the canvas as JSON", "import JSON …", "export weights …"],
@@ -458,15 +460,54 @@ check("the right-click menus: three add items, or remove", () => {
   __t.bxMenuClose();
 });
 
+check("the two signals land from the shelf: a loss box and a reward box", () => {
+  const ds = __t.bxAdd("dataset", 0, 0, { text: "a\tb\nc\td", vocab: "abcd" });
+  const loss = __t.bxAddKind("loss", 200, 0, {});
+  const rew = __t.bxAddKind("reward", 0, 200, {});
+  ok(!!loss && loss.kind === "loss" && !!rew && rew.kind === "reward",
+     "both land from the palette path");
+  ok(/^loss \d+$/.test(loss.name) && /^reward \d+$/.test(rew.name),
+     "\u2026named: " + loss.name + ", " + rew.name);
+  eql(__t.bxConnect(ds.id, loss.id, 0, 1), null,
+      "the dataset wires into the loss's second dot");
+  __t.bxMenuBuild("box", rew.id, {});
+  openCat(getEl("bxmenu"), "this box");
+  ok(catItems(getEl("bxmenu")).indexOf("set the reward \u2026") >= 0,
+     "\u2026and the reward box is editable as ever");
+  __t.bxMenuClose();
+  __t.bxRemove(loss.id);
+  __t.bxRemove(rew.id);
+  __t.bxRemove(ds.id);
+});
+
+check("the HF import: one repo, a model box lands with its pipeline inside", () => {
+  const before = __t.BX.nodes.length;
+  __t.bxForm("hf", null, null, "loadhf");
+  const wrap = getEl("bxmenu").children[0];
+  const repo = wrap.querySelectorAll(".wide")[0];
+  ok(!!repo, "the form asks for the repo");
+  repo.value = "Qwen/Qwen2.5-0.5B";
+  wrap.querySelectorAll(".chip").find(c => c.textContent === "load").click();
+  eql(__t.BX.nodes.length, before + 1, "one box lands");
+  const m = __t.BX.nodes[__t.BX.nodes.length - 1];
+  eql([m.kind, m.model], ["custom", true], "\u2026a model box");
+  eql((m.inner.nodes || []).map(n => n.kind), ["input", "hf", "output"],
+     "\u2026with the text pipeline inside");
+  eql(m.inner.nodes[1].repo, "Qwen/Qwen2.5-0.5B", "\u2026bound to the repo");
+  eql(__t.bxBoundary(m, "in").length, 1, "one port in");
+  ok(__t.bxShape(m).indexOf("model") === 0, "\u2026and the card says model: " + __t.bxShape(m));
+  __t.bxRemove(m.id);
+});
+
 check("the canvas menu: load a tokenizer lands the pair, one repo for both", () => {
   const nodes0 = __t.BX.nodes.length;
   __t.bxMenuBuild("canvas", null, { clientX: 300, clientY: 200 });
   const menu = getEl("bxmenu");
   const heads = () => menu.children.filter(c => String(c.className).split(/\s+/).includes("drop"));
-  heads().find(c => c.textContent === "text").click();
+  heads().find(c => c.textContent === "Text").click();
   eql(menu.children.filter(c => c.className === "mi").map(c => c.textContent),
-    ["load a tokenizer \u2026", "huggingface model box"],
-    "text offers the tokenizer pair, not the two lone boxes");
+    ["tokenizer box", "de-tokenizer box", "load a tokenizer …"],
+    "Text offers the pair's cards, and the shortcut that fills both");
   menu.children.find(c => c.className === "mi" &&
                           c.textContent.indexOf("load a tokenizer") === 0).click();
   const wrap = getEl("bxmenu").children[0];
@@ -879,50 +920,51 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(top.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output"], "Input and Output are the first cards, not a category");
   eql(menu.children.filter(c => c.className === "bxtcat").map(c => c.textContent),
-    ["AI", "models", "weights", "text", "Dataset", "training", "tensor ops",
-     "blocks", "analysis", "containers"],
-    "and only the categories are listed below");
+    ["Model", "Layers", "Blocks", "Text", "Data", "Training", "Analysis", "AI"],
+    "and only the shelves are listed below");
   // the AI category holds the agent box
   menu.children.find(c => c.textContent === "AI").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output", "agent"], "AI holds the agent box");
   menu.children.find(c => c.textContent === "AI").click();
   // expand a category: its visual boxes appear, drawn by the card renderer
-  menu.children.find(c => c.textContent === "weights").click();
+  menu.children.find(c => c.textContent === "Layers").click();
   const cards = menu.querySelectorAll(".bxpalitem");
   eql(cards.map(i => i.getAttribute("data-kind")),
-    ["input", "output", "embed", "layer", "norm"], "weights expands below the two cards");
+    ["input", "output", "embed", "layer", "norm", "act", "op", "script", "sample"],
+    "Layers expands below the two cards");
   ok(cards.slice(2).every(i => i.children[0] && i.children[0]._attrs &&
                               i.children[0]._attrs.viewBox),
     "…each drawn by the same card renderer");
-  // the text category holds the tokenizer pair and the hf model
-  menu.children.find(c => c.textContent === "text").click();
+  ok(cards.slice(2, 5).every(i => String(i.className).split(/\s+/).includes("off")),
+    "…and the table-carrying ones are locked at the top level");
+  // Text holds the tokenizer pair — the hf model comes in through Import
+  menu.children.find(c => c.textContent === "Text").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
-    ["input", "output", "tokenize", "detokenize", "hf"],
-    "text holds the tokenizer pair and the huggingface model");
-  // the Dataset category holds only the dataset box; the Train box has its
-  // own button up top
-  menu.children.find(c => c.textContent === "Dataset").click();
+    ["input", "output", "tokenize", "detokenize"],
+    "Text holds the tokenizer pair");
+  // Data holds the sheet and the select col box
+  menu.children.find(c => c.textContent === "Data").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output", "dataset", "select"],
-    "Dataset holds the sheet and the select col box");
-  menu.children.find(c => c.textContent === "training").click();
+    "Data holds the sheet and the select col box");
+  // Training holds the config and the two signals, real cards now
+  menu.children.find(c => c.textContent === "Training").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
-    ["input", "output", "config"],
-    "…and training holds the train config box");
+    ["input", "output", "config", "loss", "reward"],
+    "Training holds the config, the loss and the reward");
   // one category at a time: opening another closes the first
-  menu.children.find(c => c.textContent === "tensor ops").click();
+  menu.children.find(c => c.textContent === "Model").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
-    ["input", "output", "act", "op", "script", "sample"],
-    "tensor ops replaces text");
-  menu.children.find(c => c.textContent === "tensor ops").click();
+    ["input", "output", "model"], "Model replaces Training");
+  menu.children.find(c => c.textContent === "Model").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output"], "…and clicking it again collapses");
   // analysis holds the heatmap: a vector in, one picture out
-  menu.children.find(c => c.textContent === "analysis").click();
+  menu.children.find(c => c.textContent === "Analysis").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
-    ["input", "output", "heatmap"], "analysis holds the heatmap");
-  menu.children.find(c => c.textContent === "analysis").click();
+    ["input", "output", "heatmap"], "Analysis holds the heatmap");
+  menu.children.find(c => c.textContent === "Analysis").click();
 });
 
 check("the heatmap: a vector in, a picture out, drawn in its own window", () => {
@@ -961,28 +1003,48 @@ check("the heatmap: a vector in, a picture out, drawn in its own window", () => 
   eql(__t.BX.nodes.length, nodes0, "the canvas is left as it was found");
 });
 
-check("no GGUF card in the Palette — a model comes in through Import", () => {
+check("no hf or custom card in the Palette \u2014 Import covers models, model covers nesting", () => {
   __t.bxRenderPalette();
   const menu = getEl("bxtPalMenu");
   const cards = () => menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind"));
-  menu.children.find(c => c.textContent === "containers").click();
-  eql(cards(), ["input", "output", "custom"],
-    "containers is just the nested box, at the top level");
-  menu.children.find(c => c.textContent === "containers").click();   // collapse again
-  // the canvas right-click menu has no GGUF box either
+  let all = [];
+  for (const name of ["Model", "Layers", "Blocks", "Text", "Data", "Training",
+                      "Analysis", "AI"]) {
+    menu.children.find(c => c.textContent === name).click();
+    all = all.concat(cards());
+  }
+  ok(all.indexOf("hf") < 0 && all.indexOf("custom") < 0,
+     "no huggingface or plain nested card \u2014 Import brings models, the model box nests");
+  ok(all.indexOf("loss") >= 0 && all.indexOf("reward") >= 0,
+     "\u2026and the two signals are real cards now");
+  // the canvas menu matches, shelf for shelf
   __t.bxMenuBuild("canvas", null, { clientX: 10, clientY: 10 });
-  const heads = () => getEl("bxmenu").children.filter(
+  const nmenu = getEl("bxmenu");
+  const nheads = () => nmenu.children.filter(
     x => String(x.className).split(/\s+/).includes("drop"));
-  heads().find(x => x.textContent === "containers").click();
-  eql(getEl("bxmenu").children.filter(x => x.className === "mi").map(x => x.textContent),
-      ["nested box"], "…and the canvas menu offers only the nested box");
+  let items = [];
+  for (const name of ["Model", "Layers", "Blocks", "Text", "Data", "Training",
+                      "Analysis", "AI"]) {
+    const h = nheads().find(x => x.textContent === name);
+    if (!h) continue;
+    h.click();
+    items = items.concat(nmenu.children.filter(x => x.className === "mi")
+                                    .map(x => x.textContent));
+  }
+  ok(items.indexOf("huggingface model box") < 0 && items.indexOf("nested box") < 0,
+     "\u2026the canvas menu neither \u2014 no hf, no plain nested: " + items.join(", "));
+  ok(items.indexOf("model box") >= 0 && items.indexOf("dataset box") >= 0
+     && items.indexOf("loss box") >= 0 && items.indexOf("reward box") >= 0
+     && items.indexOf("heatmap box") >= 0,
+     "\u2026and it has the cards it used to miss");
   __t.bxMenuClose();
 });
 
 check("the Import menu: one pop-up, one file, no box spawned", () => {
   ok(getEl("bxtImport"), "the toolbar has an Import button");
-  eql(getEl("bxtImportMenu").children.map(c => c.textContent), ["GGUF model …"],
-      "…offering a GGUF model");
+  eql(getEl("bxtImportMenu").children.map(c => c.textContent),
+      ["GGUF model …", "Hugging Face model …"],
+      "…offering a GGUF model and a Hugging Face one");
   __t.bxtImportToggle();
   eql(getEl("bxtImportMenu").hidden, false, "a click opens the menu");
   __t.bxtImportToggle();
@@ -1084,7 +1146,7 @@ check("a toolbar menu opens under its own button, not the strip's left", () => {
 check("a Palette card: a click drops it in the middle, a drag lands where you let go", () => {
   __t.bxRenderPalette();
   const menu = getEl("bxtPalMenu");
-  menu.children.find(c => c.textContent === "weights").click();      // show some cards
+  menu.children.find(c => c.textContent === "Layers").click();      // show some cards
   const before = __t.BX.nodes.length;
   // weights are locked at the top level: the click places nothing
   __t.bxPalDown({ button: 0, clientX: 60, clientY: 60, preventDefault() {}, stopPropagation() {} }, "layer");
@@ -1112,7 +1174,7 @@ check("a Palette card: a click drops it in the middle, a drag lands where you le
   __t.bxPalUp({ clientX: 900, clientY: 200 });
   eql(__t.BX.nodes.length, n2, "…and a release outside is ignored");
   while (__t.BX.nodes.length > before) __t.bxRemove(__t.BX.nodes[__t.BX.nodes.length - 1].id);
-  const head = getEl("bxtPalMenu").children.find(c => c.textContent === "weights");
+  const head = getEl("bxtPalMenu").children.find(c => c.textContent === "Layers");
   if (head) head.click();                                          // collapse again
 });
 
@@ -2731,10 +2793,13 @@ check("a nested box takes nested JSON and never a canvas", () => {
   const nheads = () => nmenu.children.filter(x => String(x.className).split(/\s+/).includes("drop"));
   const nopen = () => nmenu.children.filter(x => x.className === "mi").map(x => x.textContent);
   eql(nmenu.children.map(x => x.textContent),
-    ["boundaries", "weights", "text", "tensor ops", "blocks", "containers", "the design"],
-    "inside a nested box the categories are all there, collapsed");
-  nheads().find(x => x.textContent === "containers").click();
-  eql(nopen(), ["nested box"], "containers is just the nested box, any depth");
+    ["Model", "Layers", "Blocks", "Text", "Data", "Training", "Analysis", "AI",
+     "the design"],
+    "inside a nested box the shelves are all there, collapsed");
+  nheads().find(x => x.textContent === "Model").click();
+  eql(nopen(), ["model box"], "Model is there too — a model nests in a model");
+  nheads().find(x => x.textContent === "Layers").click();
+  eql(nopen().length, 7, "…and Layers hands out the same seven cards, any depth");
   nheads().find(x => x.textContent === "the design").click();
   eql(nopen(), ["import a nested box …"],
     "the design has no canvas to save or load here");
