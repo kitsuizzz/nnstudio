@@ -5508,15 +5508,23 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   const g = __t.bxCard(t);
   ok(g.children.some(c => c._attrs && c._attrs.d != null),
      "the card's outline is a stepped path \u2014 the U");
-  eql(g.querySelectorAll(".dslot").length, 1, "\u2026with a dashed slot for the model");
+  eql(g.querySelectorAll(".dslot").length, 1,
+      "\u2026with a dashed ghost of a model card");
+  eql(Number(g.querySelectorAll(".dslot")[0]._attrs.width), 160,
+      "\u2026cut to the model's own width");
+  eql(g.querySelectorAll(".dslothit").length, 1, "\u2026and its own hit area");
   eql(__t.bxShape(t), "no model in the slot", "and the card says so: " + __t.bxShape(t));
   // the slot: a model dropped in becomes the architecture
   const m = __t.bxAdd("custom", 700, 0, {});
   m.name = "net";
   ok(__t.bxDockModel(t.id, m.id), "a model docks into the notch");
   eql(t.model, m.id, "\u2026and the box names it");
-  const slot = __t.bxTrainNotch(__t.bxNodeW(t));
-  eql(m.y, Math.round(t.y + 8 - __t.bxNodeH(m)), "\u2026snapping to the socket");
+  const slot = __t.bxTrainNotch(t, __t.bxNodeW(t));
+  eql(slot.w, __t.bxNodeW(m), "the notch is cut to the model's width");
+  eql([m.x, m.y],
+      [Math.round(t.x + slot.x + (slot.w - __t.bxNodeW(m)) / 2),
+       Math.round(t.y + slot.d - __t.bxNodeH(m))],
+      "\u2026and the model snaps into the socket: " + m.x + "," + m.y);
   eql(__t.bxShape(t), "net \u00b7 supervised", "the card reads the model: " + __t.bxShape(t));
   eql(__t.bxCard(t).querySelectorAll(".dslot").length, 0, "\u2026and the slot fills");
   // the wires land in the fields: train / test / validation

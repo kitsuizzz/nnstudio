@@ -263,6 +263,7 @@
   .drect { fill: rgba(30,30,30,.97); stroke: rgba(255,255,255,.16); }
   .dslot { fill: none; stroke: rgba(255,255,255,.28); stroke-dasharray: 3 3;
            pointer-events: none; }
+  .dslothit { fill: transparent; pointer-events: all; }
   .dnode.dropin .dslot { stroke: rgba(249,115,22,.9); }
   .dnode:hover .drect { stroke: rgba(249,115,22,.8); }
   /* a fill on the base class, so no kind of box can ever fall back to black */
@@ -1944,17 +1945,20 @@ function bxAnyModel() {                       // any nested model on the canvas
   bxEveryBox(x => { if (!hit && x.kind === "custom" && x.model) hit = x; });
   return hit;
 }
-function bxTrainNotch(w) {                     // the Training box's slot: a
-  const nw = 84, d = 30;                       // square gap at the top's middle
-  return { x: Math.round((Math.max(120, w) - nw) / 2), w: nw, d };
+function bxTrainNotch(n, w) {                  // the Training box's socket: cut
+  const m = n && n.model ? bxFindBox(n.model) : null;   // to the model's own
+  const W = Math.max(120, w);                  // width, a third of a card deep
+  const mw = Math.max(60, Math.min(m ? bxNodeW(m) : BXW, W - 24));
+  return { x: Math.round((W - mw) / 2), w: mw, d: Math.round(BXH * 0.3),
+           mh: m ? bxNodeH(m) : BXH };
 }
 function bxDockModel(tid, mid) {               // a model into that gap: it becomes
   const t = bxNode(tid), m = bxNode(mid);      // the architecture the box trains
   if (!t || !m || t.kind !== "training" || m.kind !== "custom") return false;
-  const slot = bxTrainNotch(bxNodeW(t));
   t.model = m.id;
+  const slot = bxTrainNotch(t, bxNodeW(t));
   m.x = Math.round(t.x + slot.x + (slot.w - bxNodeW(m)) / 2);
-  m.y = Math.round(t.y + 8 - bxNodeH(m));      // its foot sits in the socket
+  m.y = Math.round(t.y + slot.d - bxNodeH(m));   // its foot sits in the socket
   const at = BX.nodes.indexOf(m), tt = BX.nodes.indexOf(t);
   if (at >= 0 && tt >= 0 && at < tt) {         // …and it draws over the card
     BX.nodes.splice(at, 1);
@@ -7035,7 +7039,7 @@ function bxCard(n) {
     g.appendChild(svg("rect", { x: n.x + w - 9, y: n.y + 2, width: 18, height: h - 4, rx: 7,
                                 class: "drail out", "data-node": n.id }));
   const isSheet = n.kind === "dataset";       // its sheet is inset inside the card
-  const slot = n.kind === "training" ? bxTrainNotch(w) : null;   // the model's
+  const slot = n.kind === "training" ? bxTrainNotch(n, w) : null;   // the model's
   if (slot)                                   // socket: the top edge steps in
     g.appendChild(svg("path", { class: "drect", "data-node": n.id,
                                 d: "M " + n.x + " " + (n.y + h)
@@ -7050,10 +7054,17 @@ function bxCard(n) {
   else
     g.appendChild(svg("rect", { x: n.x, y: n.y, width: w, height: h,
                                 rx: 9, class: "drect" }));
-  if (slot && !(n.model && bxFindBox(n.model)))   // an empty slot says so
-    g.appendChild(svg("rect", { x: n.x + slot.x, y: n.y + 1.5,
-                                width: slot.w, height: slot.d - 1.5,
-                                class: "dslot" }));
+  if (slot) {                                 // the slot's own hit area: a drop
+    g.appendChild(svg("rect", { x: n.x + slot.x, y: n.y - 0.5,   // on the notch
+                                width: slot.w, height: slot.d + 0.5,   // docks too
+                                class: "dslothit" }));
+    if (!(n.model && bxFindBox(n.model)))     // empty: a ghost of the model card,
+      g.appendChild(preview                    // standing in the socket \u2014 or
+        ? svg("rect", { x: n.x + slot.x, y: n.y + 1.5, width: slot.w,
+                        height: slot.d - 1.5, class: "dslot" })   // a thin band
+        : svg("rect", { x: n.x + slot.x, y: n.y + slot.d - slot.mh,   // on canvas
+                        width: slot.w, height: slot.mh, rx: 9, class: "dslot" }));
+  }
   g.appendChild(svgText(n.x + 9, n.y + 15,
                         slot ? bxClipFit(bxKindLabel(n.kind), slot.x - 12, 7)
                              : bxKindLabel(n.model ? "model" : n.kind),
