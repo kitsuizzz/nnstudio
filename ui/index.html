@@ -5970,9 +5970,9 @@ function bxNodeW(n) {
     return Math.max(280, Number((n.box || {}).w) || 360);
   if (n && n.kind === "custom" && n.model)                 // a model, with its pane
     return Math.max(300, Number((n.box || {}).w) || 380);
-  if (n && n.kind === "input")             // …and the input's own editor: roomy
+  if (n && n.kind === "input" && !BX.up)   // …and the input's own editor: roomy
     return Math.max(240, Number((n.box || {}).w) || 420);   // by default, so its
-  if (n && n.kind === "output")            // content fits; the corner adjusts it
+  if (n && n.kind === "output" && !BX.up)  // content fits; the corner adjusts it
     return Math.max(240, Number((n.box || {}).w) || 420);
   if (n && n.kind === "heatmap")           // a window for the picture it draws
     return Math.max(220, Number((n.box || {}).w) || 360);
@@ -5987,9 +5987,9 @@ function bxNodeH(n) {
     return Math.max(140, Number((n.box || {}).h) || 240);
   if (n && n.kind === "custom" && n.model)
     return Math.max(150, Number((n.box || {}).h) || 220);
-  if (n && n.kind === "input")
+  if (n && n.kind === "input" && !BX.up)
     return Math.max(120, Number((n.box || {}).h) || 280);
-  if (n && n.kind === "output")
+  if (n && n.kind === "output" && !BX.up)
     return Math.max(120, Number((n.box || {}).h) || 280);
   if (n && n.kind === "heatmap")
     return Math.max(140, Number((n.box || {}).h) || 320);
@@ -6440,12 +6440,17 @@ function bxStateText(st) {                     // the data a box carries, as con
     return bxNumText(st.mean);
   return "[" + sh.join("\u00d7") + "] \u00b7 \u03bc " + (st.mean == null ? "?" : bxNumText(st.mean));
 }
+function bxPlainPort(n) {                      // a nested boundary port: a box,
+  return !!n && !!BX.up && (n.kind === "input" || n.kind === "output");
+}                                              // and nothing painted on it
 function bxHasPane(n) {                        // a box whose card holds an editor
-  return !!n && (n.kind === "agent" || n.kind === "train" ||
-                 n.kind === "dataset" || n.kind === "select" || n.kind === "config" ||
-                 (n.kind === "custom" && n.model) ||      // a model's own window
-                 n.kind === "input" || n.kind === "output" ||
-                 n.kind === "heatmap");
+  if (!n) return false;
+  if (n.kind === "input" || n.kind === "output")
+    return !BX.up;                             // inside a nested box they are the
+  return (n.kind === "agent" || n.kind === "train" ||   // boundary's ports: a box
+          n.kind === "dataset" || n.kind === "select" ||  // and nothing else —
+          n.kind === "config" || (n.kind === "custom" && n.model) ||  // no editor,
+          n.kind === "heatmap");               // no readout, no run button
 }
 function bxCard(n) {
   const preview = String(n.id || "").indexOf("pal-") === 0;   // palette chrome
@@ -6556,7 +6561,7 @@ function bxCard(n) {
       g.appendChild(svgText(n.x + 9, n.y + 48,
                             bxClip(bxTaskProgress(task) || bxTaskChip(task), 24),
                             "dstate rev"));
-    else if (stateText)
+    else if (stateText && !bxPlainPort(n))
       g.appendChild(svgText(n.x + 9, n.y + 48, bxClip(stateText, 24), "dstate"));
   }
   const dot = (at, dir, i, size) => {
@@ -10668,7 +10673,7 @@ function bxDblClick(ev) {
   const n = id ? bxNode(id) : null;
   if (n && n.kind === "custom") { ev.preventDefault(); bxEnter(n.id); return; }
   if (n && (n.kind === "agent" || n.kind === "train" || n.kind === "dataset" ||
-            n.kind === "input" || n.kind === "output")) {
+            ((n.kind === "input" || n.kind === "output") && !BX.up))) {
     ev.preventDefault();                       // a display box: expand / shrink
     if (n.kind === "dataset") bxDatasetExpand(n);
     else if (n.kind === "input") bxInputExpand(n);

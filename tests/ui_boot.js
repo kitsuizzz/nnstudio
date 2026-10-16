@@ -4739,6 +4739,41 @@ check("the output's training tab: the switch, the plan, and the input's dots", (
   __t.bxRemove(sel.id);
 });
 
+check("inside a nested box, input and output are plain boxes", () => {
+  for (const n of __t.BX.nodes.slice()) __t.bxRemove(n.id);
+  const m = __t.bxAddTemplate("model", 0, 0, "net");
+  __t.bxEnter(m.id);
+  const bin = __t.bxBoundary(m, "in")[0], bout = __t.bxBoundary(m, "out")[0];
+  ok(!!bin && !!bout, "the skeleton's boundary boxes are there");
+  ok(!__t.bxHasPane(bin) && !__t.bxHasPane(bout),
+     "inside, neither gets a window \u2014 no editor, no readout, no run button");
+  ok(__t.bxNodeW(bin) < 300 && __t.bxNodeH(bin) <= 200,
+     "they are plain cards: " + [__t.bxNodeW(bin), __t.bxNodeH(bin)].join("\u00d7"));
+  __t.bxDataState = {};
+  __t.bxDataState[bin.id] = { shape: [1, 4], mean: 1.5 };   // pretend data arrived
+  const card = __t.bxCard(bin);
+  ok(!card.children.some(c => String(c.className).split(/\s+/).includes("bxlogfo")),
+     "\u2026and the card paints no pane at all");
+  ok(!card.children.some(c => String(c.className).split(/\s+/).includes("dstate")),
+     "\u2026nor a data line, even when values passed through");
+  __t.bxLeave();
+  // the top level keeps the real thing
+  const ti = __t.bxAdd("input", 600, 0, { dout: 4 });
+  const to = __t.bxAdd("output", 600, 300, { din: 4 });
+  ok(__t.bxHasPane(ti) && __t.bxHasPane(to),
+     "at the top level both keep their windows");
+  ok(__t.bxNodeW(ti) >= 420 && __t.bxNodeW(to) >= 420, "\u2026roomy, as ever");
+  {
+    const d = document.createElement("div");
+    __t.bxInputFill(d, ti);
+    ok(d.querySelectorAll(".chip").map(e => e.textContent).join(" | ")
+         .indexOf("run the design") >= 0, "\u2026and the input keeps the run button");
+  }
+  __t.bxRemove(m.id);
+  __t.bxRemove(ti.id);
+  __t.bxRemove(to.id);
+});
+
 check("wrapping the weights: a flat design becomes a model, wired the same", () => {
   for (const n of __t.BX.nodes.slice()) __t.bxRemove(n.id);
   const i = __t.bxAdd("input", 0, 0, { dout: 4 });
