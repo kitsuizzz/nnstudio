@@ -204,6 +204,7 @@ globalThis.__t = {
   bxTensorDtype, bxApplyManifest,
   bxtDropsClose, bxtPaletteToggle, bxtImportToggle, bxtabToggle,
   bxTabsRender, bxTabNew, bxTabSave, bxTabSelect, bxTabOpenSaved, bxProject,
+  bxTabClose, bxTabAnyDirty, bxTabLoad,
   bxGGUFImport, bxGGUFImportApply, bxtVramToggle,
   bxSecret, bxCryptoReady, bxAuthCred, bxNameTag, bxSeal, bxUnseal,
   bxTokenRemember, bxTokenRecall, bxAccountLoad, bxtAccountToggle, bxAccountBuild,
@@ -4656,6 +4657,46 @@ check("the project tabs: named, starred, switched \u2014 and saved from the tab"
   __t.bxRemove(a.id);
   getEl("bxtabnote").textContent = "";
   eql(strip(), ["New Project 1*"], "the strip is tidy again");
+  // the × on a tab closes it — asking first when it holds unsaved work
+  const t3 = __t.bxTabNew();
+  const t4 = __t.bxTabNew();
+  getEl("bxtabrail").querySelectorAll(".bxtab")[2]
+    .querySelectorAll(".x")[0].click();        // the clean one: no question
+  ok(!__t.bxProject(t4.id), "…the × on a clean tab closes it quietly");
+  const asked = [];
+  global.confirm = (msg) => { asked.push(String(msg)); return false; };
+  t3.dirty = true;
+  eql(__t.bxTabClose(t3.id), false, "a dirty tab is not closed without a yes");
+  ok(asked.length === 1 && asked[0].indexOf(t3.name) >= 0 &&
+     asked[0].indexOf("not saved") >= 0, "…the question names it and its state: "
+     + asked.join("|"));
+  global.confirm = () => true;
+  eql(__t.bxTabClose(t3.id), true, "…with a yes it closes");
+  eql(__t.bxProject().name, "New Project 1", "…and the neighbour takes the screen");
+  ok(__t.bxTabAnyDirty(), "\u2026the boot tab\u2019s own star is what is left");
+  // the last tab closing lands a fresh blank — then the boot canvas comes back
+  const doc = t1b.doc, view = t1b.view;
+  eql(__t.bxTabClose(t1b.id), true, "the last tab closes too");
+  const fresh = __t.bxProject();
+  ok(fresh && fresh.id !== t1b.id && fresh.name.indexOf("New Project ") === 0,
+     "…a fresh blank replaces it: " + (fresh && fresh.name));
+  __t.bxTabLoad(fresh, doc);                   // put the boot canvas back whole
+  fresh.name = "New Project 1";
+  fresh.view = view;
+  fresh.dirty = true;
+  __t.bxTabsRender();
+  delete global.confirm;
+  eql(strip(), ["New Project 1*"], "the strip is tidy again");
+});
+
+check("the toolbar sits on top, the project tabs below the canvas", () => {
+  const h = fs.readFileSync(UI, "utf8");       // the page's own order, static HTML
+  const iTools = h.indexOf('<div class="bxtools"'), iRow = h.indexOf('<div class="bxrow"'),
+        iTabs = h.indexOf('<div class="bxtabs"');
+  ok(iTools >= 0 && iRow > iTools && iTabs > iRow,
+     "tools first, then the canvas, then the tabs");
+  ok(/class="[^"]*up[^"]*" id="bxtabMenu"/.test(h),
+     "\u2026and the + menu opens upward from the bottom strip");
 });
 
 check("the view cannot be lost: a tight world around origin and design", () => {

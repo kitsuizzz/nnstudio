@@ -838,6 +838,7 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
            border-radius: 0; box-shadow: 0 12px 30px rgba(0,0,0,.5); }
 .bxtdrop[hidden] { display: none; }
 .bxtdrop-r { left: auto; right: 10px; }
+.bxtdrop.up { top: auto; bottom: 32px; }
 #bxtVramMenu { min-width: 268px; }
 #bxtVramMenu .bxvram { border: 0; background: transparent; padding: 0; }
 /* the Backend menu: Local (connect a computer of your own) or Remote (Modal,
@@ -939,20 +940,23 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
          font: 12px var(--mono); color: var(--ink); white-space: nowrap; }
 .bxtmi:hover { background: rgba(255,255,255,.07); }
 .bxtspace { flex: 1 1 auto; }
-/* the project tabs: a browser-style strip above the toolbar */
-.bxtabs { position: relative; display: flex; align-items: flex-end; gap: 6px;
-          padding: 0 2px; margin: 0 0 10px; border-bottom: 1px solid var(--panel-brd); }
+/* the project tabs: a browser-style strip below the canvas */
+.bxtabs { position: relative; display: flex; align-items: flex-start; gap: 6px;
+          padding: 0 2px; margin: 10px 0 0; border-top: 1px solid var(--panel-brd); }
 .bxtabrail { display: flex; align-items: flex-end; gap: 3px; min-width: 0;
              overflow: hidden; }
 .bxtab { display: flex; align-items: center; gap: 7px; cursor: pointer;
          font: 600 12px var(--mono); color: var(--ink-dim); max-width: 240px;
          padding: 6px 14px 7px; border: 1px solid var(--panel-brd);
-         border-bottom: none; background: rgba(0,0,0,.18); white-space: nowrap;
+         border-top: none; background: rgba(0,0,0,.18); white-space: nowrap;
          user-select: none; transition: color .15s, background .15s; }
 .bxtab:hover { color: var(--ink); }
 .bxtab.on { color: var(--accent); background: rgba(249,115,22,.08); }
 .bxtab .nm { overflow: hidden; text-overflow: ellipsis; }
 .bxtab .star { color: var(--warm); }
+.bxtab .x { color: var(--ink-faint); font: 700 12px var(--mono);
+            padding: 0 2px; margin-left: 2px; }
+.bxtab .x:hover { color: var(--err); }
 .bxtabnote { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
              white-space: nowrap; color: var(--ink-faint); font: 11px var(--mono);
              padding: 0 8px 6px; }
@@ -1029,12 +1033,6 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
 
 <main>
   <section id="view-training" class="view">
-    <div class="bxtabs">
-      <div class="bxtabrail" id="bxtabrail"></div>
-      <span class="bxtabnote" id="bxtabnote"></span>
-      <span class="bxtabadd" id="bxtabadd" title="open another canvas">+</span>
-      <div class="bxtdrop bxtdrop-r" id="bxtabMenu" hidden></div>
-    </div>
     <div class="bxtools" id="bxtools">
       <span class="bxtbtn" id="bxtDocs" title="the handbook: what this is, how to use the boxes"
             onclick="window.open('/docs', '_blank')">Docs</span>
@@ -1057,7 +1055,13 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
         <div class="bxtip" id="bxtip" hidden></div>
       </div>
     </div>
-  </section>
+  <div class="bxtabs">
+      <div class="bxtabrail" id="bxtabrail"></div>
+      <span class="bxtabnote" id="bxtabnote"></span>
+      <span class="bxtabadd" id="bxtabadd" title="open another canvas">+</span>
+      <div class="bxtdrop bxtdrop-r up" id="bxtabMenu" hidden></div>
+    </div>
+    </section>
 </main>
 
 <script>
@@ -8143,6 +8147,29 @@ function bxTabSelect(id) {
   bxTabsSay("");
   return bxTabLoad(bxProject(id));
 }
+function bxTabAnyDirty() {                     // any tab holding what the
+  return (BX.projects || []).some(p => !!p.dirty);   // server has not seen
+}                                              // (the page guard reads this)
+function bxConfirm(msg) {                      // the browser's own question —
+  return typeof confirm === "function" ? !!confirm(msg) : true;   // none in tests
+}
+function bxTabClose(id) {                      // ×: close one project, asking
+  const p = bxProject(id);                     // first when it holds unsaved work
+  if (!p) return false;
+  if (p.dirty && !bxConfirm("“" + p.name + "” has changes that are not "
+                            + "saved — close it anyway?"))
+    return false;
+  const wasActive = p.id === BX.active;
+  BX.projects = (BX.projects || []).filter(x => x.id !== p.id);
+  if (wasActive) {
+    const next = BX.projects[BX.projects.length - 1];
+    BX.active = next ? next.id : null;
+    if (next) bxTabLoad(next);                 // a neighbour keeps the screen
+    else bxTabNew();                           // the last one: a fresh blank
+  }
+  bxTabsRender();
+  return true;
+}
 function bxTabNew() {                          // a blank canvas, its own tab
   bxTabStash();
   const p = { id: bxId(), name: "New Project " + (bxTabSeq++), dirty: false, saved: false };
@@ -8230,11 +8257,27 @@ function bxTabsRender() {                      // the strip, its stars, the note
     t.appendChild(mk("span", { class: "nm", text: p.name }));
     if (p.dirty)
       t.appendChild(mk("span", { class: "star", text: "*", title: "changes not saved" }));
+    const x = mk("span", { class: "x", text: "\u00d7", title: "close this project" });
+    x.addEventListener("click", (ev) => {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      bxTabClose(p.id);
+    });
+    t.appendChild(x);
     t.addEventListener("click", () => bxTabSelect(p.id));
     rail.appendChild(t);
   }
   const note = $("bxtabnote");
   if (note) note.textContent = BXTAB.msg || "";
+}
+// a page that would take unsaved projects with it asks first (the browser's
+// own guard, on reload or close)
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("beforeunload", (ev) => {
+    if (!bxTabAnyDirty()) return;
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (ev) ev.returnValue = "";
+    return "";
+  });
 }
 function bxtabToggle() {
   const m = $("bxtabMenu");
