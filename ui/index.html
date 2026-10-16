@@ -1946,11 +1946,11 @@ function bxAnyModel() {                       // any nested model on the canvas
   return hit;
 }
 function bxTrainNotch(n, w) {                  // the Training box's socket: cut
-  const m = n && n.model ? bxFindBox(n.model) : null;   // to the model's own
-  const W = Math.max(120, w);                  // width, a third of a card deep
-  const mw = Math.max(60, Math.min(m ? bxNodeW(m) : BXW, W - 24));
-  return { x: Math.round((W - mw) / 2), w: mw, d: Math.round(BXH * 0.3),
-           mh: m ? bxNodeH(m) : BXH };
+  const m = n && n.model ? bxFindBox(n.model) : null;   // to the model's whole
+  const W = Math.max(120, w);                  // card — insert one and the
+  const mw = Math.max(60, Math.min(m ? bxNodeW(m) : BXW, W - 24));  // bite is
+  return { x: Math.round((W - mw) / 2), w: mw,   // filled: the card is a
+           d: m ? bxNodeH(m) : BXH };            // rectangle again
 }
 function bxDockModel(tid, mid) {               // a model into that gap: it becomes
   const t = bxNode(tid), m = bxNode(mid);      // the architecture the box trains
@@ -5866,7 +5866,7 @@ function bxJSONNode(n) {
   else if (n.kind === "train" || n.kind === "config" || n.kind === "training") {
     bxTrainDoc(o, n);                    // a hub carries the same fields, old or new
     const d = n.kind === "config" ? { w: 360, h: 240 }
-            : n.kind === "training" ? { w: 340, h: 260 } : { w: 480, h: 320 };
+            : n.kind === "training" ? { w: 340, h: 300 } : { w: 480, h: 320 };
     if (n.box) o.box = { w: Math.round(n.box.w || d.w), h: Math.round(n.box.h || d.h) };
     if (n.kind === "train") {
       if (n.panel) o.panel = n.panel;    // {expand} — the display's size
@@ -6288,7 +6288,7 @@ function bxJSONNodeFrom(o) {
   else if (o.kind === "train" || o.kind === "config" || o.kind === "training") {
     bxTrainNode(o, n);
     const dw = o.kind === "config" ? 360 : o.kind === "training" ? 340 : 480;
-    const dh = o.kind === "config" ? 240 : o.kind === "training" ? 260 : 320;
+    const dh = o.kind === "config" ? 240 : o.kind === "training" ? 300 : 320;
     if (o.box && typeof o.box === "object")
       n.box = { w: bxSize(o.box.w, dw), h: bxSize(o.box.h, dh) };
     if (o.kind === "train" && o.panel && typeof o.panel === "object") {
@@ -6533,7 +6533,7 @@ function bxNodeH(n) {
   if (n && n.kind === "dataset")
     return Math.max(180, Number((n.box || {}).h) || 300);
   if (n && n.kind === "training")
-    return Math.max(170, Number((n.box || {}).h) || 260);
+    return Math.max(220, Number((n.box || {}).h) || 300);
   if (n && (n.kind === "select" || n.kind === "config"))
     return Math.max(140, Number((n.box || {}).h) || 240);
   if (n && n.kind === "input" && !BX.up)
@@ -7039,8 +7039,9 @@ function bxCard(n) {
     g.appendChild(svg("rect", { x: n.x + w - 9, y: n.y + 2, width: 18, height: h - 4, rx: 7,
                                 class: "drail out", "data-node": n.id }));
   const isSheet = n.kind === "dataset";       // its sheet is inset inside the card
+  const seated = !!(n.kind === "training" && n.model && bxFindBox(n.model));
   const slot = n.kind === "training" ? bxTrainNotch(n, w) : null;   // the model's
-  if (slot)                                   // socket: the top edge steps in
+  if (slot && !seated)                        // empty: the top edge steps in —
     g.appendChild(svg("path", { class: "drect", "data-node": n.id,
                                 d: "M " + n.x + " " + (n.y + h)
                                  + " L " + n.x + " " + n.y
@@ -7058,12 +7059,11 @@ function bxCard(n) {
     g.appendChild(svg("rect", { x: n.x + slot.x, y: n.y - 0.5,   // on the notch
                                 width: slot.w, height: slot.d + 0.5,   // docks too
                                 class: "dslothit" }));
-    if (!(n.model && bxFindBox(n.model)))     // empty: a ghost of the model card,
-      g.appendChild(preview                    // standing in the socket \u2014 or
-        ? svg("rect", { x: n.x + slot.x, y: n.y + 1.5, width: slot.w,
-                        height: slot.d - 1.5, class: "dslot" })   // a thin band
-        : svg("rect", { x: n.x + slot.x, y: n.y + slot.d - slot.mh,   // on canvas
-                        width: slot.w, height: slot.mh, rx: 9, class: "dslot" }));
+    if (!seated)                              // empty: a dashed ghost of a model
+      g.appendChild(svg("rect", { x: n.x + slot.x + 2, y: n.y + 2,  // card, sitting
+                                  width: Math.max(20, slot.w - 4),   // in the socket
+                                  height: Math.max(16, slot.d - 4),
+                                  rx: 9, class: "dslot" }));
   }
   g.appendChild(svgText(n.x + 9, n.y + 15,
                         slot ? bxClipFit(bxKindLabel(n.kind), slot.x - 12, 7)
@@ -7091,7 +7091,8 @@ function bxCard(n) {
     g.appendChild(svgText(n.x + rightX, n.y + 15, n.place === "gpu" ? "gpu" : "sys",
                           "dplace " + (n.place === "gpu" ? "gpu" : "sys")));
   g.appendChild(svgText(n.x + 9, n.y + 32,
-                        bxClipFit(n.name || bxKindLabel(n.kind), w, 7), "dlabel"));
+                        bxClipFit(n.name || bxKindLabel(n.kind),
+                                  slot ? slot.x - 12 : w, 7), "dlabel"));
   // the value line sits at the bottom of the card, so it is never cut
   const unset = (n.kind === "layer") ? (n.din == null || n.dout == null)
               : (n.kind === "embed") ? (n.vocab == null || n.dout == null)
@@ -7118,10 +7119,11 @@ function bxCard(n) {
                           Math.round(100 * bxTaskFraction(task)) + "%", "dringnum"));
   }
   if ((bxHasPane(n)) && !preview) {
-    const fo = svg("foreignObject",       // the display lives inside the card
-                   { x: n.x + 5, y: n.y + 40,
+    const ps = slot ? slot.d + 6 : 40;    // a Training box's pane starts below
+    const fo = svg("foreignObject",       // the socket: the model never covers it
+                   { x: n.x + 5, y: n.y + ps,
                      width: Math.max(80, w - 10),
-                     height: Math.max(40, h - 46), class: "bxlogfo" });
+                     height: Math.max(40, h - ps - 6), class: "bxlogfo" });
     const pane = mk("div", { class: "bxlogpane" });
     pane.setAttribute("data-agent", n.id);
     bxPaneFill(pane, n);

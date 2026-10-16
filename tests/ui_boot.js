@@ -5501,7 +5501,7 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   const keep = __t.BX.nodes.length;
   const t = __t.bxAdd("training", 0, 0, {});
   eql(t.kind, "training", "it lands as its own kind");
-  eql([__t.bxNodeW(t), __t.bxNodeH(t)], [340, 260], "roomy by default");
+  eql([__t.bxNodeW(t), __t.bxNodeH(t)], [340, 300], "roomy by default");
   ok(__t.bxTraining(t), "it carries a training run");
   eql([__t.bxPortDefs(t, "in").length, __t.bxPortDefs(t, "out").length], [3, 1],
       "three splits in, the result out");
@@ -5510,9 +5510,13 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
      "the card's outline is a stepped path \u2014 the U");
   eql(g.querySelectorAll(".dslot").length, 1,
       "\u2026with a dashed ghost of a model card");
-  eql(Number(g.querySelectorAll(".dslot")[0]._attrs.width), 160,
-      "\u2026cut to the model's own width");
+  const ghost = g.querySelectorAll(".dslot")[0];
+  eql([Number(ghost._attrs.width), Number(ghost._attrs.height),
+       Number(ghost._attrs.y)], [156, 76, 2],
+      "\u2026a model card's own size, sitting in the socket");
   eql(g.querySelectorAll(".dslothit").length, 1, "\u2026and its own hit area");
+  eql(Number(g.querySelectorAll(".bxlogfo")[0]._attrs.y), 86,
+      "\u2026the pane starting below it");
   eql(__t.bxShape(t), "no model in the slot", "and the card says so: " + __t.bxShape(t));
   // the slot: a model dropped in becomes the architecture
   const m = __t.bxAdd("custom", 700, 0, {});
@@ -5520,13 +5524,18 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   ok(__t.bxDockModel(t.id, m.id), "a model docks into the notch");
   eql(t.model, m.id, "\u2026and the box names it");
   const slot = __t.bxTrainNotch(t, __t.bxNodeW(t));
-  eql(slot.w, __t.bxNodeW(m), "the notch is cut to the model's width");
+  eql([slot.w, slot.d], [__t.bxNodeW(m), __t.bxNodeH(m)],
+      "the notch is cut to the model's whole card");
   eql([m.x, m.y],
       [Math.round(t.x + slot.x + (slot.w - __t.bxNodeW(m)) / 2),
        Math.round(t.y + slot.d - __t.bxNodeH(m))],
       "\u2026and the model snaps into the socket: " + m.x + "," + m.y);
   eql(__t.bxShape(t), "net \u00b7 supervised", "the card reads the model: " + __t.bxShape(t));
-  eql(__t.bxCard(t).querySelectorAll(".dslot").length, 0, "\u2026and the slot fills");
+  const g2 = __t.bxCard(t);
+  eql(g2.querySelectorAll(".dslot").length, 0, "\u2026and the slot fills");
+  ok(!g2.children.some(c => c._attrs && c._attrs.d != null),
+     "\u2026the outline closes: the card is a rectangle now");
+  eql(m.y, t.y, "\u2026the model flush with the top edge");
   // the wires land in the fields: train / test / validation
   const ds = __t.bxAdd("input", 0, 400, {});
   __t.bxConfigure(ds.id, { input_mode: "dataset" });
@@ -5555,7 +5564,7 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   const back = __t.bxJSONNodeFrom(__t.bxJSONNode(t));
   eql([back.kind, back.model, back.dataset, back.test_dataset, back.val_dataset],
       ["training", m.id, ds.id, d2.id, d3.id], "\u2026and the design carries them");
-  eql([__t.bxNodeW(back), __t.bxNodeH(back)], [340, 260], "\u2026its own size, too");
+  eql([__t.bxNodeW(back), __t.bxNodeH(back)], [340, 300], "\u2026its own size, too");
   __t.bxRemove(d3.id);
   __t.bxRemove(d2.id);
   __t.bxRemove(ds.id);
