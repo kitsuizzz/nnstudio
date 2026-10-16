@@ -1322,7 +1322,7 @@ const BX_ACTS = ["none", "relu", "leaky relu", "gelu", "gelu_pytorch_tanh", "sil
 const BX_OPS = ["transpose", "dot product", "matmul", "concat", "add", "subtract", "multiply",
                 "divide", "rope", "scale", "topk", "conv1d", "scan", "reshape",
                 "permute", "repeat", "mask", "slice", "zeros", "upsample",
-                "timestep"];
+                "timestep", "mean"];
 // op attrs a spec may add that the UI itself does not model — they must
 // survive the canvas round trip, or a run reaches the engine stripped:
 // `keep` (reshape preserves leading dims) and the gated delta rule's heads /
@@ -1332,7 +1332,7 @@ const BX_OP_EXTRAS = ["keep", "k_heads", "k_dim", "heads", "head_dim", "partial"
 // shape-changers: a contraction or a selection has a shape of its own, so their
 // dots stay unknown (they never make a wire wrong)
 const BX_OPAQUE = ["matmul", "topk", "scan", "permute", "repeat", "mask", "slice", "zeros",
-                   "upsample", "timestep"];
+                   "upsample", "timestep", "mean"];
 // kinds whose boxes hold no size of their own: the wire's size passes through
 const BX_UNSIZED = ["act", "op", "norm", "attn", "ssm", "moe", "script", "hf",
                     "dataset", "loss", "reward", "train", "select", "config",
@@ -2107,10 +2107,11 @@ function bxViTDoc(opts) {                      // a vision transformer: the imag
     last = res2;
     x += 7;
   }
-  const head = mk("norm", "head norm", col(x), 0, { norm: "rms", eps: 1e-6 });
-  const fc = mk("layer", "head", col(x + 1), 0, { din: d, dout: classes });
-  const iout = mk("output", "classes", col(x + 2), 0, { din: classes });
-  link(last, head); link(head, fc); link(fc, iout);
+  const pool = mk("op", "mean pool", col(x), 0, { op: "mean", dim: -2 });
+  const head = mk("norm", "head norm", col(x + 1), 0, { norm: "rms", eps: 1e-6 });
+  const fc = mk("layer", "head", col(x + 2), 0, { din: d, dout: classes });
+  const iout = mk("output", "classes", col(x + 3), 0, { din: classes });
+  link(last, pool); link(pool, head); link(head, fc); link(fc, iout);
   return doc;
 }
 function bxModelDoc() {                       // a model: the box the architecture
@@ -10597,7 +10598,7 @@ function bxForm(kind, ev, node, mode) {
       for (const l of slice) l.hidden = f.op.value !== "slice";
       attr(f.factor, ["scale", "upsample"]);
       attr(f.repeats, ["repeat"]);
-      attr(f.dim, ["repeat"]);
+      attr(f.dim, ["repeat", "mean"]);
       attr(f.axes, ["permute"]);
       attr(f.maskMode, ["mask", "upsample"]);
       attr(f.window, ["mask"]);
@@ -10632,6 +10633,7 @@ function bxForm(kind, ev, node, mode) {
         if (f.repeats) v.repeats = f.repeats.value;
         if (f.dim) v.dim = f.dim.value;
       }
+      if (o === "mean") { if (f.dim) v.dim = f.dim.value; }
       if (o === "permute") { if (f.axes) v.axes = f.axes.value; }
       if (o === "mask") { if (f.window) v.window = f.window.value; }
       if (o === "rope") { if (f.theta) v.theta = f.theta.value; }
