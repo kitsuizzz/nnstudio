@@ -4829,7 +4829,7 @@ function bxTrainFill(pane, n) {                   // the server config: the back
   bxTrainSpec(body);
   body.scrollTop = keepTop;
 }
-function bxTrainPlan(body, n) {                 // the training, in the window it lives
+function bxTrainPlan(body, n, noStart) {       // the training, in the window it lives
   // in: what it needs, where it stands, and the controls that drive it
   const st = (BXRUN.trainState || {})[n.id] || {};
   const t = n.task_id ? bxTask(n.task_id) : null;
@@ -4928,10 +4928,11 @@ function bxTrainPlan(body, n) {                 // the training, in the window i
     row.appendChild(chip("detach", () => bxTrainCmd(n, "detach"), "checkpoint and let the gpu go"));
   } else {
     const first = sum.missing[0] || "ready";
-    row.appendChild(chip("start \u2014 " + first,
-      () => bxTrainStart(n),
-      sum.missing.length ? "fix before starting: " + sum.missing.join("; ") : "start training",
-      !!sum.missing.length));
+    if (!noStart)                              // a Training box keeps its start
+      row.appendChild(chip("start \u2014 " + first,  // button in the footer instead
+        () => bxTrainStart(n),
+        sum.missing.length ? "fix before starting: " + sum.missing.join("; ") : "start training",
+        !!sum.missing.length));
     if (n.task_id)
       row.appendChild(chip("resume", () => bxTrainCmd(n, "resume"),
         "pick up from the last checkpoint"));
@@ -10421,8 +10422,8 @@ function bxConfigFill(pane, n) {               // the train config: every settin
     field("max tokens (rl)", num("max_tokens", n.max_tokens != null ? n.max_tokens : 16));
     field("n samples (rl)", num("n_samples", n.n_samples != null ? n.n_samples : 4));
   }
-  if (n.model) bxTrainPlan(body, n);          // the experiment's own readout
-}
+  if (n.model) bxTrainPlan(body, n, n.kind === "training");   // the experiment's
+}                                              // own readout
 function bxTrainingFill(pane, n) {             // the Training box's window: the
   bxConfigFill(pane, n);                       // config's knobs, and the slot's
   const m = n.model ? bxFindBox(n.model) : null;   // state \u2014 the shape of
@@ -10438,6 +10439,32 @@ function bxTrainingFill(pane, n) {             // the Training box's window: the
     un.addEventListener("click", () => bxUndockModel(n.id));
     pane.appendChild(un);
   }
+  pane.appendChild(bxTrainFoot(n));            // the start button, in a footer of
+}                                              // its own at the window's bottom left
+
+function bxTrainFoot(n) {                      // \u2026like the input's run button:
+  const foot = mk("div", { class: "runfoot" });   // where the run is, the way to
+  const runbar = mk("div", { class: "rrow" });    // start it
+  const sum = bxTrainSummary(n);
+  const t = n.task_id ? bxTask(n.task_id) : null;
+  const st = (BXRUN.trainState || {})[n.id] || {};
+  const live = !!n.task_id && !st.error && (!t || t.status === "running");
+  const slotted = !!(n.model && bxFindBox(n.model));
+  const why = live ? "the task is live \u2014 save, hold or detach it above"
+        : !bxtRunEnabled() ? "connect a backend first \u2014 Backend \u25be"
+        : !slotted ? "the slot is empty \u2014 drop a model box into the notch"
+        : sum.missing.length ? "fix before starting: " + sum.missing[0]
+        : null;
+  const go = mk("span", { class: "chip tiny play" + (why ? " off" : ""),
+                          text: live ? "training\u2026" : "\u25b6 start training" });
+  go.title = why || "the whole run, on the backend";
+  go.addEventListener("click", () => {
+    if (why) { bxTrainNote(n, why); return; }
+    bxTrainStart(n);
+  });
+  runbar.appendChild(go);
+  foot.appendChild(runbar);
+  return foot;
 }
 function bxTrainWireConfig(cfg) {              // one click: into the input's first dot
   let input = null;

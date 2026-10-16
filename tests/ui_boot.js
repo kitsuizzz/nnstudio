@@ -5662,6 +5662,19 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   __t.bxTrainingFill(pane, t);
   const text = pane.querySelectorAll(".panehint").map(e => e.textContent).join("|");
   ok(text.indexOf("slot: net") >= 0, "the window reads the slot: " + text.slice(0, 90));
+  // the start button sits in a footer of its own at the window's bottom left
+  const foot = pane.querySelectorAll(".runfoot")[0];
+  ok(foot, "the window has a run footer at its bottom left");
+  const go = foot && foot.querySelectorAll(".chip")[0];
+  ok(go && String(go.textContent).indexOf("start training") >= 0,
+     "\u2026with the start-training button: " + (go && go.textContent));
+  ok(go && String(go.className).indexOf("off") >= 0,
+     "\u2026dimmed until a backend is connected: " + (go && go.className));
+  ok(go && /backend|fix before starting/.test(String(go.title)),
+     "\u2026saying why: " + (go && go.title));
+  ok(!pane.querySelectorAll(".chip")
+        .some(c => String(c.textContent).indexOf("start \u2014") === 0),
+     "\u2026and the plan's own start chip gives way to it");
   // the design's JSON carries it all
   const back = __t.bxJSONNodeFrom(__t.bxJSONNode(t));
   eql([back.kind, back.model, back.dataset, back.test_dataset, back.val_dataset],
