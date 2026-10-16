@@ -272,6 +272,7 @@ for (const n of __t.BX.nodes.slice()) __t.bxRemove(n.id);
 let failed = 0;
 const pending = [];                             // async checks: the summary waits for them
 function check(name, fn) {
+  if (process.env.DUMP_TEMPLATES) return;    // a dump run only boots the script
   const done = (e) => {
     if (e) { failed++; console.log("  FAIL " + name + " — " + e.message);
              if (process.env.STACK) console.log(e.stack); }
@@ -409,14 +410,14 @@ check("the right-click menus: three add items, or remove", () => {
   const heads = () => menu.children.filter(c => String(c.className).split(/\s+/).includes("drop"));
   const openItems = () => menu.children.filter(c => c.className === "mi").map(c => c.textContent);
   eql(menu.children.map(c => c.textContent),
-    ["Model", "Layers", "Blocks", "Text", "Data", "Training", "Analysis", "AI",
-     "the design"],
+    ["Model", "Layers", "Blocks", "Vision", "Text", "Data", "Training",
+     "Analysis", "AI", "the design"],
     "the shelves are listed, all collapsed — the same ones the palette shows");
   ok(openItems().length === 0, "…with no items in sight");
   heads()[0].click();
   eql(menu.children.map(c => c.textContent),
-    ["Model", "model box", "Layers", "Blocks", "Text", "Data", "Training",
-     "Analysis", "AI", "the design"],
+    ["Model", "model box", "Layers", "Blocks", "Vision", "Text", "Data",
+     "Training", "Analysis", "AI", "the design"],
     "Model drops down into its box");
   eql(heads()[0].querySelectorAll(".chev")[0].textContent, "\u25be", "…and wears the open chevron");
   heads().find(c => c.textContent === "Layers").click();
@@ -562,6 +563,68 @@ check("the vision transformer: a whole trainable ViT from one card", () => {
   eql(cfg.model, vit.id, "\u2026and does");
   __t.bxRemove(cfg.id);
   __t.bxRemove(vit.id);
+  eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
+});
+
+check("the Vision shelf: the three architectures land as whole models", () => {
+  const keep = __t.BX.nodes.length;
+  __t.bxRenderPalette();
+  const menu = getEl("bxtPalMenu");
+  menu.children.find(c => c.textContent === "Vision").click();
+  eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
+    ["input", "output", "vit", "vae", "unet", "dit"],
+    "Vision holds the four architectures");
+  menu.children.find(c => c.textContent === "Vision").click();
+  // the VAE: encode down, decode up, pixels out
+  const vae = __t.bxAddTemplate("vae", 0, 0, "vae");
+  ok(vae.model === true, "a VAE is a model box");
+  eql([__t.bxPortDefs(vae, "in").length, __t.bxPortDefs(vae, "out").length], [1, 1],
+      "one picture in, one picture out");
+  const vnames = vae.inner.nodes.map(n => n.name).join(",");
+  ok(/encode 1/.test(vnames) && /latent/.test(vnames) && /upsample 1/.test(vnames)
+     && /to pixels/.test(vnames), "encode \u2192 latent \u2192 upsample \u2192 pixels: " + vnames);
+  const vconvs = vae.inner.nodes.filter(n => n.kind === "conv");
+  eql(vconvs[0].stride, 2, "the encoder strides down");
+  eql(vae.inner.nodes.filter(n => n.kind === "op" && __t.bxOpName(n) === "upsample").length,
+      2, "\u2026and the decoder upsamples twice");
+  eql(vae.inner.nodes.filter(n => n.kind === "output")[0].din, 32 * 32 * 3,
+      "the output dot is a 32\u00d732 picture's worth");
+  ok(String(__t.bxShape(vae)).indexOf("model") === 0, "its card says model");
+  ok(__t.bxParamsOf(vae) > 1000, "\u2026with weights: " + __t.bxParamsOf(vae));
+  __t.bxRemove(vae.id);
+  // the UNet: two dots in, a prediction out
+  const un = __t.bxAddTemplate("unet", 0, 0, "unet");
+  ok(un.model === true, "a UNet is a model box");
+  eql(__t.bxPortDefs(un, "in").length, 2, "two dots in \u2014 pixels and t");
+  const ins = un.inner.nodes.filter(n => n.kind === "input")
+               .sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  eql(ins.map(x => x.name), ["pixels", "t"], "\u2026pixels first, the step second");
+  const unames = un.inner.nodes.map(n => n.name).join(",");
+  ok(/down 1/.test(unames) && /skip 1/.test(unames) && /conv mid/.test(unames),
+     "down, middle, up with skips: " + unames.slice(0, 160));
+  ok(un.inner.nodes.some(x => x.kind === "op" && __t.bxOpName(x) === "timestep"),
+     "\u2026the step gets its embedding");
+  eql(un.inner.nodes.filter(x => x.kind === "output")[0].din, 32 * 32 * 3,
+      "the prediction is a picture");
+  __t.bxRemove(un.id);
+  // the DiT: patches + t in, the picture back out
+  const dit = __t.bxAddTemplate("dit", 0, 0, "dit");
+  ok(dit.model === true, "a DiT is a model box");
+  eql(__t.bxPortDefs(dit, "in").length, 2, "two dots in");
+  const dnames = dit.inner.nodes.map(n => n.name).join(",");
+  ok(/cut the grid/.test(dnames) && /patch embed/.test(dnames) && /t add 1/.test(dnames)
+     && /head/.test(dnames), "patchify, blocks, head: " + dnames.slice(0, 160));
+  eql(dit.inner.nodes.filter(n => n.kind === "layer" && n.name === "head")[0].dout,
+      8 * 8 * 3, "the head unpacks to patch pixels");
+  eql(dit.inner.nodes.filter(x => x.kind === "output")[0].din, 32 * 32 * 3,
+      "\u2026and the output is the image");
+  __t.bxRemove(dit.id);
+  // each can be the model a train config names
+  const cfg = __t.bxAdd("config", 600, 0, {});
+  const v2 = __t.bxAddTemplate("vae", 0, 0, "vae 2");
+  ok(__t.bxConfigure(cfg.id, { model: v2.id }), "a train config names the VAE");
+  __t.bxRemove(cfg.id);
+  __t.bxRemove(v2.id);
   eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
 });
 
@@ -1025,7 +1088,8 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   eql(top.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
     ["input", "output"], "Input and Output are the first cards, not a category");
   eql(menu.children.filter(c => c.className === "bxtcat").map(c => c.textContent),
-    ["Model", "Layers", "Blocks", "Text", "Data", "Training", "Analysis", "AI"],
+    ["Model", "Layers", "Blocks", "Vision", "Text", "Data", "Training",
+     "Analysis", "AI"],
     "and only the shelves are listed below");
   // the AI category holds the agent box
   menu.children.find(c => c.textContent === "AI").click();
@@ -1114,8 +1178,8 @@ check("no hf or custom card in the Palette \u2014 Import covers models, model co
   const menu = getEl("bxtPalMenu");
   const cards = () => menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind"));
   let all = [];
-  for (const name of ["Model", "Layers", "Blocks", "Text", "Data", "Training",
-                      "Analysis", "AI"]) {
+  for (const name of ["Model", "Layers", "Blocks", "Vision", "Text", "Data",
+                      "Training", "Analysis", "AI"]) {
     menu.children.find(c => c.textContent === name).click();
     all = all.concat(cards());
   }
@@ -1129,8 +1193,8 @@ check("no hf or custom card in the Palette \u2014 Import covers models, model co
   const nheads = () => nmenu.children.filter(
     x => String(x.className).split(/\s+/).includes("drop"));
   let items = [];
-  for (const name of ["Model", "Layers", "Blocks", "Text", "Data", "Training",
-                      "Analysis", "AI"]) {
+  for (const name of ["Model", "Layers", "Blocks", "Vision", "Text", "Data",
+                      "Training", "Analysis", "AI"]) {
     const h = nheads().find(x => x.textContent === name);
     if (!h) continue;
     h.click();
@@ -2899,8 +2963,8 @@ check("a nested box takes nested JSON and never a canvas", () => {
   const nheads = () => nmenu.children.filter(x => String(x.className).split(/\s+/).includes("drop"));
   const nopen = () => nmenu.children.filter(x => x.className === "mi").map(x => x.textContent);
   eql(nmenu.children.map(x => x.textContent),
-    ["Model", "Layers", "Blocks", "Text", "Data", "Training", "Analysis", "AI",
-     "the design"],
+    ["Model", "Layers", "Blocks", "Vision", "Text", "Data", "Training",
+     "Analysis", "AI", "the design"],
     "inside a nested box the shelves are all there, collapsed");
   nheads().find(x => x.textContent === "Model").click();
   eql(nopen(), ["model box"], "Model is there too — a model nests in a model");
@@ -5414,6 +5478,21 @@ check("the account: guests by default, a bot check to sign up, sealed designs", 
 });
 
 Promise.all(pending).then(() => {            // async checks report with the rest
+  if (process.env.DUMP_TEMPLATES) {          // the vision docs ride out whole,
+    const out = {};                          // for the engine tests to run them
+    for (const tpl of ["vit", "vae", "unet", "dit"]) {
+      const n = __t.bxAddTemplate(tpl, 0, 0, tpl);
+      out[tpl] = { model: !!n.model, inner: n.inner,
+                   in: __t.bxPortDefs(n, "in").map(p => ({
+                     name: p.node.name, dout: p.node.dout == null ? null : p.node.dout })),
+                   out: __t.bxPortDefs(n, "out").map(p => ({
+                     name: p.node.name, din: p.node.din == null ? null : p.node.din })) };
+      __t.bxRemove(n.id);
+    }
+    fs.writeFileSync(process.env.DUMP_TEMPLATES, JSON.stringify(out));
+    console.log("ui_boot: the vision templates were dumped (checks skipped)");
+    process.exit(0);
+  }
   if (failed) { console.log("ui_boot: " + failed + " failure(s)"); process.exit(1); }
   console.log("ui_boot: all assertions passed (" + __t.BX.nodes.length + " boxes on the canvas)");
   process.exit(0);

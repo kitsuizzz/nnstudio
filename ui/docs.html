@@ -218,11 +218,13 @@
         lives in the pipeline: <b>Model</b> (the architecture's box),
         <b>Layers</b> (what goes inside it — the table-carrying ones grey
         out at the top level: weights live inside a model), <b>Blocks</b>
-        (attention, state space, MoE), <b>Text</b> (the tokenizer pair),
+        (attention, state space, MoE), <b>Vision</b> (whole vision
+        architectures: a vision transformer, a VAE, a UNet and a DiT — each
+        card lands one model box), <b>Text</b> (the tokenizer pair),
         <b>Data</b> (a sheet, and rows as a matrix), <b>Training</b> (the train
         config, and the two signals it can use: a loss box and a reward box),
         <b>Analysis</b> (the heatmap) and <b>AI</b> (the agent). The canvas's
-        right-click menu is the same eight shelves.</li>
+        right-click menu is the same nine shelves.</li>
     <li><b>Bring a model in</b> — <span class="pill grey">Import ▾</span>
         offers two doors: <b>GGUF model …</b> and
         <b>Hugging Face model …</b> (a repo — a model box lands with its
@@ -716,13 +718,22 @@
       Tagged as a <span class="pill">model</span> (palette → <b>Model</b>),
       it is where trainable weights live; there is no palette card for a plain
       nested box — the model box nests inside itself just as well. The kind
-      stays for the <b>Blocks</b> templates and for the designs that predate
-      models — including the <b>vision transformer</b> (Blocks): one card
-      lands a whole trainable ViT — the image is cut into patches
-      (<code>reshape</code> + <code>permute</code>), embedded, run through
-      attention + MLP blocks with residuals, pooled (<code>mean</code>) and read
-      out by a head. It is a model: give it a train config and class labels and
-      it trains.</p>
+      stays for the templates and for the designs that predate models. The
+      <b>Vision</b> shelf lands whole architectures, each as one model box made
+      of ordinary boxes: the <b>vision transformer</b> cuts the picture into
+      patches (<code>reshape</code> + <code>permute</code>), embeds them, runs
+      attention + MLP blocks with residuals, pools (<code>mean</code>) and reads
+      out classes — give it a train config and class labels and it trains;
+      the <b>vae</b> strides the picture down to a latent map with
+      <code>conv</code> boxes, then upsamples and convolves back to pixels
+      (reconstruction is the unsupervised MSE run); the <b>unet</b> takes two
+      dots in — the picture and a timestep — striding down (each level
+      hearing the step's embedding), attending over the middle map, and
+      climbing back with the down levels as skips, one prediction out; and the
+      <b>dit</b> patchifies like the ViT, adds the step's embedding to the
+      tokens of every block, and unpacks the head's patches back into a picture.
+      Open any of them and edit — they are made of the same boxes you
+      would place yourself.</p>
       <p class="bfields"><b>Fields:</b> its <code>inner</code> network; where its
       weights read from (<code>file</code>, <code>t</code>), and the source
       <code>repo</code> when it came from a huggingface canvas. A whole model

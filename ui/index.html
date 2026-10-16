@@ -2055,6 +2055,40 @@ function bxMoEDoc(opts) {
   link(mu, iout);
   return doc;
 }
+function bxTxBlock(r, o) {                     // one transformer block: norm,
+  const { mk, link } = r;                      // attention, residual; norm, MLP,
+  const col = (i) => 190 * i;                  // residual. Wire o.from in, take
+  const x0 = o.x, tag = o.tag, d = o.d;        // the returned exit on — the
+  const y0 = o.y0 || 0;                        // boxes the ViT and the DiT lay
+  const norm1 = mk("norm", "norm " + tag, col(x0), y0 - 160,
+                   { norm: "rms", eps: 1e-6, size: d });
+  const q = mk("layer", "q proj " + tag, col(x0 + 1), y0 - 180, { din: d, dout: d });
+  const k = mk("layer", "k proj " + tag, col(x0 + 1), y0 - 60, { din: d, dout: d });
+  const v = mk("layer", "v proj " + tag, col(x0 + 1), y0 + 60, { din: d, dout: d });
+  const kt = mk("op", "k transposed", col(x0 + 2), y0 - 60, { op: "transpose" });
+  const sc = mk("op", "scores " + tag, col(x0 + 3), y0 - 120, { op: "matmul" });
+  const sm = mk("act", "softmax " + tag, col(x0 + 4), y0 - 120, { act: "softmax" });
+  const sv = mk("op", "mix " + tag, col(x0 + 5), y0 - 120, { op: "matmul" });
+  const op = mk("layer", "out proj " + tag, col(x0 + 6), y0 - 120, { din: d, dout: d });
+  const res1 = mk("op", "residual " + tag, col(x0 + 7), y0 - 120, { op: "add" });
+  const norm2 = mk("norm", "mlp norm " + tag, col(x0), y0 + 80,
+                   { norm: "rms", eps: 1e-6, size: d });
+  const up = mk("layer", "mlp up " + tag, col(x0 + 1), y0 + 80,
+                { din: d, dout: o.mlp });
+  const ga = mk("act", "gelu " + tag, col(x0 + 2), y0 + 80, { act: "gelu" });
+  const dn = mk("layer", "mlp down " + tag, col(x0 + 3), y0 + 80,
+                { din: o.mlp, dout: d });
+  const res2 = mk("op", "residual mlp " + tag, col(x0 + 4), y0 + 80, { op: "add" });
+  link(o.from, norm1);
+  link(norm1, q); link(norm1, k); link(norm1, v);
+  link(k, kt); link(q, sc, 0, 0); link(kt, sc, 0, 1);
+  link(sc, sm); link(sm, sv, 0, 0); link(v, sv, 0, 1);
+  link(sv, op); link(op, res1, 0, 0); link(o.from, res1, 0, 1);
+  link(res1, norm2);
+  link(norm2, up); link(up, ga); link(ga, dn);
+  link(dn, res2, 0, 0); link(res1, res2, 0, 1);
+  return { exit: res2 };
+}
 function bxViTDoc(opts) {                      // a vision transformer: the image
   opts = opts || {};                           // patches in, a class out — and
   const side = opts.image || 32;               // every box in it is trainable
@@ -2078,40 +2112,161 @@ function bxViTDoc(opts) {                      // a vision transformer: the imag
   link(iin, cut); link(cut, grid); link(grid, flat); link(flat, embed);
   let last = embed, x = 5;
   for (let b = 0; b < blocks; b++) {
-    const tag = b + 1;
-    // attention: norm → q/k/v → scores → softmax → ·v → out proj → residual
-    const norm1 = mk("norm", "norm " + tag, col(x), -160, { norm: "rms", eps: 1e-6 });
-    const q = mk("layer", "q proj " + tag, col(x + 1), -180, { din: d, dout: d });
-    const k = mk("layer", "k proj " + tag, col(x + 1), -60, { din: d, dout: d });
-    const v = mk("layer", "v proj " + tag, col(x + 1), 60, { din: d, dout: d });
-    const kt = mk("op", "k transposed", col(x + 2), -60, { op: "transpose" });
-    const sc = mk("op", "scores " + tag, col(x + 3), -120, { op: "matmul" });
-    const sm = mk("act", "softmax " + tag, col(x + 4), -120, { act: "softmax" });
-    const sv = mk("op", "mix " + tag, col(x + 5), -120, { op: "matmul" });
-    const op = mk("layer", "out proj " + tag, col(x + 6), -120, { din: d, dout: d });
-    const res1 = mk("op", "residual " + tag, col(x + 7), -120, { op: "add" });
-    // mlp: norm → up → gelu → down → residual
-    const norm2 = mk("norm", "mlp norm " + tag, col(x), 80, { norm: "rms", eps: 1e-6 });
-    const up = mk("layer", "mlp up " + tag, col(x + 1), 80, { din: d, dout: mlp });
-    const ga = mk("act", "gelu " + tag, col(x + 2), 80, { act: "gelu" });
-    const dn = mk("layer", "mlp down " + tag, col(x + 3), 80, { din: mlp, dout: d });
-    const res2 = mk("op", "residual mlp " + tag, col(x + 4), 80, { op: "add" });
-    link(last, norm1);
-    link(norm1, q); link(norm1, k); link(norm1, v);
-    link(k, kt); link(q, sc, 0, 0); link(kt, sc, 0, 1);
-    link(sc, sm); link(sm, sv, 0, 0); link(v, sv, 0, 1);
-    link(sv, op); link(op, res1, 0, 0); link(last, res1, 0, 1);
-    link(res1, norm2);
-    link(norm2, up); link(up, ga); link(ga, dn);
-    link(dn, res2, 0, 0); link(res1, res2, 0, 1);
-    last = res2;
+    last = bxTxBlock({ mk, link }, { x: x, y0: 0, tag: b + 1, d: d, mlp: mlp,
+                                     from: last }).exit;
     x += 7;
   }
   const pool = mk("op", "mean pool", col(x), 0, { op: "mean", dim: -2 });
-  const head = mk("norm", "head norm", col(x + 1), 0, { norm: "rms", eps: 1e-6 });
+  const head = mk("norm", "head norm", col(x + 1), 0,
+                  { norm: "rms", eps: 1e-6, size: d });
   const fc = mk("layer", "head", col(x + 2), 0, { din: d, dout: classes });
   const iout = mk("output", "classes", col(x + 3), 0, { din: classes });
   link(last, pool); link(pool, head); link(head, fc); link(fc, iout);
+  return doc;
+}
+function bxVAEDoc(opts) {                      // an autoencoder in its vision
+  opts = opts || {};                           // dress: convs stride the picture
+  const side = opts.image || 32;               // down to a latent map, then
+  const c = 3;                                 // upsample + convs bring it back
+  const ch = opts.channels || 16;              // up to pixels. An image (or a
+  const lat = opts.latent || 16;               // channel-first batch) in, pixels
+  const { doc, mk, link } = bxDocMaker();      // out: reconstruction is the
+  const col = (i) => 190 * i;                  // unsupervised MSE run.
+  const iin = mk("input", "pixels", 0, 0, { dout: side * side * c });
+  const e1 = mk("conv", "encode 1", col(1), -150,
+                { din: c, dout: ch, k: 3, stride: 2, pad: 1 });
+  const n1 = mk("norm", "norm e1", col(2), -150, { norm: "rms", eps: 1e-6, size: ch });
+  const a1 = mk("act", "silu e1", col(3), -150, { act: "silu" });
+  const e2 = mk("conv", "encode 2", col(4), -150,
+                { din: ch, dout: ch * 2, k: 3, stride: 2, pad: 1 });
+  const n2 = mk("norm", "norm e2", col(5), -150, { norm: "rms", eps: 1e-6, size: ch * 2 });
+  const a2 = mk("act", "silu e2", col(6), -150, { act: "silu" });
+  const lz = mk("conv", "latent", col(7), -150, { din: ch * 2, dout: lat, k: 1 });
+  const u1 = mk("op", "upsample 1", col(8), 150,
+                { op: "upsample", factor: 2, mode: "nearest" });
+  const d1 = mk("conv", "decode 1", col(9), 150, { din: lat, dout: ch, k: 3, pad: 1 });
+  const n3 = mk("norm", "norm d1", col(10), 150, { norm: "rms", eps: 1e-6, size: ch });
+  const a3 = mk("act", "silu d1", col(11), 150, { act: "silu" });
+  const u2 = mk("op", "upsample 2", col(12), 150,
+                { op: "upsample", factor: 2, mode: "nearest" });
+  const d2 = mk("conv", "decode 2", col(13), 150, { din: ch, dout: ch, k: 3, pad: 1 });
+  const n4 = mk("norm", "norm d2", col(14), 150, { norm: "rms", eps: 1e-6, size: ch });
+  const a4 = mk("act", "silu d2", col(15), 150, { act: "silu" });
+  const px = mk("conv", "to pixels", col(16), 150, { din: ch, dout: c, k: 3, pad: 1 });
+  const iout = mk("output", "pixels out", col(17), 150, { din: side * side * c });
+  link(iin, e1); link(e1, n1); link(n1, a1);
+  link(a1, e2); link(e2, n2); link(n2, a2); link(a2, lz);
+  link(lz, u1); link(u1, d1); link(d1, n3); link(n3, a3);
+  link(a3, u2); link(u2, d2); link(d2, n4); link(n4, a4);
+  link(a4, px); link(px, iout);
+  return doc;
+}
+function bxUNetDoc(opts) {                     // a UNet in miniature: convs
+  opts = opts || {};                           // stride down — each hearing the
+  const side = opts.image || 32;               // timestep's embedding — attention
+  const c = 3;                                 // over the middle map, then the
+  const ch = opts.channels || 16;              // up path climbs back, the two
+  const dn = ch * 2;                           // down levels riding along as
+  const { doc, mk, link } = bxDocMaker();      // skips. Two dots in — the noisy
+  const col = (i) => 190 * i;                  // picture and the step — one
+  const iin = mk("input", "pixels", 0, 0, { dout: side * side * c });  // prediction out.
+  const it = mk("input", "t", 0, 260);
+  const te = mk("op", "t embed", col(1), 260, { op: "timestep", width: 32 });
+  const tw = mk("layer", "t wide", col(2), 200, { din: 32, dout: dn });
+  const tn = mk("layer", "t narrow", col(2), 320, { din: 32, dout: ch });
+  const twv = mk("op", "t wide v", col(3), 200, { op: "reshape", dims: "1x1x" + dn });
+  const tnv = mk("op", "t narrow v", col(3), 320, { op: "reshape", dims: "1x1x" + ch });
+  const d1 = mk("conv", "down 1", col(4), 0, { din: c, dout: ch, k: 3, stride: 2, pad: 1 });
+  const t1 = mk("op", "t in 1", col(5), 0, { op: "add" });
+  const s1 = mk("act", "silu 1", col(6), 0, { act: "silu" });
+  const d2 = mk("conv", "down 2", col(7), 0, { din: ch, dout: dn, k: 3, stride: 2, pad: 1 });
+  const t2 = mk("op", "t in 2", col(8), 0, { op: "add" });
+  const s2 = mk("act", "silu 2", col(9), 0, { act: "silu" });
+  const fl = mk("op", "flatten mid", col(10), 0, { op: "reshape", dims: "64x" + dn });
+  const q = mk("layer", "q proj mid", col(11), -160, { din: dn, dout: dn });
+  const k = mk("layer", "k proj mid", col(11), 0, { din: dn, dout: dn });
+  const v = mk("layer", "v proj mid", col(11), 160, { din: dn, dout: dn });
+  const kt = mk("op", "k transposed mid", col(12), 0, { op: "transpose" });
+  const sc = mk("op", "scores mid", col(13), -80, { op: "matmul" });
+  const sm = mk("act", "softmax mid", col(14), -80, { act: "softmax" });
+  const sv = mk("op", "mix mid", col(15), -80, { op: "matmul" });
+  const op = mk("layer", "out proj mid", col(16), -80, { din: dn, dout: dn });
+  const res = mk("op", "residual mid", col(17), -80, { op: "add" });
+  const rsh = mk("op", "reshape mid", col(18), 0, { op: "reshape", dims: "8x8x" + dn });
+  const nm = mk("norm", "norm mid", col(19), 0, { norm: "rms", eps: 1e-6, size: dn });
+  const am = mk("act", "silu mid", col(20), 0, { act: "silu" });
+  const cm = mk("conv", "conv mid", col(21), 0, { din: dn, dout: dn, k: 3, pad: 1 });
+  const res2 = mk("op", "residual mid 2", col(22), 0, { op: "add" });
+  const u1 = mk("op", "upsample 1", col(23), 0, { op: "upsample", factor: 2, mode: "nearest" });
+  const up1 = mk("conv", "up 1", col(24), 0, { din: dn, dout: ch, k: 3, pad: 1 });
+  const sk1 = mk("op", "skip 1", col(25), 0, { op: "add" });
+  const n1 = mk("norm", "norm up 1", col(26), 0, { norm: "rms", eps: 1e-6, size: ch });
+  const a1 = mk("act", "silu up 1", col(27), 0, { act: "silu" });
+  const u2 = mk("op", "upsample 2", col(28), 0, { op: "upsample", factor: 2, mode: "nearest" });
+  const up2 = mk("conv", "up 2", col(29), 0, { din: ch, dout: ch / 2, k: 3, pad: 1 });
+  const a2 = mk("act", "silu up 2", col(30), 0, { act: "silu" });
+  const out = mk("conv", "to pixels", col(31), 0, { din: ch / 2, dout: c, k: 3, pad: 1 });
+  const iout = mk("output", "prediction", col(32), 0, { din: side * side * c });
+  link(it, te); link(te, tw); link(te, tn); link(tw, twv); link(tn, tnv);
+  link(iin, d1); link(d1, t1, 0, 0); link(tnv, t1, 0, 1); link(t1, s1);
+  link(s1, d2); link(d2, t2, 0, 0); link(twv, t2, 0, 1); link(t2, s2);
+  link(s2, fl);
+  link(fl, q); link(fl, k); link(fl, v);
+  link(k, kt); link(q, sc, 0, 0); link(kt, sc, 0, 1);
+  link(sc, sm); link(sm, sv, 0, 0); link(v, sv, 0, 1);
+  link(sv, op); link(op, res, 0, 0); link(fl, res, 0, 1);
+  link(res, rsh); link(rsh, nm); link(nm, am); link(am, cm);
+  link(cm, res2, 0, 0); link(rsh, res2, 0, 1);
+  link(res2, u1); link(u1, up1); link(up1, sk1, 0, 0); link(s1, sk1, 0, 1);
+  link(sk1, n1); link(n1, a1);
+  link(a1, u2); link(u2, up2); link(up2, a2); link(a2, out); link(out, iout);
+  return doc;
+}
+function bxDiTDoc(opts) {                      // a diffusion transformer: the
+  opts = opts || {};                           // picture is cut into patches,
+  const side = opts.image || 32;               // the step's embedding is added
+  const pt = opts.patch || 8;                  // to the tokens of every block,
+  const d = opts.dim || 64;                    // and the head unpacks the
+  const mlp = opts.mlp || d * 2;               // patches back into pixels — the
+  const blocks = opts.blocks || 2;             // prediction a diffusion run
+  const c = 3;                                 // reads.
+  const tdim = opts.tdim || 32;
+  const rows = Math.max(1, Math.round(side / pt));
+  const n = rows * rows;
+  const px = pt * pt * c;
+  const { doc, mk, link } = bxDocMaker();
+  const col = (i) => 190 * i;
+  const iin = mk("input", "pixels", 0, 0, { dout: side * side * c });
+  const it = mk("input", "t", 0, 300);
+  const cut = mk("op", "cut the grid", col(1), 0,
+                 { op: "reshape", dims: [rows, pt, rows, pt, c].join("x") });
+  const grid = mk("op", "patches", col(2), 0, { op: "permute", axes: "0 2 1 3 4" });
+  const flat = mk("op", "flatten", col(3), 0, { op: "reshape", dims: n + "x" + px });
+  const embed = mk("layer", "patch embed", col(4), 0, { din: px, dout: d });
+  const te = mk("op", "t embed", col(1), 300, { op: "timestep", width: tdim });
+  const tp = mk("layer", "t proj", col(2), 300, { din: tdim, dout: d });
+  const tv = mk("op", "t vector", col(3), 300, { op: "reshape", dims: "1x" + d });
+  link(iin, cut); link(cut, grid); link(grid, flat); link(flat, embed);
+  link(it, te); link(te, tp); link(tp, tv);
+  let last = embed, x = 5;
+  for (let b = 0; b < blocks; b++) {
+    const tag = b + 1;
+    const add = mk("op", "t add " + tag, col(x), 0, { op: "add" });
+    link(last, add, 0, 0); link(tv, add, 0, 1);
+    last = bxTxBlock({ mk, link }, { x: x, y0: 0, tag: tag, d: d, mlp: mlp,
+                                     from: add }).exit;
+    x += 7;
+  }
+  const head = mk("norm", "head norm", col(x), 0, { norm: "rms", eps: 1e-6, size: d });
+  const fc = mk("layer", "head", col(x + 1), 0, { din: d, dout: px });
+  const un = mk("op", "unpatch", col(x + 2), 0,
+                { op: "reshape", dims: [rows, rows, pt, pt, c].join("x") });
+  const reg = mk("op", "regrid", col(x + 3), 0, { op: "permute", axes: "0 2 1 3 4" });
+  const back = mk("op", "to pixels", col(x + 4), 0,
+                  { op: "reshape", dims: side + "x" + side + "x" + c });
+  const iout = mk("output", "prediction", col(x + 5), 0, { din: side * side * c });
+  link(last, head); link(head, fc); link(fc, un); link(un, reg); link(reg, back);
+  link(back, iout);
   return doc;
 }
 function bxModelDoc() {                       // a model: the box the architecture
@@ -2121,9 +2276,11 @@ function bxModelDoc() {                       // a model: the box the architectu
            edges: [{ from: i, to: o, fromPort: 0, toPort: 0 }] };
 }
 const BX_TEMPLATES = { attn: bxAttentionDoc, ssm: bxStateDoc, moe: bxMoEDoc,
-                       model: bxModelDoc, vit: bxViTDoc };
+                       model: bxModelDoc, vit: bxViTDoc, vae: bxVAEDoc,
+                       unet: bxUNetDoc, dit: bxDiTDoc };
 const BX_TPL_WORD = { attn: "attention", ssm: "state space", moe: "mixture",
-                      model: "model", vit: "vision transformer" };
+                      model: "model", vit: "vision transformer", vae: "vae",
+                      unet: "unet", dit: "dit" };
 function bxTemplateName(tpl) {
   return BX_TPL_WORD[tpl] + " " + (BX.nodes.filter(n => n.name && n.name.indexOf(BX_TPL_WORD[tpl]) === 0).length + 1);
 }
@@ -2168,8 +2325,8 @@ function bxAddTokenizerPair(x, y, v) {        // one repo, the pair that belongs
 function bxAddTemplate(tpl, x, y, name) {
   bxUndoLock++;                             // one step for the whole template
   const n = bxAdd("custom", x, y, { name: name || bxTemplateName(tpl) });
-  if (tpl === "model" || tpl === "vit")      // the architecture's own boxes
-    n.model = true;
+  if (["model", "vit", "vae", "unet", "dit"].indexOf(tpl) >= 0)
+    n.model = true;                            // the architecture's own boxes
   n.inner = BX_TEMPLATES[tpl]({});
   bxSettleSizes();
   bxRender();
@@ -10742,6 +10899,9 @@ function bxPreview(kind) {
   const isTpl = !!BX_TEMPLATES[kind];
   const fake = { id: "pal-" + kind, kind: isTpl ? "custom" : kind, x: 0, y: 0,
                  name: (kind === "vit" ? "vision transformer "
+                        : kind === "vae" ? "vae "
+                        : kind === "unet" ? "unet "
+                        : kind === "dit" ? "dit "
                         : kind === "model" ? "model "
                         : kind === "embed" ? "embedding " : kind === "layer" ? "fully connected "
                         : kind === "act" ? "activation "
@@ -10785,7 +10945,9 @@ const BX_PALETTE = () => [
               ["act", "activation box"], ["op", "operation box"],
               ["script", "script box"], ["sample", "sample box"]]],
   ["Blocks", [["attn", "attention box"], ["ssm", "state space box"],
-              ["moe", "mixture of experts box"], ["vit", "vision transformer box"]]],
+              ["moe", "mixture of experts box"]]],
+  ["Vision", [["vit", "vision transformer box"], ["vae", "vae box"],
+              ["unet", "unet box"], ["dit", "dit box"]]],
   ["Text", [["tokenize", "tokenizer box"], ["detokenize", "de-tokenizer box"]]],
   ["Data", [["dataset", "dataset box"], ["select", "select col box"]]],
   ["Training", [["config", "train config box"], ["loss", "loss box"],

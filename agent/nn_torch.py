@@ -1934,8 +1934,8 @@ class Graph(nn.Module):
             n = by_id.get(nid) or {}
             k = n.get("kind")
             s = None
-            if k in ("input", "layer", "embed"):
-                s = n.get("dout")
+            if k in ("input", "layer", "embed", "conv"):
+                s = n.get("dout")               # a map's width is its channels
             elif k == "output":
                 s = n.get("din")
             elif k == "norm":
