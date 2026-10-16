@@ -2863,9 +2863,10 @@ check("sizes check on connect: unknown takes the known, a real mismatch errors",
   const a = __t.bxAdd("input", 0, 0, {});           // out: ?
   const l = __t.bxAdd("layer", 200, 0, {});         // in: ?, out: ?
   l.din = 5120;                                     // the known end
+  const t0 = getEl("bxtoast").textContent;
   ok(!__t.bxCheckLink(a.id, l.id).error, "an unknown end links fine");
-  ok(typeof __t.bxToast === "undefined", "…and with no message drawn anywhere");
   eql(__t.bxConnect(a.id, l.id), null, "…the wire lands");
+  eql(getEl("bxtoast").textContent, t0, "…and with no message drawn anywhere");
   eql(a.dout, 5120, "the unknown side takes the known size");
   eql(l.din, 5120, "the known side is untouched");
   const l2 = __t.bxAdd("layer", 400, 0, {});
@@ -2898,6 +2899,47 @@ check("sizes check on connect: unknown takes the known, a real mismatch errors",
   eql(r.din, 2048, "…and the other end is left alone");
   [p, q, r].forEach(n => __t.bxRemove(n.id));
   [a, l, l2, o, l3].forEach(n => __t.bxRemove(n.id));
+});
+
+check("a refused wire says why: the emit and accept sides must agree", () => {
+  const toast = () => getEl("bxtoast").textContent;
+  const txt = __t.bxAdd("input", 0, 0, {});
+  __t.bxConfigure(txt.id, { input_mode: "text", text: "hi" });
+  const l = __t.bxAdd("layer", 200, 0, { din: 8, dout: 8 });
+  const err = __t.bxConnect(txt.id, l.id);
+  ok(err && /type mismatch/.test(err), "text into a numbers box is refused: " + err);
+  eql(toast(), err, "…and the canvas says exactly that");
+  const ds = __t.bxAdd("input", 0, 300, {});
+  __t.bxConfigure(ds.id, { input_mode: "dataset" });
+  ok(/type mismatch/.test(__t.bxConnect(ds.id, l.id) || ""), "…and so is a sheet");
+  // the shape must agree too: a 3-column pick into a width-8 layer
+  const sel = __t.bxAdd("select", 400, 300, {});
+  eql(__t.bxConnect(ds.id, sel.id, 0, 0), null, "the select reads the sheet");
+  __t.bxTableWrite(ds, { cols: ["a", "b", "c"], rows: [["1", "2", "3"]] });
+  const sErr = __t.bxConnect(sel.id, l.id);
+  ok(sErr && /shape mismatch/.test(sErr), "3 columns into 8 is refused: " + sErr);
+  // the hubs take a pick or a sheet; a loss takes the sheet, not the pick
+  const hub = __t.bxAdd("training", 700, 0, {});
+  eql(__t.bxConnect(sel.id, hub.id, 0, 0), null, "the training box takes the pick");
+  const loss = __t.bxAdd("loss", 900, 0, {});
+  eql(__t.bxConnect(ds.id, loss.id, 0, 1), null, "the loss takes the sheet's labels");
+  ok(/type mismatch/.test(__t.bxConnect(sel.id, loss.id, 0, 1) || ""),
+     "…but not a pick");
+  // text flows to text, and any data flows to a display
+  const tok = __t.bxAdd("tokenize", 200, 200, {});
+  eql(__t.bxConnect(txt.id, tok.id), null, "text into the tokenizer");
+  const out = __t.bxAdd("output", 500, 100, {});
+  eql(__t.bxConnect(txt.id, out.id), null, "…and into a display, which takes any");
+  const out2 = __t.bxAdd("output", 500, 500, {});
+  eql(__t.bxConnect(l.id, out2.id), null, "…a numbers box too");
+  // a mismatch that was already on the canvas reads bad, and both ends flag
+  __t.BX.edges.push({ from: txt.id, to: l.id, fromPort: 0, toPort: 0 });
+  const bad = __t.BX.edges[__t.BX.edges.length - 1];
+  eql(__t.bxWireState(bad), "bad", "…an existing mismatch reads bad");
+  const errs = __t.bxErrorSet();
+  ok(errs.has(txt.id) && errs.has(l.id), "…and both boxes flag it");
+  __t.BX.edges = __t.BX.edges.filter(e => e !== bad);
+  [hub, loss, sel, ds, out, out2, tok, l, txt].forEach(n => __t.bxRemove(n.id));
 });
 
 check("the size check sweeps the whole network, not only the wire it touched", () => {

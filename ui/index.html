@@ -474,6 +474,12 @@
            border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.45);
            pointer-events: none; }
   .bxtip[hidden] { display: none; }
+  .bxtoast { position: absolute; z-index: 8; top: 10px; left: 50%;
+             transform: translateX(-50%); max-width: 72%; padding: 6px 11px;
+             background: rgba(40,22,14,.98); border: 1px solid rgba(249,115,22,.55);
+             border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.45);
+             font: 11.5px var(--mono); color: var(--ink); pointer-events: none; }
+  .bxtoast[hidden] { display: none; }
   .bxtip .who  { font: 10.5px var(--mono); color: var(--ink-faint); }
   .bxtip .what { font: 11.5px var(--mono); color: var(--ink); }
   .bxtip .shp  { font: 11px var(--mono); color: var(--ink-dim); }
@@ -1074,6 +1080,7 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
         <div class="flowsvg" id="bxcanvas"></div>
         <div class="bxmenu" id="bxmenu" hidden></div>
         <div class="bxtip" id="bxtip" hidden></div>
+        <div class="bxtoast" id="bxtoast" hidden></div>
       </div>
     </div>
     <div class="bxsplash" id="bxsplash" hidden>
@@ -2786,6 +2793,53 @@ function bxBoxOff(n) { return !!(n && (bxOffHere(n) || bxLevelOff())); }
 function bxBoxFrozen(n) { return !!(n && (n.frozen || bxLevelFrozen())); }
 // What a wire between two ports means: equal is fine, an unknown end can take
 // the known one, two known but different sizes are an error.
+function bxLooseRowDot(n, i) {                 // a dot that takes a sheet or a
+  if (!n) return false;                        // matrix: the training hosts' data
+  if (n.kind === "config" || n.kind === "training") return (i || 0) === 0;
+  if (n.kind === "input") return (i || 0) >= 1;      // …and the legacy hub dots
+  return false;
+}
+function bxShapeWidth(pt) {                    // the size a shape stands for:
+  if (!pt || !pt.shape) return null;           // [? × 3] → 3, and a
+  const nums = String(pt.shape).split("×")   // [? × 2×3] → 6 —
+                 .map(x => Number(String(x).replace(/[^\d]/g, "")))   // the dims
+                 .filter(x => isFinite(x) && x > 0);                   // multiply
+  if (!nums.length) return null;
+  return nums.reduce((a, b2) => a * b2, 1);
+}
+function bxLinkFit(a, b, fp, tp) {             // do the emit side and the accept
+  // side agree? The size first, then the kind of data. Text never rides a
+  // numbers wire, a sheet never rides a tensor one, and where both sides know
+  // a width, the widths must match — the refusal says which one it was.
+  const op = bxPortDefs(a, "out")[fp || 0] || null;
+  const ip = bxPortDefs(b, "in")[tp || 0] || null;
+  if (!op || !ip) return null;                 // missing dots are bxCheckLink's
+  if (op.size != null && ip.size != null && op.size !== ip.size)
+    return "size mismatch: " + a.name + " out " + op.size + " ≠ " + b.name
+                             + " in " + ip.size;
+  const po = bxPortType(a, "out", fp || 0);
+  const pi = bxPortType(b, "in", tp || 0);
+  const ek = po ? po.kind : null, ak = pi ? pi.kind : null;
+  const TENS = { matrix: 1, image: 1, ids: 1 };     // the tensor family travels
+  if (ek && ak && ek !== ak && ek !== "any" && ak !== "any") {
+    const loose = bxLooseRowDot(b, tp || 0);
+    const fits = (TENS[ek] && TENS[ak])
+              || (ek === "rows" && ak === "rows")
+              || (ak === "rows" && ek === "matrix" && loose)
+              || (ek === "rows" && ak === "matrix" && loose);
+    if (!fits)
+      return "type mismatch: " + a.name + " emits " + ek + " ≠ " + b.name
+                               + " takes " + ak + " — different kinds of data";
+  }
+  if (!ek || !ak || ek === "any" || ak === "any") return null;
+  if (TENS[ek] && TENS[ak] && ek !== "image" && ak !== "image") {
+    const wo = bxShapeWidth(po), wi = bxShapeWidth(pi);   // widths, once known
+    if (wo != null && wi != null && wo !== wi)
+      return "shape mismatch: " + a.name + " out " + po.shape + " ≠ " + b.name
+                                + " in " + pi.shape;
+  }
+  return null;
+}
 function bxCheckLink(from, to, fromPort, toPort) {
   const a = bxNode(from), b = bxNode(to);
   if (!a || !b) return { error: "pick two boxes" };
@@ -2796,9 +2850,8 @@ function bxCheckLink(from, to, fromPort, toPort) {
   if (!ip) return { error: bxKindLabel(b.kind) + " has no input dot there" };
   if (bxBoxOff(a) || bxBoxOff(b) || bxPortOff(a, "out", fromPort))
     return { ok: true };                               // an off box (or dot) takes anything
-  const outD = op.size, inD = ip.size;
-  if (outD != null && inD != null && outD !== inD)
-    return { error: "size mismatch: " + a.name + " out " + outD + " \u2260 " + b.name + " in " + inD };
+  const fit = bxLinkFit(a, b, fromPort, toPort);       // the size, the kind, the shape
+  if (fit) return { error: fit };
   return { ok: true };
 }
 // The size check sweeps the whole network, not just the wire it started from.
@@ -3407,7 +3460,7 @@ function bxDropTargetAt(ev) {
 // one wire per input dot: a new wire replaces whatever was on that dot
 function bxConnect(from, to, fromPort, toPort) {
   const chk = bxCheckLink(from, to, fromPort, toPort);
-  if (chk.error) return chk.error;
+  if (chk.error) { bxToast(chk.error); return chk.error; }
   const fp = fromPort || 0, tp = toPort || 0;
   BX.edges = BX.edges.filter(e => !(e.to === to && (e.toPort || 0) === tp));
   BX.edges.push({ from, fromPort: fp, to, toPort: tp });
@@ -3427,19 +3480,16 @@ function bxWireState(e) {
   const op = bxPortDefs(a, "out")[e.fromPort || 0] || null;
   const ip = bxPortDefs(b, "in")[e.toPort || 0] || null;
   const o = op ? op.size : null, i = ip ? ip.size : null;
-  if (o == null && i == null) return "unknown";
   if (o != null && i != null && o !== i) return "bad";
+  if (bxLinkFit(a, b, e.fromPort || 0, e.toPort || 0)) return "bad";
+  if (o == null && i == null) return "unknown";
   return "match";
 }
-// a wire whose two known sizes do not match (say, after a resize)
+// a wire the two ends do not agree on — size, kind of data, or shape
 function bxEdgeMismatch(e) {
   const a = bxNode(e.from), b = bxNode(e.to);
   if (!a || !b) return null;
-  const op = bxPortDefs(a, "out")[e.fromPort || 0] || null;
-  const ip = bxPortDefs(b, "in")[e.toPort || 0] || null;
-  const outD = op ? op.size : null, inD = ip ? ip.size : null;
-  if (outD == null || inD == null || outD === inD) return null;
-  return a.name + " out " + outD + " \u2260 " + b.name + " in " + inD;
+  return bxLinkFit(a, b, e.fromPort || 0, e.toPort || 0);
 }
 function bxConfigure(id, vals) {
   const n = bxNode(id);
@@ -6653,6 +6703,9 @@ function bxWireValue(edge) {                   // the source box's last value, a
   return { node: a, st: bxRunValues[(bxCurrentPath() || []).concat(a.id).join("/")] || null };
 }
 function bxPortType(n, dir, i) {               // what a dot is built to carry
+  if (n.kind === "dataset") return { kind: "rows", shape: null };   // a sheet reads
+  if (n.kind === "output" && dir === "in")     // as rows anywhere; a display takes
+    return { kind: "any", shape: null };       // whatever it is shown
   // A dot's shape is a per-sample one: the first axis of everything on the
   // wires is the batch, and only a run knows its size — so design-time shapes
   // read [\u00d7 ? \u00d7 width], values that actually exist read as they are.
@@ -6663,6 +6716,7 @@ function bxPortType(n, dir, i) {               // what a dot is built to carry
                shape: "[" + (s || "?") + "\u00d7" + (s || "?") + "\u00d73]" };
     }
     if (n.input_mode === "text") return { kind: "text", shape: null };
+    if (bxIsDataset(n)) return { kind: "rows", shape: null };   // its own sheet
     const m = bxMatrixParse(n.values);         // the data itself: exact
     if (m && !m.bad && !m.ragged)
       return { kind: "matrix",
@@ -6673,11 +6727,19 @@ function bxPortType(n, dir, i) {               // what a dot is built to carry
     if (n.kind === "tokenize") return { kind: "ids", shape: null };
     if (n.kind === "detokenize" || n.kind === "hf") return { kind: "text", shape: null };
     if (n.kind === "config") return { kind: "settings", shape: null };
+    if (n.kind === "sample") return { kind: "ids", shape: null };   // a draw
     if (n.kind === "training")                 // the train result: [loss, acc]
       return { kind: "matrix", shape: "[2]" };
   }
   if (n.kind === "training" && dir === "in")   // the three splits, by position
     return { kind: "rows", shape: null };
+  if (n.kind === "loss" && dir === "in")       // the model's scores, then the
+    return (i || 0) === 0 ? { kind: "matrix", shape: null }   // sheet's labels
+                          : { kind: "rows", shape: null };
+  if (n.kind === "tokenize" && dir === "in") return { kind: "text", shape: null };
+  if (n.kind === "detokenize" && dir === "in") return { kind: "ids", shape: null };
+  if (n.kind === "hf" && dir === "in") return { kind: "text", shape: null };
+  if (n.kind === "embed" && dir === "in") return { kind: "ids", shape: null };
   if (n.kind === "select") {
     const tell = bxMatrixTell(n);
     if (dir === "out")
@@ -6771,8 +6833,8 @@ function bxTipShow(edge, ev) {                 // a wire: what data rides on it
   if (shape) bxTipAdd(tip, "shp", shape);      // tracked back through the wiring:
   else if (!st)                                // no run needed for the shape
     bxTipAdd(tip, "note", bxFlowSet.has(bxPathId(a.id)) ? "no value kept" : "not run yet");
-  const wstate = bxWireState(edge);            // what the size check found
-  if (wstate === "bad") bxTipAdd(tip, "note", "size mismatch: " + bxEdgeMismatch(edge));
+  const wstate = bxWireState(edge);            // what the wire check found
+  if (wstate === "bad") bxTipAdd(tip, "note", bxEdgeMismatch(edge));
   else if (wstate === "unknown") bxTipAdd(tip, "note", "its sizes are still unknown");
   bxTipDone(tip, ev);
 }
@@ -6841,6 +6903,15 @@ function bxTipNode(target, ev) {               // a box: its name, and what it c
     if (dead) bxTipAdd(tip, "note", "deactivated \u2014 no data");
   }
   bxTipDone(tip, ev);
+}
+let bxToastT = null;
+function bxToast(msg) {                        // a passing note on the canvas: a
+  const el = $("bxtoast");                     // wire that was refused says why
+  if (!el) return;
+  el.textContent = msg || "";
+  el.hidden = !msg;
+  if (typeof clearTimeout === "function" && bxToastT) clearTimeout(bxToastT);
+  if (msg) bxToastT = setTimeout(() => { el.hidden = true; }, 3600);
 }
 function bxTipHide() {
   bxHotBox = null;                             // the next hover starts the card fresh

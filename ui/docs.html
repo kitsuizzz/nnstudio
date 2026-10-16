@@ -264,7 +264,12 @@
         <span class="pill">input</span> or <span class="pill">output</span> box
         names it and says what it emits or expects; a
         <span class="pill">custom</span> box shows the input/output boxes its dots
-        stand for (hover one dot to read just that box). Right-click a wire to
+        stand for (hover one dot to read just that box). The ends must agree:
+        a wire is <b>refused \u2014 and the canvas says why</b> \u2014 when the
+        sides differ on the kind of data (<code>text</code> into a numbers box,
+        a sheet into a tensor) or on the shape (<code>[? \u00d7 3]</code> into a
+        width-8 dot); a mismatch that appears later, after a resize, goes red
+        with the same words on its hover. Right-click a wire to
         reshape or remove it.</li>
     <li><b>Edit a box</b> — right-click it. Its menu renames it (the server
         config excepted), changes its settings (the activation, the operation, the embedding…),
