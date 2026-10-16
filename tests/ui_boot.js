@@ -4704,6 +4704,8 @@ check("the + sits right beside the last tab, and its menu drops from it", () => 
   const k1 = h.indexOf('id="bxtabrail"'), k2 = h.indexOf('id="bxtabadd"'),
         k3 = h.indexOf('id="bxtabnote"');
   ok(k1 >= 0 && k2 > k1 && k3 > k2, "the tabs, then the +, then the note");
+  ok(!/#bxtabMenu\s*\{[^}]*right:\s*0/.test(h),
+     "\u2026and nothing pins its right edge \u2014 no stretched menu");
   const strip = getEl("bxtabs"), add = getEl("bxtabadd"), men = getEl("bxtabMenu");
   const keep = { strip: strip.getBoundingClientRect, add: add.getBoundingClientRect,
                  w: men.offsetWidth };

@@ -963,7 +963,7 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
             padding: 2px 12px 4px; border: 1px solid var(--panel-brd);
             border-bottom: none; background: rgba(0,0,0,.18); user-select: none; }
 .bxtabadd:hover { color: var(--warm); border-color: rgba(251,191,36,.5); }
-#bxtabMenu { top: 100%; left: auto; right: 0; margin-top: 4px; min-width: 248px; }
+#bxtabMenu { top: 100%; left: 0; right: auto; margin-top: 4px; min-width: 248px; }
 #bxtabMenu .bxlist { display: flex; flex-direction: column; gap: 4px;
                      max-height: 260px; overflow: auto; margin: 2px 0; }
 #bxtabMenu .bxlist .rowl { display: flex; align-items: center; gap: 8px;
@@ -7424,6 +7424,7 @@ function bxtPlace(menuId, btnId, hostId) {     // under its own button, not the 
   if (!br || !wr) return;
   const max = Math.max(6, (wr.width || 900) - (m.offsetWidth || 200) - 6);
   m.style.left = Math.max(6, Math.min(Math.round((br.left || 0) - (wr.left || 0)), max)) + "px";
+  m.style.right = "auto";                      // left and right together stretch it
 }
 function bxtToggle(id, btnId) {
   const m = $(id);
