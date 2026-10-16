@@ -1970,6 +1970,16 @@ function bxDockModel(tid, mid) {               // a model into that gap: it beco
   bxCommit();
   return true;
 }
+function bxUndockModel(tid) {                  // the pair separates: the model
+  const t = bxNode(tid);                       // stays right where it stands
+  if (!t || t.kind !== "training") return false;
+  const m = t.model ? bxFindBox(t.model) : null;
+  t.model = null;
+  bxSelectBoxes(m ? [m.id] : [t.id]);
+  bxRender();
+  bxCommit();
+  return true;
+}
 function bxHubFieldsSync() {                   // the Training box's dots are its
   const keys = ["dataset", "test_dataset", "val_dataset"];   // three splits: the
   const boxes = [];                                          // wires land in the
@@ -2660,9 +2670,27 @@ function bxMarqueeSelect(rect, additive) {
   return bxSelectBoxes(ids);
 }
 // a drag may carry a whole group: one delta, the grabbed box does the snapping
+function bxTrainPair(n) {                      // a docked model and its Training
+  if (!n) return null;                         // box move as one unit: the pair
+  if (n.kind === "training" && n.model) return bxFindBox(n.model);
+  if (n.kind === "custom") {
+    let host = null;
+    bxEveryBox(x => { if (!host && x.kind === "training" && x.model === n.id) host = x; });
+    return host;
+  }
+  return null;
+}
+function bxWithPairs(ids) {                    // every id, plus its partner's
+  const out = (ids || []).slice();
+  for (const id of out.slice()) {
+    const pair = bxTrainPair(bxNode(id));
+    if (pair && out.indexOf(pair.id) < 0) out.push(pair.id);
+  }
+  return out;
+}
 function bxStartMove(ids, primaryId, sx, sy) {
   const starts = {};
-  for (const id of (ids || [primaryId])) {
+  for (const id of bxWithPairs(ids || [primaryId])) {
     const n = bxNode(id);
     if (n) starts[id] = { x: n.x, y: n.y };
   }
@@ -7385,11 +7413,27 @@ function bxMenuBuild(mode, id, ev) {
         }]);
       }
       else if (n.kind === "reward") mine.push(["set the reward …", () => bxForm(n.kind, null, n, "reward")]);
+      else if (n.kind === "training") {
+        if (n.model && bxFindBox(n.model))
+          mine.push(["undock the model", () => {
+            bxMenuClose();
+            bxUndockModel(n.id);
+          }]);
+        mine.push(["resize this box", () => bxForm(n.kind, null, n, "resize")]);
+      }
       else if (n.kind === "input") {
         mine.push(["set input", () => bxForm(n.kind, null, n, "matrix")]);
         mine.push(["resize this box", () => bxForm(n.kind, null, n, "resize")]);
       } else if (n.kind !== "custom")
         mine.push(["resize this box", () => bxForm(n.kind, null, n, "resize")]);
+      if (n.kind === "custom") {               // a seated model can step back
+        const host = bxTrainPair(n);           // out of its socket
+        if (host)
+          mine.push(["undock from " + (host.name || "the training box"), () => {
+            bxMenuClose();
+            bxUndockModel(host.id);
+          }]);
+      }
       if (!BX.up && bxWeightsBox(n))            // the weights, into a model
         mine.push(["wrap the weights into a model", () => {
           bxMenuClose();
@@ -10242,6 +10286,13 @@ function bxTrainingFill(pane, n) {             // the Training box's window: the
     : "the slot is empty \u2014 drop a model box into the notch above" }));
   pane.appendChild(mk("div", { class: "panehint",
     text: "its dots: train / test / validation \u2014 wire datasets in" }));
+  if (m) {                                   // the pair travels together: this
+    const un = mk("div", { class: "panehint",   // is how it separates
+                          text: "\u2715 undock the model" });
+    un.style.cursor = "pointer";
+    un.addEventListener("click", () => bxUndockModel(n.id));
+    pane.appendChild(un);
+  }
 }
 function bxTrainWireConfig(cfg) {              // one click: into the input's first dot
   let input = null;

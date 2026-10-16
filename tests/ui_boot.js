@@ -233,6 +233,7 @@ globalThis.__t = {
   bxSelectFill, bxConfigFill, bxTrainWired, bxInputLink, bxMatrixTell, bxTrainSummary,
   bxInputMode, bxSelectSource, bxAttached, bxIsDataset,
   bxTraining, bxTrainingFill, bxDockModel, bxTrainNotch, bxShape,
+  bxUndockModel, bxTrainPair, get bxDrag() { return bxDrag; },
   bxTrainAddConfig, bxTrainWireConfig, bxBoundary, bxWeightsBox, bxWrapModel,
   bxHasPane, bxParamsOf,
   bxRunFeeds, bxInputFill, bxInputExpand, bxOutputFill, bxOutputExpand, bxPaneFill,
@@ -5536,6 +5537,23 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   ok(!g2.children.some(c => c._attrs && c._attrs.d != null),
      "\u2026the outline closes: the card is a rectangle now");
   eql(m.y, t.y, "\u2026the model flush with the top edge");
+  // the pair moves as one: drag either and both travel
+  const off = [m.x - t.x, m.y - t.y];
+  __t.bxStartMove([t.id], t.id, 0, 0);
+  eql(__t.bxDrag.ids.length, 2, "a drag starts with both boxes");
+  __t.bxMove({ clientX: 60, clientY: 80 });
+  __t.bxUp({});
+  eql([m.x - t.x, m.y - t.y], off, "dragging the box carries the model");
+  __t.bxStartMove([m.id], m.id, 0, 0);
+  __t.bxMove({ clientX: -40, clientY: 20 });
+  __t.bxUp({});
+  eql([m.x - t.x, m.y - t.y], off, "\u2026and dragging the model carries the box");
+  ok(__t.bxUndockModel(t.id), "undocking separates them");
+  eql(t.model, null, "\u2026the box lets go");
+  __t.bxStartMove([t.id], t.id, 0, 0);
+  eql(__t.bxDrag.ids.length, 1, "\u2026and the drag is alone again");
+  __t.bxUp({});
+  ok(__t.bxDockModel(t.id, m.id), "docking again for the rest of the checks");
   // the wires land in the fields: train / test / validation
   const ds = __t.bxAdd("input", 0, 400, {});
   __t.bxConfigure(ds.id, { input_mode: "dataset" });
