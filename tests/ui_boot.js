@@ -5579,7 +5579,7 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   ok(!g2.children.some(c => c._attrs && c._attrs.d != null),
      "\u2026the outline closes: the card is a rectangle now");
   eql(m.y, t.y, "\u2026the model flush with the top edge");
-  // the pair travels one way: dragging the box carries the model\u2026
+  // the pair travels as one unit: dragging either carries the other\u2026
   const off = [m.x - t.x, m.y - t.y];
   __t.bxStartMove([t.id], t.id, 0, 0);
   eql(__t.bxDrag.ids.length, 2, "a drag of the box starts with both boxes");
@@ -5590,22 +5590,22 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   const pnotes = () => ptip.querySelectorAll(".note")
                             .map(e => String(e.textContent)).join(" | ");
   __t.bxHotMove({ target: __t.bxCard(m), clientX: 120, clientY: 80 });
-  ok(pnotes().indexOf("drag it out to detach") >= 0,
+  ok(pnotes().indexOf("click one of its dots to pop it out") >= 0,
      "\u2026and its own card says how it comes out: " + pnotes());
   __t.bxHotSet(null);
-  // \u2026a click alone never pulls it out\u2026
+  // \u2026dragging the model never detaches it: the box comes along
+  const tpos = [t.x, t.y];
   __t.bxStartMove([m.id], m.id, 0, 0);
-  __t.bxUp({});
-  eql(t.model, m.id, "\u2026a click on the model never pulls it out");
-  // \u2026but the drag that moves it does: the socket opens
-  const seated = [m.x, m.y], tpos = [t.x, t.y];
-  __t.bxStartMove([m.id], m.id, 0, 0);
-  eql(__t.bxDrag.ids.length, 1, "the model's own drag starts alone");
+  eql(__t.bxDrag.ids.length, 2, "the model's own drag starts with both too");
   __t.bxMove({ clientX: 30, clientY: 10 });
-  eql(t.model, null, "\u2026and pulling it out detaches it");
-  eql([t.x, t.y], tpos, "\u2026the box stays put");
-  ok(m.x !== seated[0] || m.y !== seated[1], "\u2026and the model follows the cursor");
+  eql(t.model, m.id, "\u2026the seat holds while it moves");
+  eql([m.x - t.x, m.y - t.y], off, "\u2026and the two travel together");
+  ok(t.x !== tpos[0] || t.y !== tpos[1], "\u2026the box moved with it");
   __t.bxUp({});
+  // a click (no drag) never separates them either
+  __t.bxStartMove([m.id], m.id, 0, 0);
+  __t.bxUp({});
+  eql(t.model, m.id, "\u2026a plain click never separates them");
   // the menu undock does the same, and docking puts it all back
   ok(__t.bxDockModel(t.id, m.id), "docking it back");
   ok(__t.bxUndockModel(t.id), "the menu's undock separates them");

@@ -2683,21 +2683,22 @@ function bxMarqueeSelect(rect, additive) {
   return bxSelectBoxes(ids);
 }
 // a drag may carry a whole group: one delta, the grabbed box does the snapping
-function bxTrainPair(n) {                      // the Training box carries its
-  if (!n) return null;                         // model when it moves: the pair
+function bxTrainPair(n) {                      // the pair: the Training box and
+  if (!n) return null;                         // its model travel as one unit
   if (n.kind === "training" && n.model) return bxFindBox(n.model);
-  return null;                                 // travels one way \u2014 the model
-}                                              // pulls out (bxTrainHostOf below)
+  return null;                                 // (the model finds its box in
+}                                              // bxTrainHostOf, just below)
 function bxTrainHostOf(n) {                    // which Training box holds this model
   if (!n || n.kind !== "custom") return null;
   let host = null;
   bxEveryBox(x => { if (!host && x.kind === "training" && x.model === n.id) host = x; });
   return host;
 }
-function bxWithPairs(ids) {                    // every id, plus its partner's
-  const out = (ids || []).slice();
-  for (const id of out.slice()) {
-    const pair = bxTrainPair(bxNode(id));
+function bxWithPairs(ids) {                    // every id, plus its partner's:
+  const out = (ids || []).slice();             // the box carries its model, and a
+  for (const id of out.slice()) {              // seated model travels with its box
+    const n = bxNode(id);
+    const pair = bxTrainPair(n) || bxTrainHostOf(n);
     if (pair && out.indexOf(pair.id) < 0) out.push(pair.id);
   }
   return out;
@@ -6872,10 +6873,10 @@ function bxTipNode(target, ev) {               // a box: its name, and what it c
       bxTipAdd(tip, "note", "… and " + (rows.length - 10) + " more");
     else if (!rows.length)
       bxTipAdd(tip, "note", "no input or output boxes inside");
-    const host = bxTrainHostOf(n);             // seated in a Training box: it can
-    if (host)                                  // be pulled out
+    const host = bxTrainHostOf(n);             // seated in a Training box: a click
+    if (host)                                  // on one of its dots pops it out
       bxTipAdd(tip, "note", "seated in " + bxClip(host.name || "the training box", 22)
-                            + " — drag it out to detach");
+                            + " — click one of its dots to pop it out");
   } else if (n.kind === "training" && target.part === "port") {
     const dir = target.dir === "out" ? "out" : "in";
     const p = target.port || 0;
@@ -11777,12 +11778,6 @@ function bxMove(ev) {
     return;
   }
   if (bxDrag.kind === "move") {
-    if (!bxDrag.pulled) {                   // a docked model comes out of its
-      bxDrag.pulled = true;                 // socket the moment it moves alone
-      const p0 = bxNode(bxDrag.id);
-      const host = p0 && p0.kind === "custom" ? bxTrainHostOf(p0) : null;
-      if (host && (bxDrag.ids || []).indexOf(host.id) < 0) host.model = null;
-    }
     const k = bxCenter().k;                 // screen pixels → world units
     const snap = bxSnapMove(bxNode(bxDrag.id), bxDrag.x0 + dx / k, bxDrag.y0 + dy / k);
     bxGuides = snap.guides;
