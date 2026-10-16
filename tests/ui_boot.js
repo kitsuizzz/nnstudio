@@ -192,7 +192,7 @@ globalThis.__t = {
   bxAddTemplate, bxAddKind, bxGGUFImport, bxGGUFImportApply, bxGGUFLoad,
   bxAttentionDoc, bxStateDoc,
   bxMoEDoc, bxTemplateName, bxErrorSet,
-  bxMoveInto, bxDropTargetAt, bxStartWire, bxDotClick, bxHasInside, bxUndoStep, bxRedoStep, bxUndoDepth, bxCommit,
+  bxMoveInto, bxDropTargetAt, bxStartWire, bxDotClick, bxDown, bxHasInside, bxUndoStep, bxRedoStep, bxUndoDepth, bxCommit,
   bxSnapMove, bxSnapGrid, bxClampView, bxSeedBlank, bxNodeH,
   get bxGuides() { return bxGuides; }, set bxGuides(v) { bxGuides = v; },
   bxSelectBoxes, bxSelectedIds, bxToggleSelect, bxMarqueeSelect, bxStartMove, bxMove, bxUp,
@@ -5590,7 +5590,7 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   const pnotes = () => ptip.querySelectorAll(".note")
                             .map(e => String(e.textContent)).join(" | ");
   __t.bxHotMove({ target: __t.bxCard(m), clientX: 120, clientY: 80 });
-  ok(pnotes().indexOf("click one of its dots to pop it out") >= 0,
+  ok(pnotes().indexOf("the dot at its foot pops it out") >= 0,
      "\u2026and its own card says how it comes out: " + pnotes());
   __t.bxHotSet(null);
   // \u2026dragging the model never detaches it: the box comes along
@@ -5699,16 +5699,37 @@ check("a model dropped into the gap docks: the drop sees the box under the card"
   eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
 });
 
-check("a seated model's dot ejects on a click", () => {
+check("a seated model's dots give way to one release dot at its foot", () => {
   const t = __t.bxAdd("training", 0, 0, {});
   const m = __t.bxAdd("custom", 700, 0, {});
-  ok(__t.bxDockModel(t.id, m.id), "a model, seated");
-  eql(__t.bxDotClick(m), true, "a click on one of its dots pops it out");
-  eql(t.model, null, "\u2026the socket opens");
-  eql(__t.bxDotClick(t), false, "\u2026and the box's own dots are not ejectors");
-  const l = __t.bxAdd("layer", 0, 300, {});
-  eql(__t.bxDotClick(l), false, "\u2026nor is a plain box's dot");
-  __t.bxRemove(l.id);
+  m.inner = { type: "nested", version: 1,
+    nodes: [{ id: "k1", kind: "input", name: "x", x: 0, y: 0, dout: 4 },
+            { id: "k2", kind: "output", name: "y", x: 320, y: 0, din: 4 }],
+    edges: [{ from: "k1", to: "k2" }] };
+  eql([__t.bxCard(m).querySelectorAll(".dport").length,
+       __t.bxCard(m).querySelectorAll(".drail").length], [4, 2],
+      "a free model has its dots and rails");
+  ok(__t.bxDockModel(t.id, m.id), "seated");
+  const gc = __t.bxCard(m);
+  eql([gc.querySelectorAll(".dport").length, gc.querySelectorAll(".drail").length],
+      [0, 0], "\u2026seated, they all give way");
+  const pop = gc.querySelectorAll(".dpop")
+                .filter(d => String(d.className).indexOf("hit") >= 0);
+  eql(pop.length, 1, "\u2026to one release dot at the model's foot");
+  if (pop.length)
+    eql([pop[0]._attrs.cx, pop[0]._attrs.cy],
+        [String(m.x + __t.bxNodeW(m) / 2), String(m.y + __t.bxNodeH(m))],
+        "\u2026centred on its bottom edge");
+  const tip = getEl("bxtip");
+  const notes = () => tip.querySelectorAll(".note").map(e => String(e.textContent)).join(" | ");
+  __t.bxHotMove({ target: pop[0], clientX: 120, clientY: 80 });
+  ok(notes().indexOf("pops out") >= 0, "the release says what it does: " + notes());
+  __t.bxHotSet(null);
+  __t.bxDown({ target: pop[0], clientX: 10, clientY: 10,
+               preventDefault() {}, stopPropagation() {} });
+  eql(t.model, null, "\u2026and the click pops the model out");
+  eql(__t.bxCard(m).querySelectorAll(".dport").length, 4, "\u2026its dots come back");
+  eql(__t.bxCard(m).querySelectorAll(".dpop").length, 0, "\u2026and the release goes");
   __t.bxRemove(m.id);
   __t.bxRemove(t.id);
 });

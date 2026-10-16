@@ -292,6 +292,11 @@
   .dport.vis { pointer-events: none; }
   .dport.hit { fill: transparent; stroke: none; pointer-events: all; cursor: crosshair; }
   .dport.hit:hover { fill: rgba(249,115,22,.28); }
+  .dpop { fill: rgba(22,22,22,.95); stroke: rgba(249,115,22,.85);
+          pointer-events: none; }
+  .dpop.hit { fill: transparent; stroke: none; pointer-events: all;
+              cursor: pointer; }
+  .dpop.hit:hover { fill: rgba(249,115,22,.3); }
   .drail { fill: transparent; pointer-events: all; cursor: crosshair; }
   .drail:hover { fill: rgba(249,115,22,.16); }
   .dedge { fill: none; stroke: rgba(235,235,235,.55); stroke-width: 1.6; }
@@ -6873,10 +6878,17 @@ function bxTipNode(target, ev) {               // a box: its name, and what it c
       bxTipAdd(tip, "note", "… and " + (rows.length - 10) + " more");
     else if (!rows.length)
       bxTipAdd(tip, "note", "no input or output boxes inside");
-    const host = bxTrainHostOf(n);             // seated in a Training box: a click
-    if (host)                                  // on one of its dots pops it out
+    const host = bxTrainHostOf(n);             // seated in a Training box: the dot
+    if (host)                                  // at its foot pops it out
       bxTipAdd(tip, "note", "seated in " + bxClip(host.name || "the training box", 22)
-                            + " — click one of its dots to pop it out");
+                            + " — the dot at its foot pops it out");
+  } else if (target.part === "release") {
+    const host = bxTrainHostOf(n);
+    bxTipAdd(tip, "who", "the release");
+    bxTipAdd(tip, "what", "detach " + bxClip(n.name || "the model", 22));
+    bxTipAdd(tip, "note", "click it \u2014 the model pops out of "
+                          + (host ? bxClip(host.name || "the training box", 20)
+                                  : "the socket"));
   } else if (n.kind === "training" && target.part === "port") {
     const dir = target.dir === "out" ? "out" : "in";
     const p = target.port || 0;
@@ -6989,6 +7001,8 @@ function bxHoverTarget(n, t) {                 // which card a hovered box asks 
              dir: c0.indexOf("out") >= 0 ? "out" : "in" };
   }
   if (n.kind !== "custom") return null;        // only an i/o box has a card
+  if (t && t.closest && t.closest(".dpop"))    // the release dot of a seated model
+    return { id: n.id, part: "release" };
   const dot = t && t.closest ? t.closest(".dport") : null;
   const p = dot && dot.getAttribute ? dot.getAttribute("data-port") : null;
   if (p == null) return { id: n.id, part: "list" };   // the body: the whole list
@@ -7183,10 +7197,11 @@ function bxCard(n) {
       starved.add(e.toPort || 0);
   }
   const h = bxNodeH(n), w = bxNodeW(n);
-  if (ins.length)
+  const popHost = !preview ? bxTrainHostOf(n) : null;   // a seated model: its side
+  if (ins.length && !popHost)                  // dots and rails give way to the
     g.appendChild(svg("rect", { x: n.x - 9, y: n.y + 2, width: 18, height: h - 4, rx: 7,
-                                class: "drail in", "data-node": n.id }));
-  if (outs.length)
+                                class: "drail in", "data-node": n.id }));   // release
+  if (outs.length && !popHost)                 // dot at its foot
     g.appendChild(svg("rect", { x: n.x + w - 9, y: n.y + 2, width: 18, height: h - 4, rx: 7,
                                 class: "drail out", "data-node": n.id }));
   const isSheet = n.kind === "dataset";       // its sheet is inset inside the card
@@ -7306,8 +7321,15 @@ function bxCard(n) {
                                 "data-node": n.id, "data-port": i });
     g.appendChild(hit);
   };
-  outs.forEach((p, i) => dot(bxPortPos(n, "out", i, outs.length), "out", i, p.size));
-  ins.forEach((p, i) => dot(bxPortPos(n, "in", i, ins.length), "in", i, p.size));
+  if (!popHost) {
+    outs.forEach((p, i) => dot(bxPortPos(n, "out", i, outs.length), "out", i, p.size));
+    ins.forEach((p, i) => dot(bxPortPos(n, "in", i, ins.length), "in", i, p.size));
+  } else {                                     // the release instead: one dot at the
+    const cx = n.x + w / 2, cy = n.y + h;      // model's foot \u2014 clicking it
+    g.appendChild(svg("circle", { cx, cy, r: 6, class: "dpop", "data-node": n.id }));
+    g.appendChild(svg("circle", { cx, cy, r: 13, class: "dpop hit",
+                                  "data-node": n.id }));   // pops the model out
+  }
   return g;
 }
 function bxWirePath(a, b, via, aPort, aCount, bPort, bCount) {
@@ -11696,6 +11718,10 @@ function bxDown(ev) {
   if (n) {
     ev.preventDefault();
     if (ev.stopPropagation) ev.stopPropagation();
+    if (ev.target && ev.target.closest && ev.target.closest(".dpop")) {
+      bxDotClick(n);                         // the release dot: the model pops out
+      return;
+    }
     if (ev.shiftKey) { bxToggleSelect(n.id); return; }        // shift+click picks boxes one by one
     const ids = bxSelectedIds();
     if (ids.indexOf(n.id) < 0) bxSelectBoxes([n.id]);         // a plain click starts a fresh selection
