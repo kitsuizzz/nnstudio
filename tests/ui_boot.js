@@ -5457,6 +5457,11 @@ check("an input reads as a dataset: the sheet, the wiring, the design's JSON", (
   eql(__t.bxShape(ds), "2 \u00d7 2", "\u2026and the card counts the rows");
   const tell = __t.bxMatrixTell(ds);
   eql([tell.rows, tell.cols.length], [2, 2], "the sheet hands out its matrix");
+  const pane = document.createElement("div");
+  __t.bxInputFill(pane, ds);
+  ok(pane.querySelectorAll(".bxhint2").map(e => e.textContent).join(" | ")
+       .indexOf("2 rows") >= 0, "the window is the sheet itself: "
+     + pane.querySelectorAll(".bxhint2").map(e => e.textContent).join(" | "));
   const sel = __t.bxAdd("select", 240, 0, { cols: "y" });
   eql(__t.bxConnect(ds.id, sel.id, 0, 0), null, "a select sources it");
   eql(__t.bxSelectSource(sel).id, ds.id, "\u2026and resolves it");
