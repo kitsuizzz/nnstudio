@@ -10296,9 +10296,9 @@ function bxConfigFill(pane, n) {               // the train config: every settin
   };
   const body = mk("div", { class: "bxinputbody" });
   pane.appendChild(body);
-  const field = (label, el) => {
-    const l = mk("label", { class: "rf" });
-    l.appendChild(mk("span", { text: label }));
+  const field = (label, el) => {                // an empty label: the row stands
+    const l = mk("label", { class: "rf" });       // bare \u2014 a Training box
+    if (label) l.appendChild(mk("span", { text: label }));   // claims them already
     l.appendChild(el);
     body.appendChild(l);
     return l;
@@ -10329,17 +10329,19 @@ function bxConfigFill(pane, n) {               // the train config: every settin
     fix.addEventListener("click", () => bxTrainWireConfig(n));
     to.appendChild(fix);
   }
-  body.appendChild(to);
+  if (n.kind !== "training")                   // a Training box reads its model
+    body.appendChild(to);                      // off the slot and its card \u2014 no
   // the model world: the config names the box whose architecture trains
   const models = [];
   bxEveryBox(x => {
     if (x.kind === "custom" && bxBoundary(x, "out").length) models.push(x);
   });
   if (models.length)
-    field("model", pick("model", n.model, models,
-      "the nested model this config trains \u2014 the batch enters its first "
-      + "input and its first output is scored"));
-  else {
+    field(n.kind === "training" ? "" : "model",
+      pick("model", n.model, models,
+        "the nested model this config trains \u2014 the batch enters its first "
+        + "input and its first output is scored"));
+  else if (n.kind !== "training") {            // the empty-slot hint already says
     const outside = (BX.nodes || []).filter(x => bxWeightsBox(x));
     const h = mk("div", { class: "panehint",
       text: "no model on the canvas \u2014 drop a Model box (palette \u2192 "
@@ -10358,7 +10360,7 @@ function bxConfigFill(pane, n) {               // the train config: every settin
     }
     body.appendChild(h);
   }
-  field("training", par);
+  field(n.kind === "training" ? "" : "training", par);
   // the data: the matrix on the data dot, detected here \u2014 its columns are
   // what x col / y col pick from
   const at = bxAttached();

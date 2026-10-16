@@ -5662,6 +5662,14 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   __t.bxTrainingFill(pane, t);
   const text = pane.querySelectorAll(".panehint").map(e => e.textContent).join("|");
   ok(text.indexOf("slot: net") >= 0, "the window reads the slot: " + text.slice(0, 90));
+  // the top leads with bare controls: the slot and the box already claim the
+  // model and the training
+  const labels = pane.querySelectorAll("label.rf")
+    .map(l => l.children.map(c => c.textContent).join(" ").trim());
+  eql(labels[0], "", "the first row stands bare: " + labels.slice(0, 3).join(","));
+  eql([labels.indexOf("model"), labels.indexOf("training")], [-1, -1],
+      "\u2026the model and training labels are implied");
+  eql(text.indexOf("names "), -1, "\u2026and no 'names \u2026' line at the top");
   // the start button sits in a footer of its own at the window's bottom left
   const foot = pane.querySelectorAll(".runfoot")[0];
   ok(foot, "the window has a run footer at its bottom left");
