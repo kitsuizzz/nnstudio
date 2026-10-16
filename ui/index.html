@@ -303,7 +303,7 @@
   .dnode.tscorer .drect { stroke: #fbbf24; stroke-width: 2.2; }  /* the signal's head */
   .dedge.tgrad { stroke: #86efac; stroke-width: 2; stroke-dasharray: 5 9;
                  animation: bxflow .5s linear infinite reverse; } /* gradients run backward */
-  .dtag { font-size: 9px; font-weight: 700; }
+  .dtag { font-size: 9px; font-weight: 700; text-anchor: end; }
   .dtag.tsrc { fill: #86efac; }
   .dtag.ttest { fill: #93c5fd; }
   .dtag.tscored, .dtag.tpolicy, .dtag.tscorer { fill: #fbbf24; }
@@ -1369,6 +1369,11 @@ function bxOpArity(op) {
 }
 function bxClip(s, max) {
   s = String(s == null ? "" : s);
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+function bxClipFit(s, w, px) {              // clip to the card's own width: the
+  s = String(s == null ? "" : s);           // mono face makes the count exact
+  const max = Math.max(3, Math.floor((w - 20) / (px || 6)));
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
 function bxShape(n) {
@@ -6829,8 +6834,9 @@ function bxCard(n) {
                         "dtype " + (n.model ? "model" : n.kind)));
   let rightX = w - 9;                          // the corner marks stack right-to-left
   if (tint) {                                  // the training signal's mark
-    g.appendChild(svgText(n.x + rightX, n.y + 15, TINT_TAG[tint] || "?", "dtag " + tint));
-    rightX -= 14;
+    const tag = TINT_TAG[tint] || "?";
+    g.appendChild(svgText(n.x + rightX, n.y + 15, tag, "dtag " + tint));
+    rightX -= Math.round(tag.length * 5.4) + 6;
   }
   if (err) { g.appendChild(svgText(n.x + rightX, n.y + 15, "!", "dwarn")); rightX -= 14; }
   else if (warn) { g.appendChild(svgText(n.x + rightX, n.y + 15, "!", "dwarn2")); rightX -= 14; }
@@ -6847,7 +6853,8 @@ function bxCard(n) {
   if (n.place === "gpu" || n.place === "system")   // where this layer was loaded
     g.appendChild(svgText(n.x + rightX, n.y + 15, n.place === "gpu" ? "gpu" : "sys",
                           "dplace " + (n.place === "gpu" ? "gpu" : "sys")));
-  g.appendChild(svgText(n.x + 9, n.y + 32, bxClip(n.name || bxKindLabel(n.kind), 22), "dlabel"));
+  g.appendChild(svgText(n.x + 9, n.y + 32,
+                        bxClipFit(n.name || bxKindLabel(n.kind), w, 7), "dlabel"));
   // the value line sits at the bottom of the card, so it is never cut
   const unset = (n.kind === "layer") ? (n.din == null || n.dout == null)
               : (n.kind === "embed") ? (n.vocab == null || n.dout == null)
@@ -6862,7 +6869,7 @@ function bxCard(n) {
                   (n.t && (n.kind === "op" || n.kind === "script"))))
     bottom += " \u00b7 " + n.dtype;              // the weights' dtype, from the file
   if (!isSheet)
-    g.appendChild(svgText(n.x + 9, n.y + h - 11, bxClip(bottom, 30), "dshape lower" + vcls));
+    g.appendChild(svgText(n.x + 9, n.y + h - 11, bxClipFit(bottom, w), "dshape lower" + vcls));
   const stateText = bxStateText(bxNodeState(n));  // the data the last run left here
   const task = n.kind === "agent" ? bxTask(n.task_id) : null;   // its agent task
   if (task && !preview) {                    // the ring: how far the task has got
@@ -6889,16 +6896,16 @@ function bxCard(n) {
   if (!isSheet && !bxHasPane(n)) {
     if (bxRunErr && bxRunErr.ids && bxRunErr.ids.has(n.id))
       g.appendChild(svgText(n.x + 9, n.y + 48,
-                            bxClip(bxRunErr.here === n.id
-                                   ? String(bxRunErr.msg).replace(/^[^:]{1,80}:\s*/, "")
-                                   : "failed inside", 24),
+                            bxClipFit(bxRunErr.here === n.id
+                                      ? String(bxRunErr.msg).replace(/^[^:]{1,80}:\s*/, "")
+                                      : "failed inside", w),
                             "dstate err"));
     else if (task)
       g.appendChild(svgText(n.x + 9, n.y + 48,
-                            bxClip(bxTaskProgress(task) || bxTaskChip(task), 24),
+                            bxClipFit(bxTaskProgress(task) || bxTaskChip(task), w),
                             "dstate rev"));
     else if (stateText && !bxPlainPort(n))
-      g.appendChild(svgText(n.x + 9, n.y + 48, bxClip(stateText, 24), "dstate"));
+      g.appendChild(svgText(n.x + 9, n.y + 48, bxClipFit(stateText, w), "dstate"));
   }
   const dot = (at, dir, i, size) => {
     const dead = off || (dir === "out" && bxPortOff(n, "out", i));

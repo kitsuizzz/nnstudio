@@ -199,7 +199,7 @@ globalThis.__t = {
   bxCenter,
   BX_DTYPES, BX_DTYPE_GROUPS, bxBytes, bxDtypeFill, bxEstimate, bxEstimateRuns, bxRenderEstimate, bxPortDefs, bxPortSizes, bxEnter, bxLeave, bxUpBox,
   bxOutSize, bxInSize,
-  bxMenuBuild, bxMenuClose, bxClip, bxShape, bxtExport, bxtImport, bxtForm, bxtRefresh,
+  bxMenuBuild, bxMenuClose, bxClip, bxClipFit, bxShape, bxtExport, bxtImport, bxtForm, bxtRefresh,
   bxWeightsForm, bxWeightsApply, bxWeightsExportForm, bxWeightScore, bxTensorDims,
   bxTensorDtype, bxApplyManifest,
   bxtDropsClose, bxtPaletteToggle, bxtImportToggle, bxtabToggle,
@@ -643,6 +643,28 @@ check("the diffusers kit round-trips: a group norm, a flipped step", () => {
   eql([tb.kind, tb.op, tb.flip], ["op", "timestep", 1],
       "a cos-first step survives the design too");
   __t.bxRemove(t.id); __t.bxRemove(g.id);
+  eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
+});
+
+check("a card's lines are clipped to the card's own width", () => {
+  const keep = __t.BX.nodes.length;
+  eql(__t.bxClipFit("silu", 160, 6), "silu", "short text is left whole");
+  const clipped = __t.bxClipFit("model \u00b7 1 in \u00b7 1 out \u00b7 16 params", 160, 6);
+  ok(clipped.length === 23 && clipped.slice(-1) === "\u2026",
+     "a long line ends in an ellipsis inside 160: " + clipped);
+  eql(__t.bxClipFit("model \u00b7 1 in \u00b7 1 out \u00b7 16 params", 380, 6).indexOf("\u2026"),
+      -1, "a wider card keeps it whole");
+  // and the drawn card clips the same way
+  const m = __t.bxAddTemplate("model", 0, 0, "vision transformer with a very long name");
+  __t.bxRender();
+  const labels = getEl("bxcanvas").querySelectorAll(".dlabel").map(e => e.textContent);
+  const mine = labels.filter(s => s.indexOf("vision") === 0);
+  ok(mine.length === 1 && mine[0].length <= 20 && mine[0].slice(-1) === "\u2026",
+     "the drawn name fits the box: " + mine.join(","));
+  const shapes = getEl("bxcanvas").querySelectorAll(".dshape").map(e => e.textContent);
+  const sh = shapes.filter(s => s.indexOf("model \u00b7") === 0);
+  ok(sh.length === 1 && sh[0].length <= 23, "the drawn shape line fits too: " + sh.join(","));
+  __t.bxRemove(m.id);
   eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
 });
 
