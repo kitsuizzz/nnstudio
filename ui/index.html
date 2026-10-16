@@ -838,7 +838,6 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
            border-radius: 0; box-shadow: 0 12px 30px rgba(0,0,0,.5); }
 .bxtdrop[hidden] { display: none; }
 .bxtdrop-r { left: auto; right: 10px; }
-.bxtdrop.up { top: auto; bottom: 32px; }
 #bxtVramMenu { min-width: 268px; }
 #bxtVramMenu .bxvram { border: 0; background: transparent; padding: 0; }
 /* the Backend menu: Local (connect a computer of your own) or Remote (Modal,
@@ -940,15 +939,15 @@ header { padding: 18px 16px 10px; flex: 0 0 auto; }
          font: 12px var(--mono); color: var(--ink); white-space: nowrap; }
 .bxtmi:hover { background: rgba(255,255,255,.07); }
 .bxtspace { flex: 1 1 auto; }
-/* the project tabs: a browser-style strip below the canvas */
-.bxtabs { position: relative; display: flex; align-items: flex-start; gap: 6px;
-          padding: 0 2px; margin: 10px 0 0; border-top: 1px solid var(--panel-brd); }
+/* the project tabs: a browser-style strip under the toolbar */
+.bxtabs { position: relative; display: flex; align-items: flex-end; gap: 6px;
+          padding: 0 2px; margin: 0 0 10px; border-bottom: 1px solid var(--panel-brd); }
 .bxtabrail { display: flex; align-items: flex-end; gap: 3px; min-width: 0;
              overflow: hidden; }
 .bxtab { display: flex; align-items: center; gap: 7px; cursor: pointer;
          font: 600 12px var(--mono); color: var(--ink-dim); max-width: 240px;
          padding: 6px 14px 7px; border: 1px solid var(--panel-brd);
-         border-top: none; background: rgba(0,0,0,.18); white-space: nowrap;
+         border-bottom: none; background: rgba(0,0,0,.18); white-space: nowrap;
          user-select: none; transition: color .15s, background .15s; }
 .bxtab:hover { color: var(--ink); }
 .bxtab.on { color: var(--accent); background: rgba(249,115,22,.08); }
@@ -1048,6 +1047,12 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
         <div class="bxvram" id="bxvram"></div>
       </div>
     </div>
+    <div class="bxtabs">
+      <div class="bxtabrail" id="bxtabrail"></div>
+      <span class="bxtabnote" id="bxtabnote"></span>
+      <span class="bxtabadd" id="bxtabadd" title="open another canvas">+</span>
+      <div class="bxtdrop bxtdrop-r" id="bxtabMenu" hidden></div>
+    </div>
     <div class="bxrow">
       <div class="bxwrap" id="bxwrap">
         <div class="flowsvg" id="bxcanvas"></div>
@@ -1055,13 +1060,7 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
         <div class="bxtip" id="bxtip" hidden></div>
       </div>
     </div>
-  <div class="bxtabs">
-      <div class="bxtabrail" id="bxtabrail"></div>
-      <span class="bxtabnote" id="bxtabnote"></span>
-      <span class="bxtabadd" id="bxtabadd" title="open another canvas">+</span>
-      <div class="bxtdrop bxtdrop-r up" id="bxtabMenu" hidden></div>
-    </div>
-    </section>
+  </section>
 </main>
 
 <script>

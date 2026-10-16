@@ -4689,14 +4689,14 @@ check("the project tabs: named, starred, switched \u2014 and saved from the tab"
   eql(strip(), ["New Project 1*"], "the strip is tidy again");
 });
 
-check("the toolbar sits on top, the project tabs below the canvas", () => {
+check("the order is toolbar, project tabs, canvas", () => {
   const h = fs.readFileSync(UI, "utf8");       // the page's own order, static HTML
   const iTools = h.indexOf('<div class="bxtools"'), iRow = h.indexOf('<div class="bxrow"'),
         iTabs = h.indexOf('<div class="bxtabs"');
-  ok(iTools >= 0 && iRow > iTools && iTabs > iRow,
-     "tools first, then the canvas, then the tabs");
-  ok(/class="[^"]*up[^"]*" id="bxtabMenu"/.test(h),
-     "\u2026and the + menu opens upward from the bottom strip");
+  ok(iTools >= 0 && iTabs > iTools && iRow > iTabs,
+     "the toolbar first, the tabs under it, the canvas last");
+  ok(!/class="[^"]*\bup\b[^"]*" id="bxtabMenu"/.test(h),
+     "\u2026and the + menu drops down from the strip");
 });
 
 check("the view cannot be lost: a tight world around origin and design", () => {

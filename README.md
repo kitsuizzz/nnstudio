@@ -46,7 +46,7 @@ values are derived from the token, in the browser, each under its own label:
 | `name tag` = sha256("nnstudio-name-v1" + token + lower(name)) | with each save | the tag itself — keyed, so it cannot be matched to a guessed name |
 | data key = sha256("nnstudio-data-v1" + token) → AES-GCM | nothing | — |
 
-Designs are saved from the **project tabs** below the canvas: `Ctrl/Cmd+S`
+Designs are saved from the **project tabs** under the toolbar: `Ctrl/Cmd+S`
 saves the active one (a new project asks for its name first), the `+` at the
 strip's right opens **New Canvas** or your **Saved Canvas** list — each saved
 canvas opens as its own tab, and its `×` closes it (asking first when it
@@ -129,7 +129,7 @@ code (git-ignored) is the default.
 
 | file | role |
 |---|---|
-| `ui/index.html` | the whole app — the toolbar up top (Palette · Import · Backend — the server config's door, up top of that menu — · VRAM), the canvas, the project tabs below it (Ctrl/Cmd+S saves; the + opens New Canvas / Saved Canvas; the × closes one, warning first when it is unsaved), the right-click menus; one self-contained page |
+| `ui/index.html` | the whole app — the toolbar up top (Palette · Import · Backend — the server config's door, up top of that menu — · VRAM), the project tabs under it (Ctrl/Cmd+S saves; the + opens New Canvas / Saved Canvas; the × closes one, warning first when it is unsaved), the canvas, the right-click menus; one self-contained page |
 | `nn_engine.py` | the GGUF/HF → canvas builder (`build_canvas` is pure; `gguf_canvas`/`hf_canvas`/`diffusers_unet_canvas` read real headers — the diffusers one mirrors UNet2DConditionModel module for module, SDXL's text_time conditioning included) — extracted from next-token's engine |
 | `nn_server.py` | the stdlib server: the UI, the GGUF list, the builder endpoint, the GPU badge, the agents' control listener and the run dispatch |
 | `nn_users.py` | accounts for saving designs: sealed names/designs, keyed tags, the auth hash, the Turnstile check (`users.db`, git-ignored — ciphertext only) |
