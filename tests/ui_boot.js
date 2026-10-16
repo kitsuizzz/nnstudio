@@ -421,10 +421,9 @@ check("the right-click menus: three add items, or remove", () => {
     "Model drops down into its box");
   eql(heads()[0].querySelectorAll(".chev")[0].textContent, "\u25be", "…and wears the open chevron");
   heads().find(c => c.textContent === "Layers").click();
-  eql(openItems(), ["embedding box", "fully connected box", "convolution box",
-                    "norm box", "activation box", "operation box", "script box",
+  eql(openItems(), ["activation box", "operation box", "script box",
                     "sample box"],
-    "Layers replaces Model — one category at a time, weights and math together");
+    "Layers replaces Model — one category at a time, and only what lands here");
   heads().find(c => c.textContent === "the design").click();
   eql(openItems(),
     ["export the canvas as JSON", "import JSON …", "export weights …"],
@@ -1119,14 +1118,16 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   menu.children.find(c => c.textContent === "Layers").click();
   const cards = menu.querySelectorAll(".bxpalitem");
   eql(cards.map(i => i.getAttribute("data-kind")),
-    ["input", "output", "embed", "layer", "conv", "norm", "act", "op", "script",
-     "sample"],
-    "Layers expands below the two cards");
+    ["input", "output", "act", "op", "script", "sample"],
+    "Layers expands below the two cards — the weight kinds are not here");
   ok(cards.slice(2).every(i => i.children[0] && i.children[0]._attrs &&
                               i.children[0]._attrs.viewBox),
     "…each drawn by the same card renderer");
-  ok(cards.slice(2, 6).every(i => String(i.className).split(/\s+/).includes("off")),
-    "…and the table-carrying ones are locked at the top level");
+  ok(cards.slice(2).every(i => !String(i.className).split(/\s+/).includes("off")),
+    "…nothing is greyed out: a card is only listed where it lands");
+  ok(["embed", "layer", "conv", "norm"].every(k =>
+       !cards.some(c => c.getAttribute("data-kind") === k)),
+    "…and the table-carrying kinds are gone from the top level");
   // Text holds the tokenizer pair — the hf model comes in through Import
   menu.children.find(c => c.textContent === "Text").click();
   eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
@@ -1337,10 +1338,12 @@ check("a Palette card: a click drops it in the middle, a drag lands where you le
   const menu = getEl("bxtPalMenu");
   menu.children.find(c => c.textContent === "Layers").click();      // show some cards
   const before = __t.BX.nodes.length;
-  // weights are locked at the top level: the click places nothing
-  __t.bxPalDown({ button: 0, clientX: 60, clientY: 60, preventDefault() {}, stopPropagation() {} }, "layer");
-  __t.bxPalUp({ clientX: 60, clientY: 60 });
-  eql(__t.BX.nodes.length, before, "a weights card is locked at the top level");
+  // the weight kinds have no top-level card at all — and the kind still refuses
+  ok(menu.querySelectorAll(".bxpalitem")
+       .map(i => i.getAttribute("data-kind")).indexOf("layer") < 0,
+     "no layer card is offered at the top level");
+  eql(__t.bxAddKind("layer", 0, 0, {}), null,
+     "…and the kind still refuses to land");
   // a press that does not move: the box lands in the middle of the view
   __t.bxPalDown({ button: 0, clientX: 60, clientY: 60, preventDefault() {}, stopPropagation() {} }, "act");
   __t.bxPalUp({ clientX: 60, clientY: 60 });

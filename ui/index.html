@@ -2341,6 +2341,12 @@ function bxAddKind(kind, x, y, v) {              // the palette path: a kind, or
   if (!BX.up && bxWeightsKind(kind)) return null;   // weights live inside a model
   return bxAdd(kind, x, y, v);
 }
+function bxPlaceable(kind) {                    // would a card for this kind land
+  if (BX_TEMPLATES[kind]) return true;          // here? The palette and the
+  if (!BX.up && bxWeightsKind(kind)) return false;   // canvas menu both list
+  if (kind === "train" && !bxTrainAllowed()) return false;  // only what does
+  return true;
+}
 function bxAdd(kind, x, y, v) {
   v = v || {};
   if (kind === "train" && !bxTrainAllowed()) return null;   // one Run box, top level only
@@ -7214,14 +7220,16 @@ function bxMenuBuild(mode, id, ev) {
   const again = () => bxMenuBuild("canvas", null, ev);
   // the shelves, the same list the palette shows \u2014 one taxonomy, both doors
   for (const [name, cards] of BX_PALETTE()) {
-    const entries = cards.map(([kind, label]) => [label, () => {
+    const here = cards.filter(([kind]) => bxPlaceable(kind));
+    const entries = here.map(([kind, label]) => [label, () => {
       const w = bxPoint(ev);
       bxMenuClose();
       bxAddKind(kind, w.x, w.y);
     }]);
-    if (name === "Text")                         // the shortcut the pair deserves
+    if (name === "Text" && here.length)          // the shortcut the pair deserves
       entries.push(["load a tokenizer \u2026",
                     () => bxForm("tokenize", ev, null, "loadtok")]);
+    if (!entries.length) continue;               // nothing here lands at this level
     section(name, name, entries, again);
   }
   const design = [];
@@ -10979,12 +10987,8 @@ const BX_PALETTE = () => [
   ["AI", [["agent", "agent box"]]],
 ];
 function bxPalCard(kind, label) {
-  const locked = !BX.up && bxWeightsKind(kind);   // weights live inside a model
-  const item = mk("div", { class: "bxpalitem" + (locked ? " off" : ""),
-                           title: locked
-                             ? label + " \u2014 weights live inside a Model: drop "
-                               + "one (models), open it, and build in there"
-                             : label + " \u2014 click to drop it in the middle, "
+  const item = mk("div", { class: "bxpalitem",
+                           title: label + " \u2014 click to drop it in the middle, "
                                + "or drag it onto the canvas" });
   item.setAttribute("data-kind", kind);
   item.appendChild(bxPreview(kind));
@@ -11005,6 +11009,8 @@ function bxRenderPalette() {
     io.appendChild(bxPalCard("output", "output box"));
     menu.appendChild(io);
     for (const [name, kinds] of BX_PALETTE()) {
+      const here = kinds.filter(([kind]) => bxPlaceable(kind));
+      if (!here.length) continue;                // nothing in this shelf lands here
       const open = bxpOpen === name;
       const head = mk("div", { class: "bxtcat", text: name,
                                title: open ? "collapse" : "expand" });
@@ -11016,7 +11022,7 @@ function bxRenderPalette() {
       menu.appendChild(head);
       if (!open) continue;
       const grid = mk("div", { class: "bxtcards" });
-      for (const [kind, label] of kinds) grid.appendChild(bxPalCard(kind, label));
+      for (const [kind, label] of here) grid.appendChild(bxPalCard(kind, label));
       menu.appendChild(grid);
     }
   }
