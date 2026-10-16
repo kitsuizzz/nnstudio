@@ -192,7 +192,7 @@ globalThis.__t = {
   bxAddTemplate, bxAddKind, bxGGUFImport, bxGGUFImportApply, bxGGUFLoad,
   bxAttentionDoc, bxStateDoc,
   bxMoEDoc, bxTemplateName, bxErrorSet,
-  bxMoveInto, bxDropTargetAt, bxHasInside, bxUndoStep, bxRedoStep, bxUndoDepth, bxCommit,
+  bxMoveInto, bxDropTargetAt, bxStartWire, bxDotClick, bxHasInside, bxUndoStep, bxRedoStep, bxUndoDepth, bxCommit,
   bxSnapMove, bxSnapGrid, bxClampView, bxSeedBlank, bxNodeH,
   get bxGuides() { return bxGuides; }, set bxGuides(v) { bxGuides = v; },
   bxSelectBoxes, bxSelectedIds, bxToggleSelect, bxMarqueeSelect, bxStartMove, bxMove, bxUp,
@@ -5673,6 +5673,44 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   __t.bxRemove(m.id);
   __t.bxRemove(t.id);
   eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
+});
+
+check("a model dropped into the gap docks: the drop sees the box under the card", () => {
+  const keep = __t.BX.nodes.length;
+  const t = __t.bxAdd("training", 0, 0, {});
+  const card = __t.bxCard(t);
+  document.elementsFromPoint = () => [card];   // the cursor is over the dragged card —
+  const ev = (x, y) => ({ clientX: x, clientY: y });   // the stack names what is under
+  const m = __t.bxAdd("custom", 700, 0, {});
+  __t.bxStartMove([m.id], m.id, 0, 0);
+  eql(__t.bxDropTargetAt(ev(60, 60)), t.id,
+      "the hover sees the box underneath the dragged card");
+  __t.bxUp({});
+  // the palette's model card, let go over the gap, docks on the way in
+  const pal = __t.bxDropPalette("custom", ev(100, 100));
+  ok(pal && pal.kind === "custom", "the palette drop lands a model");
+  eql(t.model, pal.id, "\u2026and it docks into the slot");
+  ok(__t.bxShape(t).indexOf(pal.name) >= 0,
+     "\u2026the card reads it: " + __t.bxShape(t));
+  delete document.elementsFromPoint;
+  __t.bxRemove(pal.id);
+  __t.bxRemove(m.id);
+  __t.bxRemove(t.id);
+  eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
+});
+
+check("a seated model's dot ejects on a click", () => {
+  const t = __t.bxAdd("training", 0, 0, {});
+  const m = __t.bxAdd("custom", 700, 0, {});
+  ok(__t.bxDockModel(t.id, m.id), "a model, seated");
+  eql(__t.bxDotClick(m), true, "a click on one of its dots pops it out");
+  eql(t.model, null, "\u2026the socket opens");
+  eql(__t.bxDotClick(t), false, "\u2026and the box's own dots are not ejectors");
+  const l = __t.bxAdd("layer", 0, 300, {});
+  eql(__t.bxDotClick(l), false, "\u2026nor is a plain box's dot");
+  __t.bxRemove(l.id);
+  __t.bxRemove(m.id);
+  __t.bxRemove(t.id);
 });
 
 check("the veterans' way plans too: a wired dataset→loss needs no config", () => {

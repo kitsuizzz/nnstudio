@@ -1977,6 +1977,12 @@ function bxDockModel(tid, mid) {               // a model into that gap: it beco
   bxCommit();
   return true;
 }
+function bxDotClick(n) {                       // a click — not a drag — on a dot
+  const host = bxTrainHostOf(n);               // of a seated model pops it out
+  if (!host) return false;
+  bxUndockModel(host.id);
+  return true;
+}
 function bxUndockModel(tid) {                  // the pair separates: the model
   const t = bxNode(tid);                       // stays right where it stands
   if (!t || t.kind !== "training") return false;
@@ -3445,14 +3451,23 @@ function bxMoveInto(nodeId, targetId) {
   return true;
 }
 // what nested box is under the cursor right now (for the move-into gesture)
+function bxBoxUnder(ev, skipId) {              // the box under the pointer, past
+  const stack = (document.elementsFromPoint && ev)   // the one being dragged: its
+    ? document.elementsFromPoint(ev.clientX, ev.clientY)   // own card is what the
+    : ((document.elementFromPoint && ev)               // cursor is over, so the
+       ? [document.elementFromPoint(ev.clientX, ev.clientY)] : []);   // stack is read
+  for (const t of (stack || [])) {
+    const el = t && t.closest ? t.closest(".dnode") : null;
+    const id = el && el.getAttribute ? el.getAttribute("data-id") : null;
+    const hit = id ? bxNode(id) : null;
+    if (hit && hit.id !== skipId) return hit;
+  }
+  return null;
+}
 function bxDropTargetAt(ev) {
   if (!bxDrag || bxDrag.kind !== "move") return null;
-  const t = (document.elementFromPoint && ev) ? document.elementFromPoint(ev.clientX, ev.clientY) : null;
-  const el = t && t.closest ? t.closest(".dnode") : null;
-  const id = el && el.getAttribute ? el.getAttribute("data-id") : null;
-  const n = id ? bxNode(id) : null;
-  if (!n || (n.kind !== "custom" && n.kind !== "training")
-      || n.id === bxDrag.id) return null;
+  const n = bxBoxUnder(ev, bxDrag.id);
+  if (!n || (n.kind !== "custom" && n.kind !== "training")) return null;
   const dragging = bxNode(bxDrag.id);
   if (!dragging || dragging.kind === "train") return null;   // the Run box stays at the top
   if (bxHasInside(dragging, n.id)) return null;
@@ -11624,6 +11639,13 @@ function bxDropPalette(kind, ev) {
   const p = bxPoint({ clientX: x, clientY: y });
   const n = bxAddKind(kind, p.x, p.y, {});
   if (!n) return null;                         // refused (a second Run box, say)
+  if (n.kind === "custom" && ev) {             // a model let go on a Training box
+    const under = bxBoxUnder({ clientX: x, clientY: y }, n.id);   // lands in its slot
+    if (under && under.kind === "training") {
+      bxDockModel(under.id, n.id);
+      return n;
+    }
+  }
   bxSelectBoxes([n.id]);                       // ready to move / configure / delete
   return n;
 }
@@ -11708,7 +11730,8 @@ function bxStartWire(ev, n) {
   const p = bxPortPos(n, "out", fromPort, fromCount);
   const path = svg("path", { d: "M " + p.x + " " + p.y, class: "dedge live" });
   root.appendChild(path);
-  bxWire = { from: n, fromPort, fromCount, path };
+  bxWire = { from: n, fromPort, fromCount, path, sx: ev.clientX || 0,
+             sy: ev.clientY || 0 };
 }
 function bxBadDrop(ev) {
   if (!bxWire) return false;
@@ -11728,6 +11751,10 @@ function bxMove(ev) {
     return;
   }
   if (bxWire) {
+    if (!bxWire.moved
+        && Math.abs((ev.clientX || 0) - (bxWire.sx || 0)) +
+           Math.abs((ev.clientY || 0) - (bxWire.sy || 0)) < 3) return;
+    bxWire.moved = true;
     const t = bxPoint(ev);
     const p = bxPortPos(bxWire.from, "out", bxWire.fromPort, bxWire.fromCount);
     const dx = Math.max(40, Math.abs(t.x - p.x) * 0.4);
@@ -11805,8 +11832,10 @@ function bxUp(ev) {
   }
   if (bxWire) {
     const path = bxWire.path, from = bxWire.from, fromPort = bxWire.fromPort;
+    const moved = !!bxWire.moved;
     bxWire = null;
     if (path && path.parentNode) path.parentNode.removeChild(path);
+    if (!moved && bxDotClick(from)) return;    // a click on a seated model's dot
     const t = (document.elementFromPoint && ev) ? document.elementFromPoint(ev.clientX, ev.clientY) : null;
     const to = t && t.closest ? t.closest(".dport.in") : null;
     const toId = to && to.getAttribute ? to.getAttribute("data-node") : null;
