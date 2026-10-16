@@ -41,6 +41,7 @@ TAG_RE = re.compile(r"^[0-9a-f]{64}$")         # a 32-byte sha256, hex
 B64_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
 IV_MAX = 64                                    # a GCM nonce, base64
 NAME_CT_MAX = 1024                             # a sealed name, base64 chars
+SESSION_MAX = 64 * 1024                        # a sealed session: the open tabs
 EMAIL_CT_MAX = 1024                            # a sealed email, base64 chars
 BLOB_MAX = 6 * 1024 * 1024                     # a sealed design, base64 chars
 
@@ -107,6 +108,9 @@ def ensure(path=None):
         cols = [r[1] for r in conn.execute("PRAGMA table_info(users)")]
         if "email_ct" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN email_ct TEXT")
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)")]
+        if "sesh_ct" not in cols:              # the last screen: which saved tabs
+            conn.execute("ALTER TABLE users ADD COLUMN sesh_ct TEXT")   # were open
         conn.execute("""CREATE TABLE IF NOT EXISTS canvases (
             user_id TEXT NOT NULL,
             name_tag TEXT NOT NULL,
@@ -285,6 +289,28 @@ def get_canvas(user_id, name_tag, path=None):
                            (user_id, str(name_tag or "").strip().lower())).fetchone()
         return ({"name_ct": _unpack(row["name_ct"]), "blob": _unpack(row["blob"]),
                  "updated": row["updated"]} if row else None)
+
+
+def save_session(user_id, blob, path=None):
+    """The browser's last screen, sealed: which saved canvases were open as
+    tabs, and which was active — one per account, replaced each time."""
+    sealed = _sealed(blob, "session", SESSION_MAX)
+    if not user_id:
+        raise ValueError("an account is needed to remember a session")
+    ensure(path)
+    with connect(path) as conn:
+        conn.execute("UPDATE users SET sesh_ct = ? WHERE id = ?", (sealed, user_id))
+    return {"bytes": len(sealed)}
+
+
+def get_session(user_id, path=None):
+    if not user_id:
+        return None
+    ensure(path)
+    with connect(path) as conn:
+        row = conn.execute("SELECT sesh_ct FROM users WHERE id = ?",
+                           (user_id,)).fetchone()
+    return _unpack(row["sesh_ct"]) if row and row["sesh_ct"] else None
 
 
 def drop_canvas(user_id, name_tag, path=None):

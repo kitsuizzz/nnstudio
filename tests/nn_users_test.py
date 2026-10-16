@@ -28,6 +28,7 @@ def check(name, fn):
 
 WORK = tempfile.mkdtemp(prefix="nnstudio-users-")
 DB = os.path.join(WORK, "users.db")
+SDB = os.path.join(tempfile.mkdtemp(prefix="nnstudio-sessions-"), "users.db")
 
 
 def sealed(text, iv=b"0123456789ab"):
@@ -191,6 +192,52 @@ def designs():
         raise AssertionError("a guest saved a design")
     except ValueError as e:
         assert "account" in str(e), e
+
+
+def sessions():
+    sdb = SDB                                  # its own store: registering()
+                                               # reads the shared db's first row
+    u = nn_users.register(tag("f"), sealed("session keeper"), nn_users.new_auth(), path=sdb)
+    other = nn_users.register(tag("0"), sealed("elsewhere"), nn_users.new_auth(), path=sdb)
+    assert nn_users.get_session(u["id"], path=sdb) is None, "nothing remembered yet"
+    sn = '{"tabs":["alpha","beta"],"active":"beta"}'
+    nn_users.save_session(u["id"], sealed(sn), path=sdb)
+    got = nn_users.get_session(u["id"], path=sdb)
+    assert got == sealed(sn), "the session comes back as it went in"
+    assert base64.b64decode(got["ct"]).decode() == sn, got
+    nn_users.save_session(u["id"], sealed('{"tabs":[]}'), path=sdb)
+    assert base64.b64decode(nn_users.get_session(u["id"], path=sdb)["ct"]).decode() \
+        == '{"tabs":[]}', "saving over one replaces it"
+    assert nn_users.get_session(other["id"], path=sdb) is None, "nobody else's session"
+    for bad in (None, "plain", {"iv": "AA==", "ct": "x" * (nn_users.SESSION_MAX + 4)}):
+        try:
+            nn_users.save_session(u["id"], bad, path=sdb)
+            raise AssertionError("accepted a bad sealed session")
+        except ValueError as e:
+            assert "session" in str(e), e
+    try:
+        nn_users.save_session(None, sealed("{}"), path=sdb)
+        raise AssertionError("a guest remembered a session")
+    except ValueError as e:
+        assert "account" in str(e), e
+
+
+check("the session: which tabs were open, sealed, one per account", sessions)
+
+
+def sessions_migration():
+    path = os.path.join(tempfile.mkdtemp(prefix="nnstudio-session-db-"), "users.db")
+    with sqlite3.connect(path) as conn:        # a store from before the feature
+        conn.execute("""CREATE TABLE users (id TEXT PRIMARY KEY, name_tag TEXT UNIQUE,
+                        name_ct TEXT NOT NULL, auth_hash TEXT NOT NULL, created REAL NOT NULL,
+                        email_ct TEXT)""")
+    nn_users.ensure(path)
+    with sqlite3.connect(path) as conn:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)")]
+    assert "sesh_ct" in cols, cols
+
+
+check("an older users.db grows the session column in place", sessions_migration)
 
 
 def email_migration():

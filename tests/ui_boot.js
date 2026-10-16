@@ -204,7 +204,8 @@ globalThis.__t = {
   bxTensorDtype, bxApplyManifest,
   bxtDropsClose, bxtPaletteToggle, bxtImportToggle, bxtabToggle,
   bxTabsRender, bxTabNew, bxTabSave, bxTabSelect, bxTabOpenSaved, bxProject,
-  bxTabClose, bxTabAnyDirty, bxTabLoad,
+  bxTabClose, bxTabAnyDirty, bxTabLoad, bxSessionNow, bxSessionPush, bxSessionMatch,
+  bxSessionRead,
   bxGGUFImport, bxGGUFImportApply, bxtVramToggle,
   bxSecret, bxCryptoReady, bxAuthCred, bxNameTag, bxSeal, bxUnseal,
   bxTokenRemember, bxTokenRecall, bxAccountLoad, bxtAccountToggle, bxAccountBuild,
@@ -4716,6 +4717,40 @@ check("the + sits right beside the last tab, and its menu drops from it", () => 
   strip.getBoundingClientRect = keep.strip;    // the stubs go back untouched
   add.getBoundingClientRect = keep.add;
   men.offsetWidth = keep.w;
+});
+
+check("the session remembers the saved tabs, in the browser and at the server", () => {
+  const store = {};                            // (an earlier check may have stubbed
+  const keepLS = global.localStorage;          // localStorage: give it back after)
+  global.localStorage = {
+    getItem: (k) => (k in store ? store[k] : null),
+    setItem: (k, v) => { store[k] = String(v); },
+    removeItem: (k) => { delete store[k]; },
+  };
+  const keepId = __t.bxProject().id;
+  __t.bxTabOpenSaved("alpha", { type: "canvas", version: 1, nodes: [], edges: [] });
+  const beta = __t.bxTabOpenSaved("beta", { type: "canvas", version: 1, nodes: [], edges: [] });
+  __t.bxTabNew();                              // an unsaved tab is not remembered
+  eql(__t.bxSessionNow(), { tabs: ["alpha", "beta"], active: null },
+      "only the saved tabs ride, in their order");
+  __t.bxTabSelect(beta.id);
+  eql(__t.bxSessionNow().active, "beta", "\u2026with the one on screen");
+  ok(store.nnstudio_session &&
+     JSON.parse(store.nnstudio_session).tabs.join(",") === "alpha,beta",
+     "the browser holds the session: " + store.nnstudio_session);
+  eql(__t.bxSessionRead().active, "beta", "\u2026and reads it back");
+  // the match keeps the session's order and drops what is gone
+  const rows = [{ name_tag: "x1" }, { name_tag: "x2" }, { name_tag: "x3" }];
+  eql(__t.bxSessionMatch({ tabs: ["beta", "gone", "alpha"] }, rows, ["beta", "x", "alpha"]),
+      [{ row: rows[0], name: "beta" }, { row: rows[2], name: "alpha" }],
+      "\u2026and a restore opens what still exists, in the saved order");
+  // tidy: the boot tab is the one left, reloaded from its own stash
+  __t.BX.projects = __t.BX.projects.filter(x => x.id === keepId);
+  __t.BX.active = keepId;
+  __t.bxTabLoad(__t.bxProject());
+  if (keepLS === undefined) delete global.localStorage;
+  else global.localStorage = keepLS;
+  eql(__t.bxProject().id, keepId, "the canvas is left as it was found");
 });
 
 check("the view cannot be lost: a tight world around origin and design", () => {

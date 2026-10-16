@@ -51,7 +51,10 @@ saves the active one (a new project asks for its name first), the `+` at the
 strip's right opens **New Canvas** or your **Saved Canvas** list — each saved
 canvas opens as its own tab, and its `×` closes it (asking first when it
 holds unsaved changes; a reload or close with unsaved tabs asks too). The last
-tab wears no `×` — there is always one canvas open.
+tab wears no `×` — there is always one canvas open. The tabs you leave
+open come back on your next visit: the browser keeps the list, and a signed-in
+account gets it sealed and posted (`sesh_ct` in `users.db`) — so a reload, or
+another machine, lands where you left off.
 
 Names and designs are sealed with AES-GCM *before* they are sent; `users.db`
 holds the tag, the sealed name, the sealed design, and the auth hash — no
@@ -133,7 +136,7 @@ code (git-ignored) is the default.
 | `ui/index.html` | the whole app — the toolbar up top (Palette · Import · Backend — the server config's door, up top of that menu — · VRAM), the project tabs under it (Ctrl/Cmd+S saves; the + opens New Canvas / Saved Canvas; the × closes one — never the last — warning first when it is unsaved), the canvas, the right-click menus; one self-contained page |
 | `nn_engine.py` | the GGUF/HF → canvas builder (`build_canvas` is pure; `gguf_canvas`/`hf_canvas`/`diffusers_unet_canvas` read real headers — the diffusers one mirrors UNet2DConditionModel module for module, SDXL's text_time conditioning included) — extracted from next-token's engine |
 | `nn_server.py` | the stdlib server: the UI, the GGUF list, the builder endpoint, the GPU badge, the agents' control listener and the run dispatch |
-| `nn_users.py` | accounts for saving designs: sealed names/designs, keyed tags, the auth hash, the Turnstile check (`users.db`, git-ignored — ciphertext only) |
+| `nn_users.py` | accounts for saving designs: sealed names/designs, the session (which tabs were open), keyed tags, the auth hash, the Turnstile check (`users.db`, git-ignored — ciphertext only) |
 | `agent/nnstudio_agent.py` | **the user's backend** — run it on the machine that holds the GPU; it dials the app, reports the machine and executes designs |
 | `agent/nn_torch.py` | the canvas→torch engine the agent runs (fed by the app, never by this page) |
 | `agent/nn_tokenizers.py` | huggingface `tokenizer.json` fetching + metadata (stdlib until a tokenizer is loaded) |

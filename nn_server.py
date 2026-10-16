@@ -772,6 +772,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "name_tag": tag, "name_ct": got["name_ct"],
                         "blob": got["blob"], "updated": got["updated"]})
             return
+        if path == "/api/account/session":
+            user = self._account()
+            if not user:
+                self._json({"ok": False, "error": "log in first"}, 401)
+                return
+            self._json({"ok": True, "session": nn_users.get_session(user["id"])})
+            return
         if path == "/api/models":
             self._json({"models": list_models()})
             return
@@ -983,6 +990,22 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 saved = nn_users.save_canvas(user["id"], data.get("name_tag"),
                                              data.get("name_ct"), data.get("blob"))
+            except ValueError as e:
+                self._json({"ok": False, "error": str(e)}, 400)
+                return
+            self._json({"ok": True, "saved": saved})
+            return
+        if path == "/api/account/session":
+            user = self._account()
+            if not user:
+                self._json({"ok": False, "error": "an account is what remembers \u2014 "
+                                                   "you are a guest"}, 401)
+                return
+            if not self._throttle("session", limit=120):
+                self._json({"ok": False, "error": "too many updates \u2014 wait a minute"}, 429)
+                return
+            try:
+                saved = nn_users.save_session(user["id"], data.get("session"))
             except ValueError as e:
                 self._json({"ok": False, "error": str(e)}, 400)
                 return

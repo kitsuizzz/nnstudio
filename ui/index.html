@@ -7587,6 +7587,10 @@ async function bxAccountSignedIn(user, token) {
   }
   bxTokenRemember(BXACCT.token);
   bxAccountSync();
+  if (!BXSESSION.restored) {                   // the tabs come back where they
+    BXSESSION.restored = true;                 // were \u2014 once per page
+    bxSessionRestore().then(() => bxSessionPush());
+  }
 }
 function bxAccountLocked(user) {
   BXACCT.known = true;
@@ -8088,6 +8092,91 @@ function bxAccountOpenApply(name, design) {
 // One tab per open canvas; switching snapshots the one on screen and loads the
 // other through the same JSON path an imported design takes. Ctrl/Cmd+S saves
 // the active project: sealed in this browser first, ciphertext posted after.
+// ---- the session: which saved projects were open, and which was on screen
+// The browser always keeps a copy; a signed-in, unlocked account also gets it
+// sealed and posted, so a reload (or another machine) lands where you left off.
+let BXSESSION = { hold: false, restored: false };
+
+function bxSessionNow() {
+  const tabs = (BX.projects || []).filter(p => p.saved).map(p => p.name);
+  const act = bxProject();
+  return { tabs: tabs,
+           active: act && act.saved && tabs.indexOf(act.name) >= 0 ? act.name : null };
+}
+function bxSessionStore(sn) {
+  try { localStorage.setItem("nnstudio_session", JSON.stringify(sn)); } catch (e) {}
+}
+function bxSessionRead() {
+  try {
+    const sn = JSON.parse(localStorage.getItem("nnstudio_session") || "null");
+    return sn && typeof sn === "object" ? sn : null;
+  } catch (e) { return null; }
+}
+function bxSessionPush() {                     // after every open, close, switch,
+  if (BXSESSION.hold) return false;            // save: the screen's tab set lands
+  const sn = bxSessionNow();                   // in the browser \u2014 and, when an
+  bxSessionStore(sn);                          // account can seal, at the server
+  if (typeof fetch !== "function" || !BXACCT.user || !BXACCT.token || BXACCT.locked)
+    return true;
+  bxSeal(BXACCT.token, sn).then(session =>
+    fetch("/api/account/session", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session }) })).catch(() => {});
+  return true;
+}
+function bxSessionMatch(sn, rows, names) {     // the session's tabs, in their saved
+  const out = [];                              // order, that still exist
+  for (const name of (sn && sn.tabs) || []) {
+    const i = (rows || []).findIndex((r, k) => names[k] === name);
+    if (i >= 0) out.push({ row: rows[i], name: name });
+  }
+  return out;
+}
+async function bxSessionRestore() {            // at sign-in: open what was open
+  if (typeof fetch !== "function" || !BXACCT.user || !BXACCT.token || BXACCT.locked)
+    return false;
+  let sn = null;
+  try {
+    const d = await fetch("/api/account/session").then(r => r.json());
+    if (d && d.ok && d.session) sn = await bxUnseal(BXACCT.token, d.session);
+  } catch (e) {}
+  if (!sn) sn = bxSessionRead();               // the browser's own memory
+  let rows = [];
+  try {
+    const d = await fetch("/api/account/canvases").then(r => r.json());
+    if (d && d.ok) rows = d.canvases || [];
+  } catch (e) { return false; }
+  if (!sn || !rows.length) return false;
+  const names = await Promise.all(rows.map(r =>
+    bxUnseal(BXACCT.token, r.name_ct).then(n => String(n), () => "")));
+  const want = bxSessionMatch(sn, rows, names);
+  if (!want.length) return false;
+  BXSESSION.hold = true;                       // the opens must not half-push
+  let opened = 0, activeId = null;
+  for (const w of want) {
+    try {
+      const d = await fetch("/api/account/canvas?tag="
+                            + encodeURIComponent(w.row.name_tag)).then(r => r.json());
+      if (!d || !d.ok || !d.blob) continue;
+      const design = await bxUnseal(BXACCT.token, d.blob);
+      const pr = bxTabOpenSaved(w.name, design);
+      if (pr) { opened += 1; if (w.name === sn.active) activeId = pr.id; }
+    } catch (e) {}
+  }
+  if (opened) {
+    const blank = (BX.projects || []).find(x => !x.saved && !x.dirty &&
+                  String(x.name || "").indexOf("New Project ") === 0);
+    if (blank && BX.projects.length > 1) {     // the boot blank steps aside
+      BX.projects = BX.projects.filter(x => x !== blank);
+      if (BX.active === blank.id) BX.active = null;
+    }
+    BX.active = activeId || BX.active ||
+                ((BX.projects[BX.projects.length - 1] || {}).id || null);
+    if (bxProject()) bxTabLoad(bxProject());   // the saved screen is what shows
+  }
+  BXSESSION.hold = false;
+  return opened > 0;
+}
 let BXTAB = { msg: "", view: "main" };         // the note line, and the + menu's view
 let bxTabSeq = 1;                              // the next "New Project N"
 
@@ -8143,9 +8232,10 @@ function bxTabSelect(id) {
   if (id === BX.active || !bxProject(id)) return false;
   bxTabStash();
   BX.active = id;
-  BXTabSwitchSay: {}
-  bxTabsSay("");
-  return bxTabLoad(bxProject(id));
+  bxTabsSay("");                               // (the label the old build parked
+  const ok = bxTabLoad(bxProject(id));         // here rode along for a while)
+  if (ok) bxSessionPush();
+  return ok;
 }
 function bxTabAnyDirty() {                     // any tab holding what the
   return (BX.projects || []).some(p => !!p.dirty);   // server has not seen
@@ -8170,6 +8260,7 @@ function bxTabClose(id) {                      // ×: close one project, asking
     }
   }
   bxTabsRender();
+  bxSessionPush();
   return true;
 }
 function bxTabNew() {                          // a blank canvas, its own tab
@@ -8194,6 +8285,7 @@ function bxTabNew() {                          // a blank canvas, its own tab
   bxRender();
   bxTabsRender();
   bxTabsSay("");
+  bxSessionPush();
   return p;
 }
 function bxTabOpenSaved(name, doc) {           // a saved canvas → its own tab
@@ -8209,6 +8301,7 @@ function bxTabOpenSaved(name, doc) {           // a saved canvas → its own tab
   p.dirty = false;
   bxtDropsClose();
   bxTabsSay("");
+  bxSessionPush();
   return p;
 }
 function bxTabSave() {                         // Ctrl/Cmd+S, and the saved names
@@ -8233,8 +8326,9 @@ function bxTabSave() {                         // Ctrl/Cmd+S, and the saved name
       p.name = String(name);
       p.saved = true;
       p.dirty = false;
-      bxTabsSay("saved \u00b7 " + p.name + " \u2713");
+      bxTabsSay("saved · " + p.name + " ✓");
       bxTabsRender();
+      bxSessionPush();
     }, design);
     return true;
   }
@@ -8244,8 +8338,9 @@ function bxTabSave() {                         // Ctrl/Cmd+S, and the saved name
   bxTabsSay("saving \u00b7 " + p.name + " \u2026");
   bxAccountSave(p.name, design, null, null, () => {
     p.dirty = false;
-    bxTabsSay("saved \u00b7 " + p.name + " \u2713");
+    bxTabsSay("saved · " + p.name + " ✓");
     bxTabsRender();
+    bxSessionPush();
   });
   return true;
 }
