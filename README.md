@@ -121,6 +121,8 @@ code (git-ignored) is the default.
 
     ./tests/run.sh           # offline: JS syntax, the DOM harness, the builder, the engine, HTML
     ./tests/run.sh --live    # + the running app and a real agent run
+    # the diffusers gate needs the venv's diffusers (the reference): it builds a
+    # tiny random UNet2DConditionModel, saves it, and holds the canvas to it
 
 ## Files
 
@@ -136,6 +138,7 @@ code (git-ignored) is the default.
 | `tests/ui_boot.js` | the DOM-stub harness (boxes, wires, sizes, estimate, undo, copy/paste, GGUF node, flags, the menus) |
 | `tests/gguf_canvas_test.py` | the pure builder test, on synthetic tensors |
 | `tests/nn_torch_test.py` | the engine's offline tests (forward, ops, training, GGUF weights) |
+| `tests/diffusers_unet_test.py` | the diffusers gate: a tiny random UNet2DConditionModel through diffusers' eager path and through `nn_engine.diffusers_unet_canvas` — stage for stage to 1e-4, every tensor bound |
 | `tests/nn_users_test.py` | the account store, offline: sealed rows (not one plaintext name), the bot check's answers, the .env loader, design CRUD |
 | `tools/quant_bench.py` | what a design's weights cost per sweep: the native kernels timed on real blocks of a GGUF, summed per type |
 | `tools/tls_local.sh` | the tiny local CA + server certificate (`.certs/`, git-ignored) for reaching the app over https from your own devices |

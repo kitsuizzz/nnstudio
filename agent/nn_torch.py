@@ -971,6 +971,8 @@ class Box(nn.Module):
             bound = loader(node) if loader else None
             if bound is not None:
                 self.w = bound["weight"]          # shared, already (-1,) at dtype
+                if bound.get("bias") is not None:
+                    self.bias = bound["bias"]     # group norms carry one
             elif node.get("size") is not None:
                 self.w = nn.Parameter(torch.ones(int(node["size"]), dtype=dtype),
                                       requires_grad=grad)
@@ -1102,8 +1104,32 @@ class Box(nn.Module):
             if not xs:
                 raise CanvasError(self.name, "an input dot is not wired")
             x = xs[0].float()
-            if self.node.get("norm") == "layer":
-                out = F.layer_norm(x, (x.shape[-1],), self.w.float(), None,
+            if self.node.get("norm") == "group":
+                # exact GroupNorm: the channels split into groups, each group's
+                # mean and variance inside, the affine per channel
+                c = int(self.node.get("size") or 0)
+                g = max(1, int(self.node.get("groups") or 1))
+                if not c:
+                    c = int(self.w.numel()) if self.w is not None else 0
+                if not c or c % g:
+                    raise CanvasError(self.name,
+                                      "group norm wants the channels split by its groups")
+                xr = x.reshape(*x.shape[:-1], g, c // g)
+                gaxis = xr.dim() - 2                   # the group index
+                start = 1 if xr.dim() >= 5 else 0      # a leading batch stays
+                red = tuple(d for d in range(start, xr.dim()) if d != gaxis)
+                m = xr.mean(red, keepdim=True)         # mean and variance run
+                v = ((xr - m) ** 2).mean(red, keepdim=True)   # over the group's
+                y = (xr - m) * torch.rsqrt(v + float(self.node.get("eps") or 1e-5))
+                w = self.w.float().reshape(g, c // g) if self.w is not None else None
+                if w is not None:
+                    y = y * w
+                if self.bias is not None:
+                    y = y + self.bias.float().reshape(g, c // g)
+                out = y.reshape(*x.shape)
+            elif self.node.get("norm") == "layer":
+                out = F.layer_norm(x, (x.shape[-1],), self.w.float(),
+                                   self.bias.float() if self.bias is not None else None,
                                    float(self.node.get("eps") or 1e-5))
             else:
                 w = self.w.float()
@@ -1525,6 +1551,8 @@ def _operate(box, xs):
                            / max(1, half))
         ang = t[:, None] * freqs[None, :]
         out = torch.cat([torch.sin(ang), torch.cos(ang)], dim=-1)
+        if box.node.get("flip"):
+            out = torch.cat([out[..., half:], out[..., :half]], dim=-1)
         return out[0] if scalar else out
     if op == "conv1d":
         return _causal_conv1d(box, a)

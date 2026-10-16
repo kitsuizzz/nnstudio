@@ -1889,6 +1889,491 @@ def _wrap_text_pipeline(canvas, repo):
     return canvas
 
 
+# ------------------------------------------------------------- diffusers
+# A UNet2DConditionModel, mirrored box for box. The builder below follows the
+# diffusers modules exactly — the same norms (with their biases), the same
+# skips, the same concatenations — so the canvas can be held to the library
+# itself with a numeric gate (tests/diffusers_unet_test.py). What it cannot
+# mirror yet it refuses by name, never approximates.
+
+def _dprod(dims):
+    n = 1
+    for d in dims or []:
+        n *= int(d)
+    return n
+
+
+def _did(path):
+    """A node id for a module path: torch module names may carry no dot, so
+    the nodes wear middots where the paths wear dots."""
+    return str(path).replace(".", "\u00b7")
+
+
+def _dn(path):
+    """A module path, made readable for a box name."""
+    return (str(path).replace("down_blocks.", "down ").replace("up_blocks.", "up ")
+            .replace("mid_block.", "mid ").replace(".resnets.", " resnet ")
+            .replace(".attentions.", " attn ").replace(".transformer_blocks.", " blk ")
+            .replace("time_embedding.", "time ").replace("#", " ")
+            .replace("conv_norm_out", "norm out"))
+
+
+def diffusers_cfg(source, timeout=60):
+    """(cfg, entries, file_of) for a diffusers folder (or hub subfolder like
+    `owner/repo/unet`): the resolved config.json, plus every shard header's
+    tensors and the file each lives in. No weights, no torch."""
+    source = (source or "").strip()
+    if source.startswith("http"):
+        source = source.rstrip("/")
+        if "huggingface.co/" in source:
+            source = source.split("huggingface.co/", 1)[1]
+        if source.endswith("/tree/main"):
+            source = source[:-len("/tree/main")]
+    sub = ""
+    if not os.path.isdir(source) and source.count("/") >= 2:
+        head, rest = source.split("/", 1)
+        repo, _, sub = rest.partition("/")
+        source, sub = head + "/" + repo, sub.strip("/")
+    entries, file_of = {}, {}
+    if os.path.isdir(source):
+        with open(os.path.join(source, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        for name in sorted(n for n in os.listdir(source) if n.endswith(".safetensors")):
+            fp = os.path.join(source, name)
+            for k, v in _safetensors_header(fp).items():
+                entries[k] = v
+                file_of[k] = fp
+    else:
+        prefix = (sub + "/") if sub else ""
+        cfg = json.loads(_hf_fetch(source, prefix + "config.json", timeout=timeout))
+        for name in _hf_repo_shards(source, sub=sub, timeout=timeout):
+            for k, v in _hf_shard_header(source, prefix + name, timeout=timeout).items():
+                entries[k] = v
+                file_of[k] = "hf:%s/%s" % (source.strip("/"), prefix + name)
+    return cfg, entries, file_of
+
+
+def diffusers_unet_canvas(source, timeout=60):
+    """A diffusers UNet2DConditionModel as a canvas: one model box whose inside
+    is HWC maps and the app's own boxes, every weight bound to its repo tensor.
+    Returns the hf_canvas-shaped result; raises ValueError (saying exactly
+    which knob) for configs it cannot mirror yet."""
+    cfg, entries, file_of = diffusers_cfg(source, timeout)
+    cls = str(cfg.get("_class_name") or "")
+    if cls != "UNet2DConditionModel":
+        raise ValueError("not a diffusers UNet: _class_name is %r" % (cls or "missing"))
+
+    def want(key, ok, why=""):
+        v = cfg.get(key)
+        if v not in ok:
+            raise ValueError("the %s config is %r, not mirrored yet%s"
+                             % (key, v, (" (" + why + ")") if why else ""))
+
+    want("center_input_sample", (False, None))
+    want("time_embedding_type", ("positional", None))
+    want("time_embedding_act_fn", (None,))
+    want("timestep_post_act", (None,))
+    want("time_cond_proj_dim", (None,))
+    want("addition_embed_type", (None,), "SDXL's text_time pooling")
+    want("class_embed_type", (None,))
+    want("only_cross_attention", (False, None))
+    want("dual_cross_attention", (False, None))
+    want("upcast_attention", (False, None))
+    want("attention_type", ("default", None))
+    want("cross_attention_norm", (None,))
+    want("encoder_hid_dim", (None,))
+    want("mid_block_only_cross_attention", (False, None))
+    want("reverse_transformer_layers_per_block", (None,))
+    want("mid_block_scale_factor", (1, 1.0, None))
+    want("resnet_time_scale_shift", ("default", None))
+    want("resnet_skip_time_act", (False, None))
+    want("resnet_out_scale_factor", (1, 1.0, None))
+    want("freq_shift", (0, None))
+    act_fn = str(cfg.get("act_fn") or "silu")
+    if act_fn not in ("silu", "gelu", "relu"):
+        raise ValueError("the %r activation is not mirrored yet" % act_fn)
+    mid = str(cfg.get("mid_block_type") or "UNetMidBlock2DCrossAttn")
+    if mid != "UNetMidBlock2DCrossAttn":
+        raise ValueError("the %r middle block is not mirrored yet" % mid)
+
+    boc = [int(x) for x in (cfg.get("block_out_channels") or [])]
+    downs = list(cfg.get("down_block_types") or [])
+    ups = list(cfg.get("up_block_types") or [])
+    if not boc or len(boc) != len(downs) or len(boc) != len(ups):
+        raise ValueError("block_out_channels and the block types do not line up")
+    for t in downs:
+        if t not in ("CrossAttnDownBlock2D", "DownBlock2D"):
+            raise ValueError("the %r down block is not mirrored yet" % t)
+    for t in ups:
+        if t not in ("CrossAttnUpBlock2D", "UpBlock2D"):
+            raise ValueError("the %r up block is not mirrored yet" % t)
+    in_ch = int(cfg.get("in_channels") or 4)
+    out_ch = int(cfg.get("out_channels") or in_ch)
+    groups = int(cfg.get("norm_num_groups") or 32)
+    eps = float(cfg.get("norm_eps") if cfg.get("norm_eps") is not None else 1e-5)
+    cross_dim = int(cfg.get("cross_attention_dim") or 0)
+    if not cross_dim:
+        raise ValueError("a cross_attention_dim is required")
+    ted = int(cfg.get("time_embedding_dim") or boc[0] * 4)
+    lin_proj = bool(cfg.get("use_linear_projection"))
+    dsp = int(cfg.get("downsample_padding") or 0)
+    cin_k = int(cfg.get("conv_in_kernel") or 3)
+    cout_k = int(cfg.get("conv_out_kernel") or 3)
+    ss = cfg.get("sample_size")
+    if isinstance(ss, (list, tuple)):
+        if len(ss) != 2 or int(ss[0]) != int(ss[1]):
+            raise ValueError("a non-square sample_size is not mirrored yet")
+        ss = int(ss[0])
+    ss = int(ss or 64)
+
+    def ints_of(key, default):
+        v = cfg.get(key, default)
+        if isinstance(v, (list, tuple)):
+            if any(isinstance(x, (list, tuple)) for x in v):
+                raise ValueError("%s as nested tuples is not mirrored yet" % key)
+            return [int(x) for x in v]
+        return [int(v)] * len(boc)
+
+    plb = ints_of("layers_per_block", 1)
+    tlb = ints_of("transformer_layers_per_block", 1)
+    nah = cfg.get("num_attention_heads")
+    ahd = cfg.get("attention_head_dim") if cfg.get("attention_head_dim") is not None else 8
+    heads = []
+    for i in range(len(boc)):
+        if isinstance(nah, (list, tuple)):
+            heads.append(int(nah[i]))
+        elif nah:
+            heads.append(int(nah))
+        elif isinstance(ahd, (list, tuple)):
+            heads.append(int(ahd[i]))
+        else:
+            heads.append(int(ahd))
+
+    nodes, edges, seq = [], [], [0]
+
+    def shape_of(path):
+        ent = entries.get(path + ".weight")
+        if ent is None:
+            raise ValueError("the model's tensors have no %s.weight" % path)
+        return ent["dims"]
+
+    def nd(kind, nid, x, y, bind=None, **kw):
+        nid = _did(nid)
+        seq[0] += 1
+        n = {"id": nid, "kind": kind, "name": _dn(nid), "x": int(x), "y": int(y)}
+        n.update(kw)
+        if bind:
+            w = bind + ".weight"
+            ent = entries.get(w)
+            if ent is None:
+                raise ValueError("the model's tensors have no %s" % w)
+            names = [w]
+            params = _dprod(ent["dims"])
+            wbytes = ent["bytes"]
+            b = bind + ".bias"
+            bent = entries.get(b)
+            if bent is not None:
+                names.append(b)
+                params += _dprod(bent["dims"])
+                wbytes += bent["bytes"]
+            n["t"] = ", ".join(names)
+            n["file"] = file_of.get(w)
+            n["params"] = params
+            n["wbytes"] = wbytes
+        nodes.append(n)
+        return nid
+
+    def lk(a, b, fp=0, tp=0):
+        edges.append({"from": _did(a), "to": _did(b), "fromPort": fp,
+                      "toPort": tp})
+
+    col = [0]
+
+    def cx():
+        col[0] += 1
+        return -2600 + 320 * col[0]
+
+    # --- the three inner inputs, the shared time embedding ------------------
+    nd("input", "latents", cx(), 0, dout=ss * ss * in_ch)
+    nd("input", "t", cx(), 620)
+    nd("input", "context", cx(), 1240, dout=None)
+    flip = cfg.get("flip_sin_to_cos", True)
+    nd("op", "time_embedding#steps", cx(), -420, op="timestep",
+       width=boc[0], flip=True if flip else None)
+    t1 = shape_of("time_embedding.linear_1")
+    nd("layer", "time_embedding.linear_1", cx(), -420,
+       bind="time_embedding.linear_1", din=t1[1], dout=t1[0])
+    nd("act", "time_embedding#silu", cx(), -420, act="silu")
+    t2 = shape_of("time_embedding.linear_2")
+    temb = nd("layer", "time_embedding.linear_2", cx(), -420,
+              bind="time_embedding.linear_2", din=t2[1], dout=t2[0])
+    lk("t", "time_embedding#steps")
+    lk("time_embedding#steps", "time_embedding.linear_1")
+    lk("time_embedding.linear_1", "time_embedding#silu")
+    lk("time_embedding#silu", "time_embedding.linear_2")
+
+    def act_box(path, src, y):
+        a = nd("act", path, cx(), y, act=act_fn)
+        lk(src, a)
+        return a
+
+    def resnet(path, src, y=0):
+        c1d = shape_of(path + ".conv1")          # [out, in, 3, 3]
+        c2d = shape_of(path + ".conv2")
+        n1 = nd("norm", path + ".norm1", cx(), y, bind=path + ".norm1",
+                norm="group", size=c1d[1], groups=groups, eps=eps)
+        s1 = nd("act", path + "#silu1", cx(), y, act="silu")
+        c1 = nd("conv", path + ".conv1", cx(), y, bind=path + ".conv1",
+                din=c1d[1], dout=c1d[0], k=c1d[2], pad=c1d[2] // 2)
+        tpd = shape_of(path + ".time_emb_proj")
+        ts = nd("act", path + "#temb_silu", cx(), -900, act="silu")
+        tp = nd("layer", path + ".time_emb_proj", cx(), -900,
+                bind=path + ".time_emb_proj", din=tpd[1], dout=tpd[0])
+        tr = nd("op", path + "#temb4d", cx(), -900, op="reshape",
+                dims="1x1x%d" % tpd[0])
+        add = nd("op", path + "#temb_add", cx(), y, op="add")
+        n2 = nd("norm", path + ".norm2", cx(), y, bind=path + ".norm2",
+                norm="group", size=c2d[1], groups=groups, eps=eps)
+        s2 = nd("act", path + "#silu2", cx(), y, act="silu")
+        c2 = nd("conv", path + ".conv2", cx(), y, bind=path + ".conv2",
+                din=c2d[1], dout=c2d[0], k=c2d[2], pad=c2d[2] // 2)
+        res = nd("op", path + "#res", cx(), y, op="add")
+        lk(src, n1)
+        lk(n1, s1); lk(s1, c1); lk(c1, add)
+        lk(temb, ts); lk(ts, tp); lk(tp, tr); lk(tr, add, 0, 1)
+        lk(add, n2); lk(n2, s2); lk(s2, c2)
+        if c1d[1] != c2d[0]:                     # a channels change: shortcut
+            scd = shape_of(path + ".conv_shortcut")
+            sc = nd("conv", path + ".conv_shortcut", cx(), y,
+                    bind=path + ".conv_shortcut", din=scd[1], dout=scd[0],
+                    k=scd[2], pad=0)
+            lk(src, sc)
+            lk(sc, res, 0, 0)
+        else:
+            lk(src, res, 0, 0)
+        lk(c2, res, 0, 1)
+        return res
+
+    def attend(apath, q_src, k_src, ch, k_ch, h, hw, y):
+        qd = shape_of(apath + ".to_q")
+        kd = shape_of(apath + ".to_k")
+        inner, hd = qd[0], qd[0] // h
+        q = nd("layer", apath + ".to_q", cx(), y, bind=apath + ".to_q",
+               din=qd[1], dout=qd[0])
+        k = nd("layer", apath + ".to_k", cx(), y + 180, bind=apath + ".to_k",
+               din=kd[1], dout=kd[0])
+        v = nd("layer", apath + ".to_v", cx(), y + 180, bind=apath + ".to_v",
+               din=shape_of(apath + ".to_v")[1], dout=shape_of(apath + ".to_v")[0])
+        qr = nd("op", apath + "#q_heads", cx(), y, op="reshape",
+                dims="-1x%dx%d" % (h, hd))
+        qp = nd("op", apath + "#q_perm", cx(), y, op="permute", axes="1 0 2")
+        kr = nd("op", apath + "#k_heads", cx(), y + 180, op="reshape",
+                dims="-1x%dx%d" % (h, hd))
+        kp = nd("op", apath + "#k_perm", cx(), y + 180, op="permute", axes="1 0 2")
+        vr = nd("op", apath + "#v_heads", cx(), y + 360, op="reshape",
+                dims="-1x%dx%d" % (h, hd))
+        vp = nd("op", apath + "#v_perm", cx(), y + 360, op="permute", axes="1 0 2")
+        kt = nd("op", apath + "#kT", cx(), y + 180, op="transpose")
+        sc = nd("op", apath + "#scores", cx(), y, op="matmul")
+        ga = nd("act", apath + "#scale", cx(), y, act="none", gain=hd ** -0.5)
+        sm = nd("act", apath + "#softmax", cx(), y, act="softmax")
+        mx = nd("op", apath + "#mix", cx(), y, op="matmul")
+        mp = nd("op", apath + "#mix_perm", cx(), y, op="permute", axes="1 0 2")
+        mr = nd("op", apath + "#merge", cx(), y, op="reshape", dims="-1x%d" % inner)
+        od = shape_of(apath + ".to_out.0")
+        o = nd("layer", apath + ".to_out.0", cx(), y, bind=apath + ".to_out.0",
+               din=od[1], dout=od[0])
+        lk(q_src, q); lk(k_src, k); lk(k_src, v)
+        lk(q, qr); lk(qr, qp)
+        lk(k, kr); lk(kr, kp); lk(kp, kt)
+        lk(v, vr); lk(vr, vp)
+        lk(qp, sc, 0, 0); lk(kt, sc, 0, 1)
+        lk(sc, ga); lk(ga, sm)
+        lk(sm, mx, 0, 0); lk(vp, mx, 0, 1)
+        lk(mx, mp); lk(mp, mr); lk(mr, o)
+        return o
+
+    def transformer(path, src, ch, h, hw, y, n_layers):
+        # the diffusers Transformer2DModel on a continuous map: norm, proj_in,
+        # blocks of self-attn → cross-attn → geglu FF, proj_out, residual
+        nrm = nd("norm", path + ".norm", cx(), y, bind=path + ".norm",
+                 norm="group", size=ch, groups=groups, eps=eps)
+        lk(src, nrm)
+        if lin_proj:
+            tok = nd("op", path + "#tokens", cx(), y, op="reshape",
+                     dims="%dx%d" % (hw, ch))
+            lk(nrm, tok)
+            pin = nd("layer", path + ".proj_in", cx(), y, bind=path + ".proj_in",
+                     din=shape_of(path + ".proj_in")[1], dout=shape_of(path + ".proj_in")[0])
+            lk(tok, pin)
+            hidden = pin
+        else:
+            pd = shape_of(path + ".proj_in")
+            pin = nd("conv", path + ".proj_in", cx(), y, bind=path + ".proj_in",
+                     din=pd[1], dout=pd[0], k=1, pad=0)
+            lk(nrm, pin)
+            tok = nd("op", path + "#tokens", cx(), y, op="reshape",
+                     dims="%dx%d" % (hw, ch))
+            lk(pin, tok)
+            hidden = tok
+        for l in range(n_layers):
+            lp = path + ".transformer_blocks.%d" % l
+            n1 = nd("norm", lp + ".norm1", cx(), y + 380, bind=lp + ".norm1",
+                    norm="layer", size=ch, eps=1e-5)
+            lk(hidden, n1)
+            a1 = attend(lp + ".attn1", n1, n1, ch, ch, h, hw, y + 380)
+            r1 = nd("op", lp + "#res1", cx(), y + 380, op="add")
+            lk(a1, r1, 0, 0); lk(hidden, r1, 0, 1)
+            n2 = nd("norm", lp + ".norm2", cx(), y + 380, bind=lp + ".norm2",
+                    norm="layer", size=ch, eps=1e-5)
+            lk(r1, n2)
+            a2 = attend(lp + ".attn2", n2, "context", ch, cross_dim, h, hw, y + 620)
+            r2 = nd("op", lp + "#res2", cx(), y + 380, op="add")
+            lk(a2, r2, 0, 0); lk(r1, r2, 0, 1)
+            n3 = nd("norm", lp + ".norm3", cx(), y + 380, bind=lp + ".norm3",
+                    norm="layer", size=ch, eps=1e-5)
+            lk(r2, n3)
+            fpd = shape_of(lp + ".ff.net.0.proj")     # [2*ff, ch]
+            ff = fpd[0] // 2
+            pj = nd("layer", lp + ".ff.net.0.proj", cx(), y + 380,
+                    bind=lp + ".ff.net.0.proj", din=fpd[1], dout=fpd[0])
+            va = nd("op", lp + "#ff_value", cx(), y + 380, op="slice",
+                    axis=-1, start=0, stop=ff)
+            gat = nd("op", lp + "#ff_gate", cx(), y + 380, op="slice",
+                     axis=-1, start=ff)
+            gl = nd("act", lp + "#ff_gelu", cx(), y + 380, act="gelu")
+            mu = nd("op", lp + "#ff_mul", cx(), y + 380, op="multiply")
+            f2 = shape_of(lp + ".ff.net.2")
+            dn2 = nd("layer", lp + ".ff.net.2", cx(), y + 380,
+                     bind=lp + ".ff.net.2", din=f2[1], dout=f2[0])
+            r3 = nd("op", lp + "#res3", cx(), y + 380, op="add")
+            lk(n3, pj); lk(pj, va); lk(pj, gat)
+            lk(gat, gl); lk(va, mu, 0, 0); lk(gl, mu, 0, 1)
+            lk(mu, dn2); lk(dn2, r3, 0, 0); lk(r2, r3, 0, 1)
+            hidden = r3
+        if lin_proj:
+            pod = shape_of(path + ".proj_out")
+            po = nd("layer", path + ".proj_out", cx(), y, bind=path + ".proj_out",
+                    din=pod[1], dout=pod[0])
+            lk(hidden, po)
+            ub = nd("op", path + "#untokens", cx(), y, op="reshape",
+                    dims="%dx%dx%d" % (int(hw ** 0.5), int(hw ** 0.5), ch))
+            lk(po, ub)
+            last = ub
+        else:
+            ub = nd("op", path + "#untokens", cx(), y, op="reshape",
+                    dims="%dx%dx%d" % (int(hw ** 0.5), int(hw ** 0.5), ch))
+            lk(hidden, ub)
+            pod = shape_of(path + ".proj_out")
+            po = nd("conv", path + ".proj_out", cx(), y, bind=path + ".proj_out",
+                    din=pod[1], dout=pod[0], k=1, pad=0)
+            lk(ub, po)
+            last = po
+        out = nd("op", path + "#out", cx(), y, op="add")
+        lk(last, out, 0, 0); lk(src, out, 0, 1)
+        return out, nrm
+
+    # --- conv_in, the down path (skips collected), the middle, the up path ---
+    cid = shape_of("conv_in")
+    conv_in = nd("conv", "conv_in", cx(), 0, bind="conv_in",
+                 din=cid[1], dout=cid[0], k=cid[2], pad=(cid[2] - 1) // 2)
+    lk("latents", conv_in)
+    sample = conv_in
+    skips = [conv_in]
+    res = [ss]
+    for d, dty in enumerate(downs):
+        pl = plb[d]
+        x0 = sample
+        for i in range(pl):
+            path = "down_blocks.%d.resnets.%d" % (d, i)
+            sample = resnet(path, sample)
+            if dty == "CrossAttnDownBlock2D":
+                # a cross layer hands on its attention's output: that is the
+                # sample diffusers collects (the resnet's rides as a residual)
+                tpath = "down_blocks.%d.attentions.%d" % (d, i)
+                sample, _ = transformer(tpath, sample, boc[d], heads[d],
+                                        res[d] * res[d], 0, tlb[d])
+            skips.append(sample)
+        if d < len(downs) - 1:
+            spd = shape_of("down_blocks.%d.downsamplers.0.conv" % d)
+            smp = nd("conv", "down_blocks.%d.downsamplers.0.conv" % d, cx(), 0,
+                     bind="down_blocks.%d.downsamplers.0.conv" % d,
+                     din=spd[1], dout=spd[0], k=spd[2], stride=2, pad=dsp)
+            lk(sample, smp)
+            sample = smp
+            skips.append(smp)                    # the strided map is a skip too
+            res.append(res[-1] // 2 if res[-1] % 2 == 0 else (res[-1] + 1) // 2)
+    midy = res[-1]
+    m0 = resnet("mid_block.resnets.0", sample)
+    m1, _ = transformer("mid_block.attentions.0", m0, boc[-1], heads[-1],
+                        midy * midy, 0, tlb[-1])
+    sample = resnet("mid_block.resnets.1", m1)
+    up_res = list(reversed(res))
+    for u, uty in enumerate(ups):
+        pl = plb[len(boc) - 1 - u]
+        block = "up_blocks.%d" % u
+        nlay = pl + 1 if uty == "UpBlock2D" else pl + 1
+        for i in range(nlay):
+            skip = skips.pop()
+            rp = "%s.resnets.%d" % (block, i)
+            cat = nd("op", rp + "#cat", cx(), 0, op="concat")
+            lk(sample, cat, 0, 0)
+            lk(skip, cat, 0, 1)
+            sample = resnet(rp, cat)
+            if uty == "CrossAttnUpBlock2D" and i < len(range(pl + 1)):
+                apath = "%s.attentions.%d" % (block, i)
+                if apath + ".norm.weight" in entries:
+                    sample, _ = transformer(apath, sample, boc[len(boc) - 1 - u],
+                                            heads[len(boc) - 1 - u],
+                                            up_res[u] * up_res[u], 0, tlb[len(boc) - 1 - u])
+        if u < len(ups) - 1:
+            up = nd("op", block + "#up", cx(), 0, op="upsample",
+                    factor=2, mode="nearest")
+            lk(sample, up)
+            upd = shape_of(block + ".upsamplers.0.conv")
+            smp = nd("conv", block + ".upsamplers.0.conv", cx(), 0,
+                     bind=block + ".upsamplers.0.conv",
+                     din=upd[1], dout=upd[0], k=upd[2], pad=(upd[2] - 1) // 2)
+            lk(up, smp)
+            sample = smp
+    nod = shape_of("conv_norm_out")
+    cn = nd("norm", "conv_norm_out", cx(), 0, bind="conv_norm_out",
+            norm="group", size=nod[0], groups=groups, eps=eps)
+    lk(sample, cn)
+    ca = nd("act", "conv_norm_out#act", cx(), 0, act=act_fn)
+    lk(cn, ca)
+    cod = shape_of("conv_out")
+    co = nd("conv", "conv_out", cx(), 0, bind="conv_out",
+            din=cod[1], dout=cod[0], k=cod[2], pad=(cod[2] - 1) // 2)
+    lk(ca, co)
+    sout = nd("output", "sample", cx(), 0, din=ss * ss * out_ch)
+    lk(co, sout)
+
+    name = (source.strip("/").split("/")[-1] or "unet")
+    inner = {"type": "nested", "version": 1, "nodes": nodes, "edges": edges}
+    outer = {"type": "canvas", "version": 1,
+             "name": name,
+             "model": {"fidelity": "diffusers", "arc": False},
+             "nodes": [
+                 {"id": "latents", "kind": "input", "name": "latents",
+                  "x": -560, "y": 0, "dout": ss * ss * in_ch},
+                 {"id": "timestep", "kind": "input", "name": "t",
+                  "x": -560, "y": 260},
+                 {"id": "context", "kind": "input", "name": "text",
+                  "x": -560, "y": 520},
+                 {"id": "unet", "kind": "custom", "name": name, "x": -140,
+                  "y": 120, "model": True, "inner": inner},
+                 {"id": "out", "kind": "output", "name": "noise", "x": 280,
+                  "y": 120, "din": ss * ss * out_ch}],
+             "edges": [
+                 {"from": "latents", "to": "unet", "fromPort": 0, "toPort": 0},
+                 {"from": "timestep", "to": "unet", "fromPort": 0, "toPort": 1},
+                 {"from": "context", "to": "unet", "fromPort": 0, "toPort": 2},
+                 {"from": "unet", "to": "out", "fromPort": 0, "toPort": 0}]}
+    return {"ok": True, "canvas": outer,
+            "summary": "%s · %d boxes, every tensor bound" % (name, len(nodes))}
+
+
 def hf_canvas(source, timeout=60, use_arc=True):
     """Build a canvas design from a huggingface repo / Hub subfolder (or a
     local folder with the same layout) — config and safetensors headers only,

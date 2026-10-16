@@ -1328,7 +1328,7 @@ const BX_OPS = ["transpose", "dot product", "matmul", "concat", "add", "subtract
 // `keep` (reshape preserves leading dims) and the gated delta rule's heads /
 // raw-A_log flag
 const BX_OP_EXTRAS = ["keep", "k_heads", "k_dim", "heads", "head_dim", "partial", "a_log",
-                      "v_tiled"];
+                      "v_tiled", "flip"];
 // shape-changers: a contraction or a selection has a shape of its own, so their
 // dots stay unknown (they never make a wire wrong)
 const BX_OPAQUE = ["matmul", "topk", "scan", "permute", "repeat", "mask", "slice", "zeros",
@@ -1382,7 +1382,9 @@ function bxShape(n) {
     return n.vocab == null && n.dout == null ? "embedding"
          : bxDim(n.vocab) + " \u00d7 " + bxDim(n.dout);
   if (n.kind === "norm") {
-    return (n.norm === "layer" ? "layer" : "rms") + (n.eps != null ? " \u00b7 " + bxEpsText(n.eps) : "");
+    return (n.norm === "layer" ? "layer" : n.norm === "group" ? "group" : "rms")
+         + (n.norm === "group" && n.groups ? " g" + n.groups : "")
+         + (n.eps != null ? " \u00b7 " + bxEpsText(n.eps) : "");
   }
   if (n.kind === "op") {                                 // its operation, not a size
     const op = bxOpName(n);
@@ -2379,7 +2381,12 @@ function bxAdd(kind, x, y, v) {
       if (x != null) n[k] = x;
     }
   }
-  if (kind === "norm") { n.norm = v.norm === "layer" ? "layer" : "rms"; n.eps = bxNum(v.eps, null); }
+  if (kind === "norm") {
+    n.norm = v.norm === "layer" ? "layer" : v.norm === "group" ? "group" : "rms";
+    n.eps = bxNum(v.eps, null);
+    const g = bxInt(v.groups, null);
+    if (g && g > 1) n.groups = g;
+  }
   if (kind === "embed") {
     n.vocab = bxSize(v.vocab);
     n.din = bxSize(v.din) || 1;              // the input is one id, not a vector
@@ -3455,7 +3462,13 @@ function bxConfigure(id, vals) {
     }
   }
   if (n.kind === "norm") {
-    if (vals.norm !== undefined) n.norm = vals.norm === "layer" ? "layer" : "rms";
+    if (vals.norm !== undefined)
+      n.norm = vals.norm === "layer" ? "layer"
+             : vals.norm === "group" ? "group" : "rms";
+    if (vals.groups !== undefined) {
+      const g = bxInt(vals.groups, null);
+      n.groups = g && g > 1 ? g : null;
+    }
     if (vals.eps !== undefined) n.eps = bxNum(vals.eps, n.eps);
   }
   if (n.kind === "embed" && vals.vocab !== undefined)
@@ -5601,10 +5614,11 @@ function bxJSONNode(n) {
     for (const k of BX_OP_EXTRAS) if (n[k] != null) o[k] = n[k];
   }
   else if (n.kind === "norm") {
-    o.norm = n.norm === "layer" ? "layer" : "rms";
+    o.norm = n.norm === "layer" ? "layer" : n.norm === "group" ? "group" : "rms";
     if (n.eps != null) o.eps = n.eps;
     if (n.zc) o.zc = true;
     if (n.size != null) o.size = n.size;
+    if (n.groups != null) o.groups = n.groups;
   }
   else if (n.kind === "script") {
     o.script = n.script || "";               // the code travels with the design
@@ -5980,11 +5994,14 @@ function bxJSONNodeFrom(o) {
     n.dout = bxSize(o.dout);
   }
   else if (o.kind === "norm") {
-    n.norm = o.norm === "layer" ? "layer" : "rms";
+    n.norm = o.norm === "layer" ? "layer"
+           : o.norm === "group" ? "group" : "rms";
     n.eps = bxNum(o.eps, null);
     if (o.zc) n.zc = true;
     const sz = bxSize(o.size);
     if (sz) n.size = sz;
+    const gg = bxInt(o.groups, null);
+    if (gg && gg > 1) n.groups = gg;
   }
   else if (o.kind === "script") {
     n.script = typeof o.script === "string" ? o.script : "";
@@ -10594,11 +10611,12 @@ function bxForm(kind, ev, node, mode) {
     wrap.appendChild(lab);
     return sel;
   };
-  const normField = (value) => {              // rms | layer
+  const normField = (value) => {              // rms | layer | group
     const lab = mk("label", { text: "norm" });
     const sel = mk("select", { class: "bxsel" });
-    for (const k of ["rms", "layer"]) sel.appendChild(mk("option", { value: k, text: k }));
-    sel.value = value === "layer" ? "layer" : "rms";
+    for (const k of ["rms", "layer", "group"])
+      sel.appendChild(mk("option", { value: k, text: k }));
+    sel.value = value === "layer" || value === "group" ? value : "rms";
     lab.appendChild(sel);
     wrap.appendChild(lab);
     return sel;
@@ -10632,6 +10650,7 @@ function bxForm(kind, ev, node, mode) {
   } else if (mode === "norm") {
     f.norm = normField(node ? node.norm : "rms");
     f.eps = numField("epsilon", node ? node.eps : null);
+    f.groups = numField("groups", node && node.groups != null ? node.groups : null);
   } else if (mode === "embed") {
     f.vocab = numField("vocab", node ? node.vocab : null);
     f.dout = numField("out", node ? node.dout : null);
@@ -10659,7 +10678,10 @@ function bxForm(kind, ev, node, mode) {
     f.temp = numField("temperature", node ? node.temperature : null);
   } else if (mode === "add" && BX_UNSIZED.indexOf(kind) >= 0) {
     f.name = nameField(bxDefaultName(kind));
-    if (kind === "norm") { f.norm = normField("rms"); f.eps = numField("epsilon", null); }
+    if (kind === "norm") {
+      f.norm = normField("rms"); f.eps = numField("epsilon", null);
+      f.groups = numField("groups", null);
+    }
     if (kind === "embed") {
       f.vocab = numField("vocab", null);
       f.dout = numField("out", null);
@@ -10810,6 +10832,7 @@ function bxForm(kind, ev, node, mode) {
     if (f.norm) v.norm = f.norm.value;
     if (f.dtype) v.dtype = f.dtype.value;
     if (f.eps) v.eps = f.eps.value;
+    if (f.groups) v.groups = f.groups.value;
     if (f.t) v.t = f.t.value;
     if (f.mode) v.input_mode = f.mode.value;
     if (f.values) v.values = f.values.value;

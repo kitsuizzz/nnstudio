@@ -22,6 +22,9 @@ node tests/ui_boot.js >/tmp/nnstudio_ui_harness.log 2>&1 && ok || { bad; tail -2
 step "vision templates (UI docs -> engine)"
 $PY tests/vision_templates_test.py >/tmp/nnstudio_vision_templates.log 2>&1 && ok || { bad; tail -15 /tmp/nnstudio_vision_templates.log; }
 
+step "diffusers gate (tiny UNet)"
+$PY tests/diffusers_unet_test.py >/tmp/nnstudio_diffusers.log 2>&1 && ok || { bad; tail -15 /tmp/nnstudio_diffusers.log; }
+
 step "GGUF -> canvas builder"
 $PY tests/gguf_canvas_test.py >/tmp/nnstudio_gguf_canvas.log 2>&1 && ok || { bad; tail -15 /tmp/nnstudio_gguf_canvas.log; }
 

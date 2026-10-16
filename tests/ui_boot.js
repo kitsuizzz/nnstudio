@@ -628,6 +628,25 @@ check("the Vision shelf: the three architectures land as whole models", () => {
   eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
 });
 
+check("the diffusers kit round-trips: a group norm, a flipped step", () => {
+  const keep = __t.BX.nodes.length;
+  const g = __t.bxAdd("norm", 0, 0, {});
+  __t.bxConfigure(g.id, { norm: "group", size: 16, groups: 4, eps: "1e-6" });
+  eql(__t.bxShape(g), "group g4 \u00b7 1e-6", "a group norm reads on its card: " + __t.bxShape(g));
+  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(g));
+  eql([back.kind, back.norm, back.groups, back.eps], ["norm", "group", 4, 1e-6],
+      "\u2026and the design carries every field");
+  const t = __t.bxAdd("op", 240, 0, {});
+  __t.bxConfigure(t.id, { op: "timestep" });
+  const w = __t.bxJSONNode(t);
+  w.flip = true;
+  const tb = __t.bxJSONNodeFrom(w);
+  eql([tb.kind, tb.op, tb.flip], ["op", "timestep", 1],
+      "a cos-first step survives the design too");
+  __t.bxRemove(t.id); __t.bxRemove(g.id);
+  eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
+});
+
 check("the two signals land from the shelf: a loss box and a reward box", () => {
   const ds = __t.bxAdd("dataset", 0, 0, { text: "a\tb\nc\td", vocab: "abcd" });
   const loss = __t.bxAddKind("loss", 200, 0, {});
