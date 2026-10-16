@@ -303,7 +303,8 @@ check("three boxes: input (out dot only), layer (both), output (in dot only)", (
   eql(o.din, 256);
   eql([l.din, l.dout], [5120, 256], "a layer box has both sides");
   eql(__t.BX.nodes.length, 3);
-  eql(__t.bxShape(a), "5120", "input shows its size only");
+  eql(__t.bxShape(a), "[? \u00d7 5120]",
+      "input reads as the dot it is \u2014 the batch axis always there");
   eql(__t.bxShape(o), "?", "an unwired output expects nothing yet — just a ?");
   eql(__t.bxShape(l), "in 5120 → out 256", "layer shows in → out");
   // …and a wire makes it speak: the source's own type and shape
@@ -357,7 +358,7 @@ check("rename and resize are separate, and work in place on every kind", () => {
   eql(i0.name, "prompt", "an input box renames");
   __t.bxConfigure(i0.id, { dout: 2048 });
   eql([i0.dout, i0.din, i0.name], [2048, null, "prompt"], "…and resizes, keeping its name");
-  eql(__t.bxShape(i0), "2048");
+  eql(__t.bxShape(i0), "[? \u00d7 2048]", "\u2026and reads as its dot");
   __t.bxConfigure(o0.id, { din: -5 });
   eql(o0.din, 1, "a nonsense size falls back to something sane");
   __t.bxConfigure(o0.id, { din: 300 });

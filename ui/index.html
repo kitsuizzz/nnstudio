@@ -1480,9 +1480,15 @@ function bxShape(n) {
     const i = bxPortDefs(n, "in").length, o = bxPortDefs(n, "out").length;
     return i + " in · " + o + " out";
   }
-  if (n.kind === "input") return n.input_mode === "text" ? "text"
-                               : n.input_mode === "image" ? "image"
-                               : (bxMatrixShape(n.values) || bxDim(n.dout));
+  if (n.kind === "input") {
+    if (n.input_mode === "text") return "text";
+    if (n.input_mode === "image") return "image";
+    const m = bxMatrixShape(n.values);
+    if (m) return m;                           // typed numbers: the read is exact
+    // no values of its own — a boundary port, or an empty box: it reads as
+    // the dot it is (the batch axis is always there, so [? × width])
+    return n.dout == null ? "?" : "[? × " + n.dout + "]";
+  }
   if (n.kind === "output") {                             // what arrived, or what the
     const st = bxNodeState(n);                             // wire will bring — an
     const tag = n.train ? " \u00b7 training" : "";          // unwired output shows
