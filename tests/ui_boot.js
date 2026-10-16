@@ -5682,6 +5682,8 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
       + labels.slice(0, 3).join(","));
   eql([labels.indexOf("model"), labels.indexOf("training")], [-1, -1],
       "\u2026no model picker, no paradigm \u2014 the slot and the box claim them");
+  eql([labels.indexOf("test data"), labels.indexOf("validation")], [-1, -1],
+      "\u2026and the splits come off the dots, not pickers");
   eql(text.indexOf("names "), -1, "\u2026and no 'names \u2026' line at the top");
   // the start button sits in a footer of its own at the window's bottom left
   const foot = pane.querySelectorAll(".runfoot")[0];

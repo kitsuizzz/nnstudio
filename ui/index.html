@@ -10362,10 +10362,12 @@ function bxConfigFill(pane, n) {               // the train config: every settin
     yrow.appendChild(mk("span", { text: "y is a class label" }));
     body.appendChild(yrow);
   }
-  field("test data", pick("test_dataset", n.test_dataset, boxesOf("dataset"),
-    "scored after every eval \u2014 never trained on"));
-  field("validation", pick("val_dataset", n.val_dataset, boxesOf("dataset"),
-    "a second hold-out \u2014 scored beside the test split"));
+  if (n.kind !== "training") {                 // a Training box takes its splits
+    field("test data", pick("test_dataset", n.test_dataset, boxesOf("dataset"),
+      "scored after every eval — never trained on"));      // on the dots —
+    field("validation", pick("val_dataset", n.val_dataset, boxesOf("dataset"),
+      "a second hold-out — scored beside the test split"));   // no pickers here
+  }
   if (rl)
     field("reward", pick("reward", n.reward, boxesOf("reward"),
       "scores every sample \u2014 the signal in rl"));
