@@ -10272,31 +10272,32 @@ function bxConfigFill(pane, n) {               // the train config: every settin
   bxEveryBox(x => {
     if (x.kind === "custom" && bxBoundary(x, "out").length) models.push(x);
   });
-  if (models.length)
-    field(n.kind === "training" ? "" : "model",
-      pick("model", n.model, models,
-        "the nested model this config trains \u2014 the batch enters its first "
+  if (n.kind !== "training") {                 // a Training box names neither:
+    if (models.length)                         // the slot claims the model and the
+      field("model", pick("model", n.model, models,   // box claims the training
+        "the nested model this config trains — the batch enters its first "
         + "input and its first output is scored"));
-  else if (n.kind !== "training") {            // the empty-slot hint already says
-    const outside = (BX.nodes || []).filter(x => bxWeightsBox(x));
-    const h = mk("div", { class: "panehint",
-      text: "no model on the canvas \u2014 drop a Model box (palette \u2192 "
-          + "models) and build the architecture inside it" });
-    if (outside.length) {
-      const fix = mk("span", { class: "bxlink",
-                               text: " \u2014 or wrap what is here into one" });
-      fix.addEventListener("mousedown", (ev) => {
-        if (ev.stopPropagation) ev.stopPropagation();
-      });
-      fix.addEventListener("click", () => {
-        const m2 = bxWrapModel();
-        if (m2) bxConfigure(n.id, { model: m2.id });
-      });
-      h.appendChild(fix);
+    else {
+      const outside = (BX.nodes || []).filter(x => bxWeightsBox(x));
+      const h = mk("div", { class: "panehint",
+        text: "no model on the canvas — drop a Model box (palette → "
+            + "models) and build the architecture inside it" });
+      if (outside.length) {
+        const fix = mk("span", { class: "bxlink",
+                                 text: " — or wrap what is here into one" });
+        fix.addEventListener("mousedown", (ev) => {
+          if (ev.stopPropagation) ev.stopPropagation();
+        });
+        fix.addEventListener("click", () => {
+          const m2 = bxWrapModel();
+          if (m2) bxConfigure(n.id, { model: m2.id });
+        });
+        h.appendChild(fix);
+      }
+      body.appendChild(h);
     }
-    body.appendChild(h);
+    field("training", par);
   }
-  field(n.kind === "training" ? "" : "training", par);
   // the data: the matrix on the data dot, detected here \u2014 its columns are
   // what x col / y col pick from
   const at = bxAttached();

@@ -5656,9 +5656,10 @@ check("the Training box: a slot for the model, three dataset dots, its own knobs
   // model and the training
   const labels = pane.querySelectorAll("label.rf")
     .map(l => l.children.map(c => c.textContent).join(" ").trim());
-  eql(labels[0], "", "the first row stands bare: " + labels.slice(0, 3).join(","));
+  eql(labels[0], "x col", "the window leads with the columns: "
+      + labels.slice(0, 3).join(","));
   eql([labels.indexOf("model"), labels.indexOf("training")], [-1, -1],
-      "\u2026the model and training labels are implied");
+      "\u2026no model picker, no paradigm \u2014 the slot and the box claim them");
   eql(text.indexOf("names "), -1, "\u2026and no 'names \u2026' line at the top");
   // the start button sits in a footer of its own at the window's bottom left
   const foot = pane.querySelectorAll(".runfoot")[0];
