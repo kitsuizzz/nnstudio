@@ -129,7 +129,7 @@ code (git-ignored) is the default.
 | file | role |
 |---|---|
 | `ui/index.html` | the whole app — the canvas, the project tabs above it (Ctrl/Cmd+S saves; the + opens New Canvas / Saved Canvas), the toolbar (Palette · Import · Backend — the server config's door, up top of that menu — · VRAM), the right-click menus; one self-contained page |
-| `nn_engine.py` | the GGUF/HF → canvas builder (`build_canvas` is pure; `gguf_canvas`/`hf_canvas` read real headers) — extracted from next-token's engine |
+| `nn_engine.py` | the GGUF/HF → canvas builder (`build_canvas` is pure; `gguf_canvas`/`hf_canvas`/`diffusers_unet_canvas` read real headers — the diffusers one mirrors UNet2DConditionModel module for module, SDXL's text_time conditioning included) — extracted from next-token's engine |
 | `nn_server.py` | the stdlib server: the UI, the GGUF list, the builder endpoint, the GPU badge, the agents' control listener and the run dispatch |
 | `nn_users.py` | accounts for saving designs: sealed names/designs, keyed tags, the auth hash, the Turnstile check (`users.db`, git-ignored — ciphertext only) |
 | `agent/nnstudio_agent.py` | **the user's backend** — run it on the machine that holds the GPU; it dials the app, reports the machine and executes designs |
@@ -138,7 +138,7 @@ code (git-ignored) is the default.
 | `tests/ui_boot.js` | the DOM-stub harness (boxes, wires, sizes, estimate, undo, copy/paste, GGUF node, flags, the menus) |
 | `tests/gguf_canvas_test.py` | the pure builder test, on synthetic tensors |
 | `tests/nn_torch_test.py` | the engine's offline tests (forward, ops, training, GGUF weights) |
-| `tests/diffusers_unet_test.py` | the diffusers gate: a tiny random UNet2DConditionModel through diffusers' eager path and through `nn_engine.diffusers_unet_canvas` — stage for stage to 1e-4, every tensor bound |
+| `tests/diffusers_unet_test.py` | the diffusers gate: tiny random UNet2DConditionModels — plain, SDXL's `text_time`, SDXL's whole block shape — through diffusers' eager path and through `nn_engine.diffusers_unet_canvas`: stage for stage, every tensor bound |
 | `tests/nn_users_test.py` | the account store, offline: sealed rows (not one plaintext name), the bot check's answers, the .env loader, design CRUD |
 | `tools/quant_bench.py` | what a design's weights cost per sweep: the native kernels timed on real blocks of a GGUF, summed per type |
 | `tools/tls_local.sh` | the tiny local CA + server certificate (`.certs/`, git-ignored) for reaching the app over https from your own devices |

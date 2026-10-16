@@ -1974,7 +1974,8 @@ def diffusers_unet_canvas(source, timeout=60):
     want("time_embedding_act_fn", (None,))
     want("timestep_post_act", (None,))
     want("time_cond_proj_dim", (None,))
-    want("addition_embed_type", (None,), "SDXL's text_time pooling")
+    want("addition_embed_type", (None, "text_time"),
+         "only SDXL's text_time pooling is mirrored")
     want("class_embed_type", (None,))
     want("only_cross_attention", (False, None))
     want("dual_cross_attention", (False, None))
@@ -2093,10 +2094,14 @@ def diffusers_unet_canvas(source, timeout=60):
         col[0] += 1
         return -2600 + 320 * col[0]
 
-    # --- the three inner inputs, the shared time embedding ------------------
+    # --- the inner inputs, the shared time embedding -------------------------
+    text_time = cfg.get("addition_embed_type") == "text_time"
     nd("input", "latents", cx(), 0, dout=ss * ss * in_ch)
     nd("input", "t", cx(), 620)
     nd("input", "context", cx(), 1240, dout=None)
+    if text_time:                                # SDXL: time ids and the pooled
+        nd("input", "time_ids", cx(), 1860)      # text embeds ride in beside
+        nd("input", "text_embeds", cx(), 2480)   # the cross-attention context
     flip = cfg.get("flip_sin_to_cos", True)
     nd("op", "time_embedding#steps", cx(), -420, op="timestep",
        width=boc[0], flip=True if flip else None)
@@ -2111,6 +2116,40 @@ def diffusers_unet_canvas(source, timeout=60):
     lk("time_embedding#steps", "time_embedding.linear_1")
     lk("time_embedding.linear_1", "time_embedding#silu")
     lk("time_embedding#silu", "time_embedding.linear_2")
+    if text_time:
+        # SDXL's addition: the time ids get their own fourier embedding, ride
+        # beside the pooled text embeds (text first), go through the two-layer
+        # add_embedding, and join the time embedding by one add
+        ad = int(cfg.get("addition_time_embed_dim") or 0)
+        proj = int(cfg.get("projection_class_embeddings_input_dim") or 0)
+        if not ad or not proj:
+            raise ValueError("text_time needs addition_time_embed_dim and "
+                             "projection_class_embeddings_input_dim")
+        nd("op", "add_time_proj#steps", cx(), -420, op="timestep",
+           width=ad, flip=True if flip else None)
+        lk("time_ids", "add_time_proj#steps")
+        flt = nd("op", "add_time_proj#flat", cx(), -420, op="reshape", dims="-1")
+        lk("add_time_proj#steps", flt)
+        cat = nd("op", "add_embedding#concat", cx(), -420, op="concat")
+        lk("text_embeds", cat, 0, 0)
+        lk(flt, cat, 0, 1)
+        a1d = shape_of("add_embedding.linear_1")
+        if a1d[1] != proj:
+            raise ValueError("add_embedding.linear_1 takes %d, the config says %d"
+                             % (a1d[1], proj))
+        a1 = nd("layer", "add_embedding.linear_1", cx(), -420,
+                bind="add_embedding.linear_1", din=a1d[1], dout=a1d[0])
+        lk(cat, a1)
+        aa = nd("act", "add_embedding#silu", cx(), -420, act="silu")
+        lk(a1, aa)
+        a2d = shape_of("add_embedding.linear_2")
+        a2 = nd("layer", "add_embedding.linear_2", cx(), -420,
+                bind="add_embedding.linear_2", din=a2d[1], dout=a2d[0])
+        lk(aa, a2)
+        aug = nd("op", "add_embedding#aug", cx(), -420, op="add")
+        lk(temb, aug, 0, 0)
+        lk(a2, aug, 0, 1)
+        temb = aug
 
     def act_box(path, src, y):
         a = nd("act", path, cx(), y, act=act_fn)
@@ -2351,25 +2390,27 @@ def diffusers_unet_canvas(source, timeout=60):
 
     name = (source.strip("/").split("/")[-1] or "unet")
     inner = {"type": "nested", "version": 1, "nodes": nodes, "edges": edges}
+    ports = [("latents", "latents", ss * ss * in_ch),
+             ("timestep", "t", None),
+             ("context", "text", None)]
+    if text_time:
+        ports.append(("time_ids", "time ids", None))
+        ports.append(("text_embeds", "text embeds", None))
     outer = {"type": "canvas", "version": 1,
              "name": name,
              "model": {"fidelity": "diffusers", "arc": False},
-             "nodes": [
-                 {"id": "latents", "kind": "input", "name": "latents",
-                  "x": -560, "y": 0, "dout": ss * ss * in_ch},
-                 {"id": "timestep", "kind": "input", "name": "t",
-                  "x": -560, "y": 260},
-                 {"id": "context", "kind": "input", "name": "text",
-                  "x": -560, "y": 520},
-                 {"id": "unet", "kind": "custom", "name": name, "x": -140,
-                  "y": 120, "model": True, "inner": inner},
-                 {"id": "out", "kind": "output", "name": "noise", "x": 280,
-                  "y": 120, "din": ss * ss * out_ch}],
-             "edges": [
-                 {"from": "latents", "to": "unet", "fromPort": 0, "toPort": 0},
-                 {"from": "timestep", "to": "unet", "fromPort": 0, "toPort": 1},
-                 {"from": "context", "to": "unet", "fromPort": 0, "toPort": 2},
-                 {"from": "unet", "to": "out", "fromPort": 0, "toPort": 0}]}
+             "nodes": [], "edges": []}
+    for i, (nid, label, dout) in enumerate(ports):
+        outer["nodes"].append({"id": nid, "kind": "input", "name": label,
+                               "x": -560, "y": 260 * i, "dout": dout})
+        outer["edges"].append({"from": nid, "to": "unet", "fromPort": 0,
+                               "toPort": i})
+    outer["nodes"].append({"id": "unet", "kind": "custom", "name": name,
+                           "x": -140, "y": 120, "model": True, "inner": inner})
+    outer["nodes"].append({"id": "out", "kind": "output", "name": "noise",
+                           "x": 280, "y": 120, "din": ss * ss * out_ch})
+    outer["edges"].append({"from": "unet", "to": "out", "fromPort": 0,
+                           "toPort": 0})
     return {"ok": True, "canvas": outer,
             "summary": "%s · %d boxes, every tensor bound" % (name, len(nodes))}
 
