@@ -292,11 +292,10 @@
         <b>inference</b>: no gradients are kept (the lightest run — dataset boxes
         stay idle).</li>
     <li><b>Train it</b> — training is scored on the <b>output box</b> and
-        wired through the <b>input box</b>. Open the
-        <span class="pill">output</span>, switch its window to the
-        <b>training</b> tab and see where it lives: the architecture sits in a
+        wired through the <b>input box</b>. The architecture sits in a
         <span class="pill">model</span> box (palette → <b>Model</b>) and a
-        <span class="pill">train config</span> box names it. The config carries
+        <span class="pill">train config</span> box (or a
+        <span class="pill">training</span> box) names it. The config carries
         every knob of the run (the paradigm, the optimizer, the learning rate,
         the batch, the steps, the save/eval cadence, the optional test split) and
         its own <b>data dot</b>: one dataset — or a
@@ -815,17 +814,17 @@
       outputs after what they are (<code>logits</code>, <code>hidden</code>) — runs
       report per output name. The window opens roomy; double-click the box for
       the compact size, or drag its corner to size it yourself.</p>
-      <p>Its window has two tabs: <b>output</b> (the readout) and
-      <b>training</b>. In the model world the training tab is the readout's own
-      — it says where training lives and offers the chip that drops a
-      <span class="pill">train config</span> beside the model. Older designs
-      (built before models) keep the full tab: <b>Enable Training</b>, the plan,
-      the step/loss strip, the controls — <b>start</b>, <b>save now</b>,
-      <b>hold</b>, <b>detach</b>, <b>resume</b>, <b>load last checkpoint</b>
-      — and the live curves.</p>
+      <p>Its window is the <b>readout, period</b> — the training tab is
+      gone for good. The training lives on a <span class="pill">train
+      config</span> that names a model, or on a <span class="pill">training</span>
+      box; the plan, the step/loss strip, the controls (<b>start</b>,
+      <b>save now</b>, <b>hold</b>, <b>detach</b>, <b>resume</b>, <b>load last
+      checkpoint</b>) and the live curves live there. An older design's
+      <code>train</code> switch still drives the engine (and opens the input's
+      dots) — it simply has no tab in this window anymore.</p>
       <p class="bfields"><b>Fields:</b> <code>din</code>, its name,
-      <code>train</code> (the training tab), <code>task_id</code> (the live
-      task), display <code>box</code> size, <code>panel.tab</code>. Older
+      <code>train</code> (the legacy training switch), <code>task_id</code> (the
+      live task), display <code>box</code> size. Older
       designs keep their stored training fields (<code>dataset</code>,
       <code>x_col</code>, <code>y_col</code>, …) — the engine reads
       them, and a train config box moves the settings forward.</p>
@@ -987,8 +986,9 @@
       first row of the <span class="pill grey">Backend ▾</span> menu (<i>show the
       server config</i>); press again to hide it — the design runs either way.
       There is only ever one, it cannot be renamed, and it lives at the top
-      level. <b>Training does not live here</b> any more: it is the training tab
-      of an <span class="pill">output</span> box. Designs that still carry an
+      level. <b>Training does not live here</b> any more: it is a
+      <span class="pill">train config</span> or a
+      <span class="pill">training</span> box. Designs that still carry an
       older train node keep working — the engine reads it as the hub.</p>
       <p class="bfields"><b>Fields:</b> display <code>box</code> size,
       <code>panel</code> options.</p>

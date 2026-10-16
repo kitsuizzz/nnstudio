@@ -5143,7 +5143,7 @@ check("a vision tower and its image input survive the design round trip", () => 
      "…and the box's window says what it is: " + rows.slice(0, 60));
 });
 
-check("the output's training tab: the switch, the plan, and the input's dots", () => {
+check("the output's window: a plain readout — no training tab, the dots stay", () => {
   const out = __t.bxAdd("output", 320, 240, { din: 8 });
   const inp = __t.bxAdd("input", 0, 0, { dout: 8 });
   const ds = __t.bxAdd("dataset", 120, 320, { vocab: "abcd" });
@@ -5151,36 +5151,31 @@ check("the output's training tab: the switch, the plan, and the input's dots", (
   // a flat design, the way they were built before models: the weights live at
   // the top level, so the output's training tab keeps the old flow alive
   const l1 = __t.bxAdd("layer", 0, 240, { din: 8, dout: 8 });
-  const fill = (tab) => {
+  const fill = () => {
     const d = document.createElement("div");
-    out.panel = Object.assign({}, out.panel, { tab: tab || "training" });
     __t.bxOutputFill(d, out);
     return d;
   };
-  // two tabs; the training one starts as just the switch
-  eql(fill("output").querySelectorAll(".runmi").map(e => e.textContent), ["output", "training"],
-      "the output's own menu: output and training");
-  const d0 = fill();
-  const ck = d0.querySelectorAll(".bxtick")[0];
-  ok(ck && !ck.checked, "Enable Training is there, and off by default");
-  eql(d0.querySelectorAll("label.rf").map(l => l.children.map(c => c.textContent).join(" ").trim()),
-      ["Enable Training"], "\u2026and off, that is all there is");
-  ok(d0.querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ")
-       .indexOf("just shows what arrived") >= 0, "\u2026with a hint at what turning it on does");
+  const sumTxt = () => {
+    const s = __t.bxTrainSummary(out);
+    return (s.lines || []).concat(s.missing || []).join(" | ");
+  };
+  // no tabs, no ticks: the readout, period — the training lives on a config
+  eql(fill().querySelectorAll(".runmi").length, 0, "the output's window has no tabs");
+  ok(fill().querySelectorAll(".bxtick").length === 0, "…no Enable Training anywhere");
+  ok(fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
+       .indexOf("no data yet") >= 0, "…just the readout, empty for now");
   eql(__t.bxPortDefs(out, "in").length, 1, "the output keeps its one dot \u2014 no dataset dot");
   eql(__t.bxPortDefs(inp, "in").length, 0, "\u2026and the input has no dots while training is off");
-  // turning it on: the INPUT grows ONE dot \u2014 the train config's
-  ck.checked = true;
-  ck.dispatchEvent({ type: "change" });
-  eql(out.train, true, "\u2026and toggling it turns the training on");
+  // an older design's switch is the field itself: on, the INPUT grows ONE dot
+  out.train = true;
+  eql(out.train, true, "…the legacy training switch (the field) is on");
   eql(__t.bxPortDefs(out, "in").length, 1, "\u2026the output's dots do not change");
   eql(__t.bxPortDefs(inp, "in").length, 1, "\u2026the INPUT grows one dot: the train config's");
   ok(String(__t.bxShape(out)).indexOf("training") >= 0,
      "\u2026and the card says so: " + __t.bxShape(out));
-  eql(fill().querySelectorAll("label.rf").map(l => l.children.map(c => c.textContent).join(" ").trim()),
-      ["Enable Training"], "\u2026the settings live on the config box now, not here");
-  ok(fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ")
-       .indexOf("train config box") >= 0, "\u2026and the plan asks for one");
+  eql(fill().querySelectorAll("label.rf").length, 0,
+      "…and its window stays a readout — no settings here");
   // the config box wires into the first dot; its presence opens the data dot
   const cfg = __t.bxAdd("config", 0, 320, {});
   ok(!!cfg && cfg.name === "train config 1", "a train config box lands, named train config 1");
@@ -5193,15 +5188,15 @@ check("the output's training tab: the switch, the plan, and the input's dots", (
     ok(d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
          .indexOf("config \u00b7") >= 0, "\u2026the input's own window says so");
   }
-  ok(fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ")
-       .indexOf("data dot") >= 0, "\u2026and the plan asks for the dataset");
+  ok(sumTxt().indexOf("wire the dataset") >= 0,
+     "…and the summary asks for the dataset: " + sumTxt().slice(0, 120));
   // the dataset wires in; the config detects it and reads its columns back
   eql(__t.bxConnect(ds.id, inp.id, 0, 1), null, "the dataset wires into the data dot");
   {
-    const hint = fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
-    ok(hint.indexOf("data \u00b7") >= 0 && hint.indexOf("rows") >= 0
-       && hint.indexOf("\u2192 y") >= 0,
-       "\u2026and the plan reads it back: " + hint);
+    const hint = sumTxt();
+    ok(hint.indexOf("data ·") >= 0 && hint.indexOf("rows") >= 0
+       && hint.indexOf("→ y") >= 0,
+       "…and the summary reads it back: " + hint.slice(0, 140));
     const d = document.createElement("div");
     __t.bxConfigFill(d, cfg);
     const txt = d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
@@ -5232,30 +5227,29 @@ check("the output's training tab: the switch, the plan, and the input's dots", (
   ok(__t.bxConfigure(cfg.id, { x_col: "a b", y_col: "b" }), "the columns land");
   eql([cfg.x_col, cfg.y_col], ["A B", "B"], "\u2026uppercased, on the config");
   {
-    const hint = fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
+    const hint = sumTxt();
     ok(hint.indexOf("mean squared error") >= 0,
-       "\u2026a two-column x is a vector: mse, this target: " + hint);
+       "…a two-column x is a vector: mse, this target: " + hint.slice(0, 140));
   }
   ok(__t.bxConfigure(cfg.id, { y_class: true }), "\u2026and y as a class label");
   {
-    const hint = fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
-    ok(hint.indexOf("class label") >= 0, "\u2026the plan says so: " + hint);
-    const asked = fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
-    ok(asked.indexOf("do not mix") >= 0,
-       "\u2026and a vector + classes do not mix: " + asked);
+    const hint = sumTxt();
+    ok(hint.indexOf("class label") >= 0, "…the summary says so: " + hint.slice(0, 140));
+    ok(sumTxt().indexOf("do not mix") >= 0,
+       "…and a vector + classes do not mix: " + sumTxt().slice(0, 140));
   }
   // one column on each side: cross entropy again
   ok(__t.bxConfigure(cfg.id, { x_col: "a", y_class: false }), "one column back");
   {
-    const hint = fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
+    const hint = sumTxt();
     ok(hint.indexOf("cross entropy") >= 0 && hint.indexOf("mean squared") < 0,
-       "\u2026and the loss line follows: " + hint);
+       "…and the loss line follows: " + hint.slice(0, 140));
   }
   // a column the sheet lacks is named as missing
   ok(__t.bxConfigure(cfg.id, { x_col: "ghost0" }), "a column the sheet lacks");
   {
-    const asked = fill().querySelectorAll(".bxbhint").map(e => e.textContent).join(" | ");
-    ok(asked.indexOf("does not hand out") >= 0, "\u2026is named as missing: " + asked);
+    ok(sumTxt().indexOf("does not hand out") >= 0,
+       "…is named as missing: " + sumTxt().slice(0, 140));
   }
   ok(__t.bxConfigure(cfg.id, { x_col: "a" }), "\u2026and a good one restores");
   // a select col box on the dot: the config detects the columns it hands out
@@ -5273,8 +5267,8 @@ check("the output's training tab: the switch, the plan, and the input's dots", (
   // x col resolves within what the matrix hands out: b is A there
   ok(__t.bxConfigure(cfg.id, { x_col: "A" }), "x col names a column within it");
   {
-    const hint = fill().querySelectorAll(".panehint").map(e => e.textContent).join(" | ");
-    ok(hint.indexOf("x b") >= 0, "\u2026and reads back as b: " + hint);
+    const hint = sumTxt();
+    ok(hint.indexOf("x b") >= 0, "…and reads back as b: " + hint.slice(0, 140));
   }
   // the design's JSON carries the settings
   const back = __t.bxJSONNodeFrom(__t.bxJSONNode(cfg));
@@ -5471,18 +5465,14 @@ check("a model and its config: the architecture nested, the training named", () 
        && kinds.indexOf("dataset") >= 0,
        "the training run keeps the model, the config and the data: " + kinds.join(","));
   }
-  // the output's training tab is a readout now, with the chip to start one
+  // no output carries the training tab anymore: readout, period
   {
-    const out = __t.bxAdd("output", 640, 320, { din: 2 });
+    const out2 = __t.bxAdd("output", 640, 320, { din: 2 });
     const d = document.createElement("div");
-    out.panel = { tab: "training" };
-    __t.bxOutputFill(d, out);
-    ok(d.querySelectorAll(".bxtick").length === 0, "no Enable Training in the model world");
-    ok(d.querySelectorAll(".panehint").map(e => e.textContent).join(" | ")
-         .indexOf("readout") >= 0, "\u2026just the readout");
-    ok(d.querySelectorAll(".chip").map(e => e.textContent).join(" | ")
-         .indexOf("add a train config") >= 0, "\u2026and the chip that makes one");
-    __t.bxRemove(out.id);
+    __t.bxOutputFill(d, out2);
+    eql(d.querySelectorAll(".runmi").length, 0, "no tabs on any output's window");
+    ok(d.querySelectorAll(".bxtick").length === 0, "…and no Enable Training");
+    __t.bxRemove(out2.id);
   }
   __t.bxRemove(m.id);
   __t.bxRemove(cfg.id);

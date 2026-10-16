@@ -4436,8 +4436,8 @@ function bxTrainHub() {                           // the train node: the server 
   return null;
 }
 function bxTraining(n) {                          // a box that carries a training run:
-  // a train config (the model world), an output whose training tab is on, or
-  // the train node the oldest designs carry
+  // a train config (the model world), an output whose training switch is on
+  // (older designs), or the train node the oldest designs carry
   return !!n && (n.kind === "train" || n.kind === "config" ||
                  n.kind === "training" ||
                  (n.kind === "output" && n.train));
@@ -4698,8 +4698,9 @@ function bxTrainSummary(h) {                       // what the engine will do, i
             : " \u2014 the implicit loss on its output"));
   } else missing.push(rl
     ? "rl training needs a model (or a target output box) to sample from"
-    : (isModel ? "no signal \u2014 pick the model this config trains"
-               : "no signal \u2014 tick Enable Training on the output to score"));
+    : (isModel ? "no signal — pick the model this config trains"
+               : "no signal — an output with its training switch on "
+                 + "(an older design's field)"));
   if (!rl && !lossBox) {
     lines.push(vector
       ? (unsup ? "loss \u00b7 mean squared error \u2014 the model rebuilds its own X"
@@ -5327,38 +5328,16 @@ function bxPeekBlock(st) {                     // a value's numbers: a matrix
   return wrap;
 }
 function bxOutputFill(pane, n) {               // the output's window: whatever data
-  // the last run handed it \u2014 and, one tab over, the training it carries
+  // the last run handed it — the readout, and that is all: the training —
+  // lives on a config that names a model, or on a Training box
   pane.innerHTML = "";
   bxBehaveInside(pane);
-  const p = n.panel || {};
-  const cur = p.tab === "training" ? "training" : "output";
   const st = bxNodeState(n);
-  const prev = pane.querySelector ? pane.querySelector(".bxinputbody") : null;
-  const kept = (n._scroll && n._scroll[cur]) || 0;
-  const keepTop = (prev && n._tabShown === cur && prev.scrollTop) ? prev.scrollTop : kept;
-  n._tabShown = cur;
-  const menu = mk("div", { class: "runmenu" });
-  const tab = (id, label) => {
-    const b = mk("span", { class: "runmi" + (cur === id ? " on" : ""), text: label });
-    b.addEventListener("click", () => {
-      (n.panel || (n.panel = {})).tab = id;
-      bxRender();
-    });
-    menu.appendChild(b);
-  };
-  tab("output", "output");
-  tab("training", "training");
-  pane.appendChild(menu);
   const body = mk("div", { class: "bxinputbody" });
   body.addEventListener("scroll", () => {
-    (n._scroll = n._scroll || {})[cur] = body.scrollTop;
+    (n._scroll = n._scroll || {}).output = body.scrollTop;
   });
   pane.appendChild(body);
-  if (cur === "training") {
-    bxOutputTrain(body, n);
-    body.scrollTop = keepTop;
-    return;
-  }
   if (!st) {
     body.appendChild(mk("div", { class: "panehint",
       text: "no data yet \u2014 run the design and what arrives here shows up" }));
@@ -5401,49 +5380,6 @@ function bxOutputFill(pane, n) {               // the output's window: whatever 
   if (bits.length) body.appendChild(mk("div", { class: "panehint", text: bits.join(" \u00b7 ") }));
 }
 
-function bxOutputTrain(body, n) {              // the training tab: the switch, the
-  // plan that follows it, and every parameter of the run
-  const topWeights = (BX.nodes || []).some(x => bxWeightsBox(x));
-  if (!n.train && !topWeights) {               // the model world: a readout, and
-    const m = bxAnyModel();                    // the training lives on a config
-    body.appendChild(mk("div", { class: "panehint",
-      text: "this output is a readout \u2014 what arrives here shows up. The "
-          + "training lives on a train config that names a model." }));
-    const row = mk("div", { class: "rrow" });
-    const chip = (label, fn, title) => {
-      const b = mk("span", { class: "chip tiny", text: label, title: title || "" });
-      b.addEventListener("mousedown", (e) => {
-        if (e && e.stopPropagation) e.stopPropagation();
-      });
-      b.addEventListener("click", fn);
-      return b;
-    };
-    if (m)
-      row.appendChild(chip("add a train config", () => bxTrainAddConfig(n),
-        "drops a config beside " + (m.name || m.id) + " \u2014 wire the data in"));
-    body.appendChild(row);
-    body.appendChild(mk("div", { class: "bxhint2",
-      text: m ? ("the model \u00b7 " + (m.name || m.id))
-              : ("no model yet \u2014 palette \u2192 models \u2192 model box, "
-                 + "then build the architecture inside it") }));
-    return;
-  }
-  const row = mk("label", { class: "rf" });
-  const ck = mk("input", { type: "checkbox", class: "bxtick",
-                           title: "train on this output's signal" });
-  ck.checked = !!n.train;
-  ck.addEventListener("change", () => bxConfigure(n.id, { train: ck.checked }));
-  row.appendChild(ck);
-  row.appendChild(mk("span", { text: "Enable Training" }));
-  body.appendChild(row);
-  if (!n.train) {
-    body.appendChild(mk("div", { class: "bxbhint",
-      text: "off \u2014 this node just shows what arrived. on, it trains: the "
-          + "parameters show up here, and a dataset dot opens on the box." }));
-    return;
-  }
-  bxTrainPlan(body, n);
-}
 function bxHeatFill(pane, n) {                 // the heatmap's window: the picture
   // it drew, once a run has handed it a vector
   pane.innerHTML = "";
@@ -10480,8 +10416,9 @@ function bxTrainWireConfig(cfg) {              // one click: into the input's fi
   let trainOn = false;
   bxEveryBox(x => { if (x.kind === "output" && x.train) trainOn = true; });
   if (!trainOn) {
-    bxTrainNote(host, "tick Enable Training on the output first \u2014 that is "
-                + "what opens the input's dots");
+    bxTrainNote(host, "an output box must carry its training switch first "
+                + "(the older designs' field) — that is what opens the "
+                + "input's dots");
     return;
   }
   const err = bxConnect(cfg.id, input.id, 0, 0);
