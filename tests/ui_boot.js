@@ -553,8 +553,8 @@ check("the vision transformer: a whole trainable ViT from one card", () => {
   eql(named("patch embed").din, 192, "\u2026into the patch embedding");
   eql([__t.bxOpName(named("mean pool")), named("mean pool").dim], ["mean", -2],
       "\u2026and the patch row pools before the head");
-  ok(String(__t.bxShape(vit)).indexOf("model") === 0,
-     "the card calls it a model: " + __t.bxShape(vit));
+  eql(__t.bxShape(vit), "3072 \u2192 10 \u00b7 f16",
+      "the card reads in \u2192 out \u00b7 dtype: " + __t.bxShape(vit));
   ok(__t.bxParamsOf(vit) > 20000, "\u2026with its weights counted: " + __t.bxParamsOf(vit));
   // it is a model a config can train
   const cfg = __t.bxAdd("config", 600, 0, {});
@@ -588,7 +588,8 @@ check("the Vision shelf: the three architectures land as whole models", () => {
       2, "\u2026and the decoder upsamples twice");
   eql(vae.inner.nodes.filter(n => n.kind === "output")[0].din, 32 * 32 * 3,
       "the output dot is a 32\u00d732 picture's worth");
-  ok(String(__t.bxShape(vae)).indexOf("model") === 0, "its card says model");
+  eql(__t.bxShape(vae), "3072 \u2192 3 \u00b7 f16",
+      "its card reads in \u2192 out \u00b7 dtype: " + __t.bxShape(vae));
   ok(__t.bxParamsOf(vae) > 1000, "\u2026with weights: " + __t.bxParamsOf(vae));
   __t.bxRemove(vae.id);
   // the UNet: two dots in, a prediction out
@@ -657,13 +658,18 @@ check("a card's lines are clipped to the card's own width", () => {
   // and the drawn card clips the same way
   const m = __t.bxAddTemplate("model", 0, 0, "vision transformer with a very long name");
   __t.bxRender();
-  const labels = getEl("bxcanvas").querySelectorAll(".dlabel").map(e => e.textContent);
-  const mine = labels.filter(s => s.indexOf("vision") === 0);
-  ok(mine.length === 1 && mine[0].length <= 20 && mine[0].slice(-1) === "\u2026",
-     "the drawn name fits the box: " + mine.join(","));
-  const shapes = getEl("bxcanvas").querySelectorAll(".dshape").map(e => e.textContent);
-  const sh = shapes.filter(s => s.indexOf("model \u00b7") === 0);
-  ok(sh.length === 1 && sh[0].length <= 23, "the drawn shape line fits too: " + sh.join(","));
+  const inCard = (cls) =>                    // only the lines of this very card
+    getEl("bxcanvas").querySelectorAll(cls).filter(e => {
+      for (let p = e; p; p = p._parent)
+        if (p._attrs && p._attrs["data-id"] === m.id) return true;
+      return false;
+    }).map(e => e.textContent);
+  const labels = inCard(".dlabel");
+  ok(labels.length === 1 && labels[0].length <= 20 && labels[0].slice(-1) === "\u2026",
+     "the drawn name fits the box: " + labels.join(","));
+  const shapes = inCard(".dshape");
+  ok(shapes.length === 1 && shapes[0].length <= 23,
+     "the drawn shape line fits too: " + shapes.join(","));
   __t.bxRemove(m.id);
   eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
 });
@@ -703,7 +709,8 @@ check("the HF import: one repo, a model box lands with its pipeline inside", () 
      "\u2026with the text pipeline inside");
   eql(m.inner.nodes[1].repo, "Qwen/Qwen2.5-0.5B", "\u2026bound to the repo");
   eql(__t.bxBoundary(m, "in").length, 1, "one port in");
-  ok(__t.bxShape(m).indexOf("model") === 0, "\u2026and the card says model: " + __t.bxShape(m));
+  eql(__t.bxShape(m), "text \u2192 text \u00b7 f16",
+      "\u2026and the card reads text \u2192 text \u00b7 f16: " + __t.bxShape(m));
   __t.bxRemove(m.id);
 });
 
@@ -5079,8 +5086,9 @@ check("wrapping the weights: a flat design becomes a model, wired the same", () 
       "\u2026with the boundary the crossings made");
   eql(((m.inner || {}).nodes || []).map(n => n.kind).sort(),
       ["input", "layer", "layer", "output"], "\u2026the layers inside");
-  eql(__t.bxShape(m), "model \u00b7 1 in \u00b7 1 out \u00b7 64 params",
-      "\u2026and its weights counted");
+  eql(__t.bxShape(m), "4 \u2192 4 \u00b7 f16",
+      "the card reads its dots and dtype: " + __t.bxShape(m));
+  eql(__t.bxParamsOf(m), 64, "\u2026and its weights counted");
   const edge = (from, to) => __t.BX.edges.find(e => e.from === from && e.to === to);
   ok(edge(i.id, m.id) && edge(m.id, o.id), "the outer wires land on the model");
   eql(__t.bxErrorSet().size, 0, "\u2026and the design is whole");
@@ -5110,8 +5118,8 @@ check("a model and its config: the architecture nested, the training named", () 
   ok(!__t.bxHasPane(m), "\u2026a plain card \u2014 no window inside it");
   eql([__t.bxNodeW(m), __t.bxNodeH(m)], [160, 80],
       "\u2026the standard card size, like every plain box");
-  eql(__t.bxShape(m), "model \u00b7 1 in \u00b7 1 out",
-      "the card reads its ports: " + __t.bxShape(m));
+  eql(__t.bxShape(m), "? \u2192 ? \u00b7 f16",
+      "the card reads in \u2192 out \u00b7 dtype: " + __t.bxShape(m));
   // a config names it; its data dot is its own
   const cfg = __t.bxAdd("config", 480, 0, {});
   eql([__t.bxPortDefs(cfg, "in").length, __t.bxPortDefs(cfg, "out").length], [0, 1],
@@ -5124,8 +5132,8 @@ check("a model and its config: the architecture nested, the training named", () 
     eql(__t.bxConnect(bin.id, l1.id, 0, 0), null, "the boundary feeds the layer");
     eql(__t.bxConnect(l1.id, bout.id, 0, 0), null, "\u2026and the layer the out box");
     __t.bxLeave();
-    ok(String(__t.bxShape(m)).indexOf("16 params") >= 0,
-       "the card counts its weights: " + __t.bxShape(m));
+    eql(__t.bxShape(m), "4 \u2192 4 \u00b7 f16",
+      "the card follows the wired shapes: " + __t.bxShape(m));
   }
   ok(__t.bxConfigure(cfg.id, { model: m.id, paradigm: "supervised" }),
      "the model lands on the config");

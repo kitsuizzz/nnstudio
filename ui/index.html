@@ -1376,6 +1376,19 @@ function bxClipFit(s, w, px) {              // clip to the card's own width: the
   const max = Math.max(3, Math.floor((w - 20) / (px || 6)));
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
+function bxModelDtype(n) {                     // the weights' own dtype: the
+  const seen = {};                             // commonest one among the leaf
+  (function walk(nodes) {                      // boxes inside the model (floats
+    for (const x of nodes || []) {             // through the nested boxes too)
+      if (x.kind === "custom") { walk((x.inner || {}).nodes); continue; }
+      if (bxWeightedBox(x) && x.dtype) seen[x.dtype] = (seen[x.dtype] || 0) + 1;
+    }
+  })((n.inner || {}).nodes);
+  let best = null, top = 0;
+  for (const k of Object.keys(seen))
+    if (seen[k] > top) { top = seen[k]; best = k; }
+  return best;
+}
 function bxShape(n) {
   if (n.kind === "agent") return bxAgentShape(n);   // its task, not a size
   if (n.kind === "act") return n.act || "none";          // its function, not a size
@@ -1437,11 +1450,25 @@ function bxShape(n) {
          + (n.lr != null ? " \u00b7 lr " + n.lr : "")
          + (n.batch != null ? " \u00b7 batch " + n.batch : "");
   }
-  if (n.kind === "custom") {                             // how many ports it exposes
+  if (n.kind === "custom") {
+    if (n.model) {                             // a model's line reads three things
+      const inner = n.inner || {};             // and nothing else: the shape its
+      const short = (pt) => {                  // dots take in, the shape they
+        if (!pt) return "?";                   // send out, and the weights' dtype
+        if (pt.kind === "text" || pt.kind === "ids" || pt.kind === "settings")
+          return pt.kind;
+        const m = pt.shape && /^\[\? × (\d+)\]$/.exec(pt.shape);
+        return m ? m[1] : (pt.shape || "?");
+      };
+      const ins = bxBoundary(n, "in").map(b => short(bxPortType(b, "out")));
+      const outs = bxBoundary(n, "out").map(
+        b => short(bxOutputExpect(b, inner.edges) || bxPortType(b, "in")));
+      return (ins.length ? ins.join("+") : "?") + " → "
+           + (outs.length ? outs.join("+") : "?")
+           + " · " + (n.dtype || bxModelDtype(n) || "f16");
+    }
     const i = bxPortDefs(n, "in").length, o = bxPortDefs(n, "out").length;
-    const pr = n.model ? bxParamsOf(n) : 0;
-    return (n.model ? "model · " : "") + i + " in · " + o + " out"
-         + (pr ? " · " + bxBig(pr) + " params" : "");
+    return i + " in · " + o + " out";
   }
   if (n.kind === "input") return n.input_mode === "text" ? "text"
                                : n.input_mode === "image" ? "image"
