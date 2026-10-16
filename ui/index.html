@@ -1302,6 +1302,7 @@ function bxKindLabel(kind) {
        : kind === "hf" ? "HF model"
        : kind === "agent" ? "Agent"
        : kind === "train" ? "Server config"
+       : kind === "conv" ? "Convolution"
        : kind === "select" ? "Select columns"
        : kind === "config" ? "Train config"
        : kind === "model" ? "Model"
@@ -1320,7 +1321,8 @@ const BX_ACTS = ["none", "relu", "leaky relu", "gelu", "gelu_pytorch_tanh", "sil
 //   dot product — two in-dots of one size, out is a single number (size 1).
 const BX_OPS = ["transpose", "dot product", "matmul", "concat", "add", "subtract", "multiply",
                 "divide", "rope", "scale", "topk", "conv1d", "scan", "reshape",
-                "permute", "repeat", "mask", "slice", "zeros"];
+                "permute", "repeat", "mask", "slice", "zeros", "upsample",
+                "timestep"];
 // op attrs a spec may add that the UI itself does not model — they must
 // survive the canvas round trip, or a run reaches the engine stripped:
 // `keep` (reshape preserves leading dims) and the gated delta rule's heads /
@@ -1329,10 +1331,12 @@ const BX_OP_EXTRAS = ["keep", "k_heads", "k_dim", "heads", "head_dim", "partial"
                       "v_tiled"];
 // shape-changers: a contraction or a selection has a shape of its own, so their
 // dots stay unknown (they never make a wire wrong)
-const BX_OPAQUE = ["matmul", "topk", "scan", "permute", "repeat", "mask", "slice", "zeros"];
+const BX_OPAQUE = ["matmul", "topk", "scan", "permute", "repeat", "mask", "slice", "zeros",
+                   "upsample", "timestep"];
 // kinds whose boxes hold no size of their own: the wire's size passes through
 const BX_UNSIZED = ["act", "op", "norm", "attn", "ssm", "moe", "script", "hf",
-                    "dataset", "loss", "reward", "train", "select", "config"];
+                    "dataset", "loss", "reward", "train", "select", "config",
+                    "conv"];
 // a reshape can be told the shape it makes, like "128x40" (x, ×, *, comma or
 // spaces between the numbers). The element count is the product of the dims,
 // and both sides of the box must carry it — a reshape never changes how much
@@ -1390,6 +1394,12 @@ function bxShape(n) {
       return "\u00d7 " + n.repeats + (n.dim ? " dim " + n.dim : "");
     if (op === "permute" && n.axes)
       return "[" + (Array.isArray(n.axes) ? n.axes.join(" ") : n.axes) + "]";
+    if (op === "mean")
+      return "dim " + (n.dim == null ? -2 : n.dim);
+    if (op === "upsample")
+      return "× " + (n.factor || 2) + (n.mode ? " " + n.mode : "");
+    if (op === "timestep")
+      return "d " + (n.width || 64);
     if (op === "mask")
       return (n.mode || "causal") + (n.window ? " w" + n.window : "");
     if (op === "slice") {
@@ -1399,6 +1409,13 @@ function bxShape(n) {
              + ":" + (n.stop == null ? "\u2026" : Number(n.stop));
     }
     return op;
+  }
+  if (n.kind === "conv") {                              // its map, its kernel
+    const kk = Math.max(1, Number(n.k) || 3);
+    const st = Math.max(1, Number(n.stride) || 1);
+    return bxDim(n.din) + " → " + bxDim(n.dout)
+         + " · k" + kk + (st !== 1 ? "s" + st : "")
+         + (Number(n.groups) > 1 ? " · g" + n.groups : "");
   }
   if (n.kind === "select") {                             // the columns it hands out
     const tell = bxMatrixTell(n);
@@ -1590,6 +1607,7 @@ function bxDefaultName(kind) {
              : kind === "hf" ? "hf model"
              : kind === "agent" ? "agent"
              : kind === "train" ? "server config"
+             : kind === "conv" ? "convolution"
              : kind === "select" ? "matrix"
              : kind === "config" ? "train config"
              : kind === "heatmap" ? "heatmap"
@@ -2037,6 +2055,64 @@ function bxMoEDoc(opts) {
   link(mu, iout);
   return doc;
 }
+function bxViTDoc(opts) {                      // a vision transformer: the image
+  opts = opts || {};                           // patches in, a class out — and
+  const side = opts.image || 32;               // every box in it is trainable
+  const pt = opts.patch || 8;                  // the patch side (8 → 16 patches)
+  const d = opts.dim || 64;                    // the width the patches embed to
+  const mlp = opts.mlp || d * 2;
+  const blocks = opts.blocks || 2;             // attention + mlp, twice
+  const classes = opts.classes || 10;
+  const c = 3;                                 // RGB
+  const rows = Math.max(1, Math.round(side / pt));
+  const n = rows * rows;                       // the patch count
+  const px = pt * pt * c;                      // pixels per patch
+  const { doc, mk, link } = bxDocMaker();
+  const col = (i) => 190 * i;
+  const iin = mk("input", "pixels", 0, 0, { dout: side * side * c });
+  const cut = mk("op", "cut the grid", col(1), 0,
+                 { op: "reshape", dims: [rows, pt, rows, pt, c].join("x") });
+  const grid = mk("op", "patches", col(2), 0, { op: "permute", axes: "0 2 1 3 4" });
+  const flat = mk("op", "flatten", col(3), 0, { op: "reshape", dims: n + "x" + px });
+  const embed = mk("layer", "patch embed", col(4), 0, { din: px, dout: d });
+  link(iin, cut); link(cut, grid); link(grid, flat); link(flat, embed);
+  let last = embed, x = 5;
+  for (let b = 0; b < blocks; b++) {
+    const tag = b + 1;
+    // attention: norm → q/k/v → scores → softmax → ·v → out proj → residual
+    const norm1 = mk("norm", "norm " + tag, col(x), -160, { norm: "rms", eps: 1e-6 });
+    const q = mk("layer", "q proj " + tag, col(x + 1), -180, { din: d, dout: d });
+    const k = mk("layer", "k proj " + tag, col(x + 1), -60, { din: d, dout: d });
+    const v = mk("layer", "v proj " + tag, col(x + 1), 60, { din: d, dout: d });
+    const kt = mk("op", "k transposed", col(x + 2), -60, { op: "transpose" });
+    const sc = mk("op", "scores " + tag, col(x + 3), -120, { op: "matmul" });
+    const sm = mk("act", "softmax " + tag, col(x + 4), -120, { act: "softmax" });
+    const sv = mk("op", "mix " + tag, col(x + 5), -120, { op: "matmul" });
+    const op = mk("layer", "out proj " + tag, col(x + 6), -120, { din: d, dout: d });
+    const res1 = mk("op", "residual " + tag, col(x + 7), -120, { op: "add" });
+    // mlp: norm → up → gelu → down → residual
+    const norm2 = mk("norm", "mlp norm " + tag, col(x), 80, { norm: "rms", eps: 1e-6 });
+    const up = mk("layer", "mlp up " + tag, col(x + 1), 80, { din: d, dout: mlp });
+    const ga = mk("act", "gelu " + tag, col(x + 2), 80, { act: "gelu" });
+    const dn = mk("layer", "mlp down " + tag, col(x + 3), 80, { din: mlp, dout: d });
+    const res2 = mk("op", "residual mlp " + tag, col(x + 4), 80, { op: "add" });
+    link(last, norm1);
+    link(norm1, q); link(norm1, k); link(norm1, v);
+    link(k, kt); link(q, sc, 0, 0); link(kt, sc, 0, 1);
+    link(sc, sm); link(sm, sv, 0, 0); link(v, sv, 0, 1);
+    link(sv, op); link(op, res1, 0, 0); link(last, res1, 0, 1);
+    link(res1, norm2);
+    link(norm2, up); link(up, ga); link(ga, dn);
+    link(dn, res2, 0, 0); link(res1, res2, 0, 1);
+    last = res2;
+    x += 7;
+  }
+  const head = mk("norm", "head norm", col(x), 0, { norm: "rms", eps: 1e-6 });
+  const fc = mk("layer", "head", col(x + 1), 0, { din: d, dout: classes });
+  const iout = mk("output", "classes", col(x + 2), 0, { din: classes });
+  link(last, head); link(head, fc); link(fc, iout);
+  return doc;
+}
 function bxModelDoc() {                       // a model: the box the architecture
   const i = bxId(), o = bxId();               // lives in — values in, values out
   return { nodes: [{ id: i, kind: "input", name: "in", x: 40, y: 120 },
@@ -2044,9 +2120,9 @@ function bxModelDoc() {                       // a model: the box the architectu
            edges: [{ from: i, to: o, fromPort: 0, toPort: 0 }] };
 }
 const BX_TEMPLATES = { attn: bxAttentionDoc, ssm: bxStateDoc, moe: bxMoEDoc,
-                       model: bxModelDoc };
+                       model: bxModelDoc, vit: bxViTDoc };
 const BX_TPL_WORD = { attn: "attention", ssm: "state space", moe: "mixture",
-                      model: "model" };
+                      model: "model", vit: "vision transformer" };
 function bxTemplateName(tpl) {
   return BX_TPL_WORD[tpl] + " " + (BX.nodes.filter(n => n.name && n.name.indexOf(BX_TPL_WORD[tpl]) === 0).length + 1);
 }
@@ -2091,7 +2167,8 @@ function bxAddTokenizerPair(x, y, v) {        // one repo, the pair that belongs
 function bxAddTemplate(tpl, x, y, name) {
   bxUndoLock++;                             // one step for the whole template
   const n = bxAdd("custom", x, y, { name: name || bxTemplateName(tpl) });
-  if (tpl === "model") n.model = true;        // the architecture's own box
+  if (tpl === "model" || tpl === "vit")      // the architecture's own boxes
+    n.model = true;
   n.inner = BX_TEMPLATES[tpl]({});
   bxSettleSizes();
   bxRender();
@@ -2114,6 +2191,18 @@ function bxAdd(kind, x, y, v) {
               din: kind === "input" || sizeless ? null : bxSize(v.din),
               dout: kind === "output" || sizeless ? null : bxSize(v.dout) };
   if (kind === "act") n.act = v.act || "silu";
+  if (kind === "conv") {
+    n.din = bxSize(v.din);                    // channels in, channels out
+    n.dout = bxSize(v.dout);
+    const kk = bxInt(v.k, 3);
+    if (kk && kk > 0) n.k = kk;
+    const st = bxInt(v.stride, null);
+    if (st && st > 1) n.stride = st;
+    const pd = bxInt(v.pad, null);
+    if (pd != null && pd >= 0) n.pad = pd;
+    const g = bxInt(v.groups, null);
+    if (g && g > 1) n.groups = g;
+  }
   if (kind === "script") n.script = typeof v.script === "string" ? v.script : "";
   if (kind === "select") {
     const cs = String(v.cols == null ? "" : v.cols).trim()
@@ -2573,6 +2662,12 @@ function bxEstimate() {
         dtype = n.dtype || "f16";
       } else if (n.kind === "layer") {
         if (n.din != null && n.dout != null) params = n.din * n.dout;
+        dtype = n.dtype || "f16";
+      } else if (n.kind === "conv") {
+        const kk = Math.max(1, Number(n.k) || 3);
+        const g = Math.max(1, Number(n.groups) || 1);
+        if (n.din != null && n.dout != null)
+          params = Math.floor(n.din / g) * n.dout * kk * kk;
         dtype = n.dtype || "f16";
       } else if (n.kind === "norm") {
         const s = bxActSize(n);
@@ -3215,12 +3310,35 @@ function bxConfigure(id, vals) {
   for (const k of ["axis", "index", "start", "stop"]) {  // the slice's own fields
     if (n.kind === "op" && vals[k] !== undefined) n[k] = bxInt(vals[k], n[k]);
   }
+  for (const k of ["factor", "repeats", "dim", "window", "width"]) {
+    if (n.kind === "op" && vals[k] !== undefined)      // the op's own numbers
+      n[k] = bxInt(vals[k], null);
+  }
+  if (n.kind === "op" && vals.theta !== undefined)
+    n.theta = bxNum(vals.theta, null);
+  if (n.kind === "op" && vals.axes !== undefined) {    // a permute's order
+    const raw = String(vals.axes == null ? "" : vals.axes).trim();
+    n.axes = raw ? raw.replace(/,/g, " ") : null;
+  }
+  if (n.kind === "op" && vals.op_mode !== undefined)   // a mask's kind, an
+    n.mode = String(vals.op_mode == null ? "" : vals.op_mode).trim() || null;
   if (n.kind === "op" && vals.dims !== undefined) {      // the shape a reshape makes
     const raw = String(vals.dims == null ? "" : vals.dims).trim();
     if (!raw) n.dims = null;                             // cleared: no shape
     else { const d = bxDims(raw); if (d) n.dims = d.join("x"); }   // junk keeps it
   }
-  if (n.kind === "embed") {
+  if (n.kind === "conv") {                   // its channels, and the kernel's
+    if (vals.din !== undefined) bxUnfix(n, "din");
+    if (vals.dout !== undefined) bxUnfix(n, "dout");
+    n.din = bxSize(vals.din, n.din);
+    n.dout = bxSize(vals.dout, n.dout);
+    for (const k of ["k", "stride", "pad", "groups"]) {
+      if (vals[k] === undefined) continue;
+      const v = bxInt(vals[k], null);
+      if (v != null && v > 0) n[k] = v;
+      else delete n[k];                      // blank = the default
+    }
+  } else if (n.kind === "embed") {
     if (vals.din !== undefined) bxUnfix(n, "din");
     if (vals.dout !== undefined) bxUnfix(n, "dout");
     n.din = bxSize(vals.din, n.din) || 1;    // the id
@@ -3249,6 +3367,12 @@ function bxParamsOf(n) {                      // the weights a box holds, in all
   if (!n) return 0;                           // its depths
   if (n.kind === "layer")
     return (bxSize(n.din, 0) || 0) * (bxSize(n.dout, 0) || 0);
+  if (n.kind === "conv") {                    // dout kernels of din/g × k × k
+    const kk = Math.max(1, Number(n.k) || 3);
+    const g = Math.max(1, Number(n.groups) || 1);
+    return Math.floor((bxSize(n.din, 0) || 0) / g) * (bxSize(n.dout, 0) || 0)
+         * kk * kk;
+  }
   if (n.kind === "embed")
     return (bxSize(n.vocab, 0) || 0) * (bxSize(n.dout, 0) || 0);
   if (n.kind === "norm")
@@ -3262,14 +3386,14 @@ function bxParamsOf(n) {                      // the weights a box holds, in all
 function bxWeightsBox(n) {                    // a box that owns weights of its own
   if (!n) return false;
   if (n.kind === "layer" || n.kind === "embed" || n.kind === "norm" ||
-      n.kind === "vision" || n.kind === "hf") return true;
+      n.kind === "conv" || n.kind === "vision" || n.kind === "hf") return true;
   if (n.kind === "op" && bxOpName(n) === "scale") return true;
   if ((n.kind === "op" || n.kind === "script") && n.t && n.params) return true;
   return false;
 }
 function bxWeightsKind(kind) {                // …and the palette kinds that
   return kind === "layer" || kind === "embed" || kind === "norm" ||   // hold them
-         kind === "vision" || kind === "hf";
+         kind === "conv" || kind === "vision" || kind === "hf";
 }
 function bxWeightedBox(n) {
   if (!n) return false;
@@ -5226,7 +5350,7 @@ const BX_JSON_VERSION = 1;
 const BX_KINDS = ["input", "embed", "layer", "act", "op", "norm", "script",
                   "tokenize", "detokenize", "sample", "hf", "agent", "custom", "output",
                   "dataset", "loss", "reward", "train", "vision", "heatmap",
-                  "select", "config"];
+                  "select", "config", "conv"];
 function bxTrainDoc(o, n) {                    // the training a host carries, out
   if (n.task_id) o.task_id = n.task_id;
   for (const k of ["dataset", "test_dataset", "target", "reward"])
@@ -5288,6 +5412,12 @@ function bxJSONNode(n) {
                                                         h: Math.round(n.box.h || 320) }; }
   else if (n.kind === "layer") { o.din = n.din == null ? null : n.din;
                                  o.dout = n.dout == null ? null : n.dout; }
+  else if (n.kind === "conv") {
+    o.din = n.din == null ? null : n.din;
+    o.dout = n.dout == null ? null : n.dout;
+    for (const k of ["k", "stride", "pad", "groups"])
+      if (n[k] != null) o[k] = n[k];
+  }
   else if (n.kind === "act") {
     o.act = n.act || "silu";
     if (n.gain != null) o.gain = n.gain;     // e.g. the attention scores' 1/sqrt(d)
@@ -5301,6 +5431,7 @@ function bxJSONNode(n) {
     if (n.dim != null) o.dim = n.dim;
     if (n.factor != null) o.factor = n.factor;
     if (n.theta != null) o.theta = n.theta;
+    if (n.width != null) o.width = n.width;
     if (n.mode) o.mode = n.mode;
     if (n.window != null) o.window = n.window;
     if (n.axis != null) o.axis = n.axis;
@@ -5653,6 +5784,14 @@ function bxJSONNodeFrom(o) {
       n.box = { w: bxSize(o.box.w, 360), h: bxSize(o.box.h, 320) };
   }
   else if (o.kind === "layer") { n.din = bxSize(o.din); n.dout = bxSize(o.dout); }
+  else if (o.kind === "conv") {
+    n.din = bxSize(o.din);
+    n.dout = bxSize(o.dout);
+    for (const k of ["k", "stride", "pad", "groups"]) {
+      const v = bxInt(o[k], null);
+      if (v != null && v > 0) n[k] = v;
+    }
+  }
   else if (o.kind === "act") {
     n.act = BX_ACTS.indexOf(o.act) >= 0 ? o.act : "silu";
     if (o.gain != null && isFinite(Number(o.gain))) n.gain = Number(o.gain);
@@ -5668,6 +5807,7 @@ function bxJSONNodeFrom(o) {
     if (o.dim != null) n.dim = Number(o.dim);
     if (o.factor != null) n.factor = Number(o.factor);
     if (o.theta != null) n.theta = Number(o.theta);
+    if (o.width != null) n.width = Number(o.width);
     if (o.mode) n.mode = String(o.mode);
     if (o.window != null) n.window = Number(o.window);
     if (o.axis != null) n.axis = Number(o.axis);
@@ -6806,6 +6946,8 @@ function bxMenuBuild(mode, id, ev) {
       else if (n.kind === "op") mine.push(["set the operation", () => bxForm(n.kind, null, n, "operation")]);
       else if (n.kind === "embed") mine.push(["set the embedding", () => bxForm(n.kind, null, n, "embed")]);
       else if (n.kind === "norm") mine.push(["set the norm", () => bxForm(n.kind, null, n, "norm")]);
+      else if (n.kind === "conv") mine.push(["set the convolution …",
+                                             () => bxForm(n.kind, null, n, "resize")]);
       else if (n.kind === "script") mine.push(["edit the script …", () => bxForm(n.kind, null, n, "script")]);
       else if (n.kind === "tokenize" || n.kind === "detokenize")
         mine.push(["set the tokenizer …", () => bxForm(n.kind, null, n, "token")]);
@@ -10235,6 +10377,17 @@ function bxForm(kind, ev, node, mode) {
     ta._box = box;
     return ta;
   };
+  const opAttrFields = (n0) => {             // the fields an op's maths reads:
+    const at = (k) => (n0 && n0[k] != null ? n0[k] : "");   // shown by the op
+    f.factor = numField("factor", at("factor"));
+    f.repeats = numField("repeats", at("repeats"));
+    f.dim = numField("dim", at("dim"));
+    f.axes = textField("axes", at("axes"), "0 2 1 3 4");
+    f.maskMode = textField("mode", at("mode"), "causal | nearest | bilinear");
+    f.window = numField("window", at("window"));
+    f.theta = numField("theta", at("theta"));
+    f.width = numField("width", at("width") || 64);
+  };
   const vocabField = (value) => {              // the chars a tokenizer maps to ids
     const lab = mk("label", { text: "vocab" });
     const inp = mk("input", { type: "text", placeholder: "abcdefghijklmnopqrstuvwxyz ",
@@ -10309,6 +10462,7 @@ function bxForm(kind, ev, node, mode) {
   } else if (mode === "operation") {
     f.op = opField(node ? node.op : BX_OPS[0]);
     f.dims = dimsField(node ? node.dims || "" : "");
+    opAttrFields(node);
     f.axis = numField("axis", node && node.axis != null ? node.axis : 0);
     f.index = numField("index", node && node.index != null ? node.index : null);
     f.start = numField("start", node && node.start != null ? node.start : null);
@@ -10339,6 +10493,7 @@ function bxForm(kind, ev, node, mode) {
     f.name = nameField(bxDefaultName(kind));
     f.op = opField(BX_OPS[0]);
     f.dims = dimsField("");
+    opAttrFields(null);
   } else if (kind === "hf" && (mode === "add" || mode === "hf")) {
     if (mode === "add") f.name = nameField(bxDefaultName(kind));
     f.repo = hfField(node ? node.repo || "" : "");
@@ -10353,6 +10508,14 @@ function bxForm(kind, ev, node, mode) {
     }
   } else if (mode === "add" && kind === "custom") {
     f.name = nameField(bxDefaultName(kind));
+  } else if ((mode === "add" || mode === "resize") && kind === "conv") {
+    if (mode === "add") f.name = nameField(bxDefaultName(kind));
+    f.a = numField("in", node ? node.din : null);
+    f.b = numField("out", node ? node.dout : null);
+    f.k = numField("kernel", node && node.k != null ? node.k : 3);
+    f.st = numField("stride", node && node.stride != null ? node.stride : 1);
+    f.pd = numField("pad", node && node.pad != null ? node.pad : "");
+    f.g = numField("groups", node && node.groups != null ? node.groups : 1);
   } else if (mode === "add" && kind === "layer") {
     f.name = nameField(bxDefaultName(kind));
     f.a = numField("in", null);
@@ -10425,9 +10588,21 @@ function bxForm(kind, ev, node, mode) {
     const slice = [f.axis, f.index, f.start, f.stop]
       .map(x => x && x.parentNode).filter(Boolean);
     if (f.sliceHint) slice.push(f.sliceHint);
+    const attr = (fld, ops) => {
+      const l = fld && fld.parentNode;
+      if (l) l.hidden = ops.indexOf(f.op.value) < 0;
+    };
     const sync = () => {
       if (lab) lab.hidden = f.op.value !== "reshape";
       for (const l of slice) l.hidden = f.op.value !== "slice";
+      attr(f.factor, ["scale", "upsample"]);
+      attr(f.repeats, ["repeat"]);
+      attr(f.dim, ["repeat"]);
+      attr(f.axes, ["permute"]);
+      attr(f.maskMode, ["mask", "upsample"]);
+      attr(f.window, ["mask"]);
+      attr(f.theta, ["rope"]);
+      attr(f.width, ["timestep"]);
     };
     f.op.addEventListener("change", () => { sync(); bxMenuPlace(); });
     sync();
@@ -10448,6 +10623,23 @@ function bxForm(kind, ev, node, mode) {
     if (f.name) v.name = f.name.value;
     if (f.fn) v.act = f.fn.value;
     if (f.op) v.op = f.op.value;
+    if (f.op) {                                // the fields an op's maths reads
+      const o = f.op.value;
+      if (o === "scale" || o === "upsample") { if (f.factor) v.factor = f.factor.value; }
+      if (o === "upsample" || o === "mask") { if (f.maskMode) v.op_mode = f.maskMode.value; }
+      if (o === "timestep") { if (f.width) v.width = f.width.value; }
+      if (o === "repeat") {
+        if (f.repeats) v.repeats = f.repeats.value;
+        if (f.dim) v.dim = f.dim.value;
+      }
+      if (o === "permute") { if (f.axes) v.axes = f.axes.value; }
+      if (o === "mask") { if (f.window) v.window = f.window.value; }
+      if (o === "rope") { if (f.theta) v.theta = f.theta.value; }
+    }
+    if (f.k && kind === "conv") {              // the kernel's own numbers
+      v.k = f.k.value; v.stride = f.st.value; v.pad = f.pd.value;
+      v.groups = f.g.value;
+    }
     if (f.dims && f.op && f.op.value === "reshape") v.dims = f.dims.value;
     if (f.op && f.op.value === "slice") {      // read once, for the slice alone
       for (const [k, fld] of [["axis", f.axis], ["index", f.index],
@@ -10516,7 +10708,8 @@ function bxForm(kind, ev, node, mode) {
   const row = mk("div", { class: "row" });
   const cancel = mk("span", { class: "chip tiny", text: "cancel" });
   cancel.addEventListener("click", bxMenuClose);
-  if (mode === "add" && (kind === "layer" || kind === "embed" || kind === "norm")) {
+  if (mode === "add" && (kind === "layer" || kind === "embed" || kind === "norm" ||
+                         kind === "conv")) {
     const w = mk("span", { class: "chip tiny", text: "load weights \u2026" });
     w.addEventListener("click", () => {          // add the block, then point it at a file
       const v = read();
@@ -10546,7 +10739,8 @@ let bxpOpen = null;                            // the expanded category, if any
 function bxPreview(kind) {
   const isTpl = !!BX_TEMPLATES[kind];
   const fake = { id: "pal-" + kind, kind: isTpl ? "custom" : kind, x: 0, y: 0,
-                 name: (kind === "model" ? "model "
+                 name: (kind === "vit" ? "vision transformer "
+                        : kind === "model" ? "model "
                         : kind === "embed" ? "embedding " : kind === "layer" ? "fully connected "
                         : kind === "act" ? "activation "
                         : kind === "op" ? "operation " : kind === "norm" ? "norm "
@@ -10584,11 +10778,12 @@ function bxPreview(kind) {
 const BX_PALETTE = () => [
   ["Model", [["model", "model box"]]],                 // the architecture's box
   ["Layers", [["embed", "embedding box"],              // what goes inside it
-              ["layer", "fully connected box"], ["norm", "norm box"],
+              ["layer", "fully connected box"], ["conv", "convolution box"],
+              ["norm", "norm box"],
               ["act", "activation box"], ["op", "operation box"],
               ["script", "script box"], ["sample", "sample box"]]],
   ["Blocks", [["attn", "attention box"], ["ssm", "state space box"],
-              ["moe", "mixture of experts box"]]],
+              ["moe", "mixture of experts box"], ["vit", "vision transformer box"]]],
   ["Text", [["tokenize", "tokenizer box"], ["detokenize", "de-tokenizer box"]]],
   ["Data", [["dataset", "dataset box"], ["select", "select col box"]]],
   ["Training", [["config", "train config box"], ["loss", "loss box"],

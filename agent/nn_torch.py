@@ -949,6 +949,24 @@ class Box(nn.Module):
             else:
                 self.w = nn.Parameter(_rand((int(vocab), int(dout)), dtype, gen),
                                       requires_grad=grad)
+        elif self.kind == "conv":
+            din, dout = node.get("din"), node.get("dout")
+            if din is None or dout is None:
+                raise CanvasError(self.name, "needs both an in and an out size")
+            kk = conv_kernel(node)
+            g = conv_groups(node)
+            bound = loader(node) if loader else None
+            if bound is not None:
+                self.w = bound["weight"]          # shared; its shape was checked
+                if bound.get("bias") is not None:
+                    self.bias = bound["bias"]
+            else:
+                fan = max(1, kk * kk * (int(din) // g))
+                k0 = 1.0 / math.sqrt(fan)
+                self.w = nn.Parameter(
+                    _rand((int(dout), max(1, int(din) // g), kk, kk), dtype, gen,
+                          uniform=(-math.sqrt(3) * k0, math.sqrt(3) * k0)),
+                    requires_grad=grad)
         elif self.kind == "norm":
             bound = loader(node) if loader else None
             if bound is not None:
@@ -1065,6 +1083,21 @@ class Box(nn.Module):
             if len(xs) < 2:
                 raise CanvasError(self.name, "wants the logits and the picked ids")
             out = _gather_logprobs(xs[0], xs[1])
+        elif k == "conv":
+            if not xs:
+                raise CanvasError(self.name, "an input dot is not wired")
+            x = xs[0].float()
+            img = x.dim() == 3                    # [H, W, C] is an image; else
+            if img:                               # [B, C, H, W] is a feature map
+                x = x.permute(2, 0, 1).unsqueeze(0)
+            kk = conv_kernel(self.node)
+            pad = self.node.get("pad")
+            y = F.conv2d(x, self.w.float(),
+                         self.bias.float() if self.bias is not None else None,
+                         stride=conv_stride(self.node),
+                         padding=int(pad) if pad is not None else kk // 2,
+                         groups=conv_groups(self.node))
+            out = y[0].permute(1, 2, 0) if img else y
         elif k == "norm":
             if not xs:
                 raise CanvasError(self.name, "an input dot is not wired")
@@ -1327,6 +1360,29 @@ def _gated_delta_rule(box, xs):
     return out.squeeze(0) if batchless else out
 
 
+def conv_kernel(node):
+    """A convolution's kernel side: 3 by default, never below 1."""
+    try:
+        k = int(node.get("k") or 3)
+    except (TypeError, ValueError):
+        k = 3
+    return max(1, k)
+
+
+def conv_stride(node):
+    try:
+        return max(1, int(node.get("stride") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def conv_groups(node):
+    try:
+        return max(1, int(node.get("groups") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 def _operate(box, xs):
     op = box.node.get("op") or "transpose"
     a = xs[0] if xs else None
@@ -1432,6 +1488,44 @@ def _operate(box, xs):
         out = torch.zeros_like(a.float())
         out.scatter_(-1, idx, vals)
         return out.to(a.dtype)
+    if op == "mean":
+        # a readout: the mean over a dim (the sequence axis by default), so a
+        # whole patch row collapses to one vector before the head
+        dim = int(box.node.get("dim") if box.node.get("dim") is not None else -2)
+        if a.dim() < 2:
+            return a
+        return a.float().mean(dim=dim)
+    if op == "upsample":
+        # a picture or a map gets bigger: [H, W, C] (an image) and [H, W] come
+        # back in their own layout; [B, C, H, W] stays a feature batch
+        f = max(1, int(box.node.get("factor") or 2))
+        mode = str(box.node.get("mode") or "nearest")
+        if mode not in ("nearest", "bilinear", "bicubic"):
+            mode = "nearest"
+        x = a.float()
+        if x.dim() == 2:                        # [H, W] -> [1, 1, H, W]
+            return F.interpolate(x[None, None], scale_factor=f, mode=mode)[0, 0]
+        if x.dim() == 3:                        # [H, W, C] -> [1, C, H, W]
+            y = F.interpolate(x.permute(2, 0, 1)[None], scale_factor=f, mode=mode)
+            return y[0].permute(1, 2, 0)
+        if x.dim() != 4:
+            raise CanvasError(box.name, "upsample wants an image or a feature map")
+        return F.interpolate(x, scale_factor=f, mode=mode)
+    if op == "timestep":
+        # a step number -> its sinusoidal embedding: a scalar makes a vector,
+        # a batch makes rows — width halves to sin, halves to cos
+        w = max(2, int(box.node.get("width") or 64))
+        if w % 2:
+            w += 1
+        scalar = a.dim() == 0 or a.numel() == 1
+        t = a.float().reshape(-1) if not scalar else a.float().reshape(1)
+        half = w // 2
+        freqs = torch.exp(-math.log(10000.0)
+                           * torch.arange(half, device=t.device, dtype=torch.float32)
+                           / max(1, half))
+        ang = t[:, None] * freqs[None, :]
+        out = torch.cat([torch.sin(ang), torch.cos(ang)], dim=-1)
+        return out[0] if scalar else out
     if op == "conv1d":
         return _causal_conv1d(box, a)
     if op == "scan":
@@ -1762,6 +1856,15 @@ class Graph(nn.Module):
                         weight = store.param(path, tensor,
                                              shape=(int(dout), int(din)), dtype=dtype,
                                              requires_grad=grad, device=want)
+                elif kind == "conv":
+                    g = conv_groups(node)
+                    weight = store.param(path, tensor,
+                                         shape=(int(node.get("dout")),
+                                                max(1, int(node.get("din")) // g),
+                                                conv_kernel(node),
+                                                conv_kernel(node)),
+                                         dtype=dtype, requires_grad=grad,
+                                         device=want)
                 elif kind == "embed":
                     weight = store.param(path, tensor,
                                          shape=(int(node.get("vocab")),
@@ -1813,25 +1916,53 @@ class Graph(nn.Module):
                 and port >= 1)
 
     def _incoming_sizes(self, nodes, edges):
+        """The size of the value arriving at each node: a source's own out size,
+        else what flows through the box — an operation or activation passes its
+        wire's size along, a reshape sends its product. A norm reads this to
+        take the size that lands on it."""
         by_id = {n["id"]: n for n in nodes}
-        out = {}
-
-        def size_of(n):
-            k = n.get("kind")
-            if k in ("input", "layer", "embed"):
-                return n.get("dout")
-            if k == "output":
-                return n.get("din")
-            if k == "norm":
-                return n.get("din")
-            return None
-
+        feeds = {}
         for e in edges:
-            src = by_id.get(e["from"])
-            if src is not None:
-                s = size_of(src)
-                if s is not None:
-                    out[e["to"]] = s
+            feeds.setdefault(e["to"], []).append(e["from"])
+        memo = {}
+
+        def out_size(nid, seen):
+            if nid in memo:
+                return memo[nid]
+            if nid in seen:
+                return None                      # a loop: nothing to say
+            n = by_id.get(nid) or {}
+            k = n.get("kind")
+            s = None
+            if k in ("input", "layer", "embed"):
+                s = n.get("dout")
+            elif k == "output":
+                s = n.get("din")
+            elif k == "norm":
+                s = n.get("din") if n.get("din") is not None else n.get("size")
+            elif k == "op" and n.get("op") == "reshape" and n.get("dims"):
+                dims = parse_dims(n.get("dims"))
+                s = 1
+                for x in dims:
+                    if x is None or x < 0:       # an inferred dim: unknown
+                        s = None
+                        break
+                    s *= x
+            if s is None and k in ("op", "act", "script"):
+                for src in feeds.get(nid, []):
+                    s = out_size(src, seen | {nid})
+                    if s is not None:
+                        break
+                if s is None:
+                    s = n.get("din")
+            memo[nid] = s
+            return s
+
+        out = {}
+        for e in edges:
+            s = out_size(e["from"], set())
+            if s is not None:
+                out[e["to"]] = s
         return out
 
     def _topo(self, nodes):

@@ -229,7 +229,7 @@ globalThis.__t = {
   bxRowsParse, bxRowsText, bxRowsFormat, bxDatasetFill, bxDatasetExpand, bxTrainFill, bxTrainHub,
   bxSelectFill, bxConfigFill, bxTrainWired, bxInputLink, bxMatrixTell, bxTrainSummary,
   bxTrainAddConfig, bxTrainWireConfig, bxBoundary, bxModelFill, bxWeightsBox, bxWrapModel,
-  bxHasPane,
+  bxHasPane, bxParamsOf,
   bxRunFeeds, bxInputFill, bxInputExpand, bxOutputFill, bxOutputExpand, bxPaneFill,
   bxHotSet, bxHotMove, bxTipHide, bxRunSet, bxRunCanvas, bxFeedsItself,
   bxCsvParse, bxCsvWrite, bxIsBlob, bxBlobIsVideo, bxColLetter, bxDtypeInfer,
@@ -420,8 +420,9 @@ check("the right-click menus: three add items, or remove", () => {
     "Model drops down into its box");
   eql(heads()[0].querySelectorAll(".chev")[0].textContent, "\u25be", "…and wears the open chevron");
   heads().find(c => c.textContent === "Layers").click();
-  eql(openItems(), ["embedding box", "fully connected box", "norm box",
-                    "activation box", "operation box", "script box", "sample box"],
+  eql(openItems(), ["embedding box", "fully connected box", "convolution box",
+                    "norm box", "activation box", "operation box", "script box",
+                    "sample box"],
     "Layers replaces Model — one category at a time, weights and math together");
   heads().find(c => c.textContent === "the design").click();
   eql(openItems(),
@@ -458,6 +459,110 @@ check("the right-click menus: three add items, or remove", () => {
   ok(/^fully connected \d+$/.test(tmp.name), "a new one is named like: " + tmp.name);
   __t.bxRemove(tmp.id);
   __t.bxMenuClose();
+});
+
+check("the convolution box: a trainable kernel, from the Layers shelf", () => {
+  const before = __t.BX.nodes.length;
+  ok(__t.bxAddKind("conv", 0, 0, {}) === null, "a conv is refused at the top level");
+  eql(__t.BX.nodes.length, before, "\u2026and nothing lands \u2014 weights live in a model");
+  const m = __t.bxAddTemplate("model", 0, 0, "net");
+  __t.bxEnter(m.id);
+  const c = __t.bxAddKind("conv", 200, 0, { din: 3, dout: 8, k: 3, stride: 2 });
+  ok(!!c && c.kind === "conv", "inside a model it lands");
+  eql(c.name, "convolution 1", "\u2026named convolution 1");
+  eql([c.din, c.dout, c.k, c.stride], [3, 8, 3, 2], "\u2026with its channels and kernel");
+  eql(__t.bxShape(c), "3 \u2192 8 \u00b7 k3s2", "the card reads it back: " + __t.bxShape(c));
+  eql([__t.bxPortDefs(c, "in")[0].size, __t.bxPortDefs(c, "out")[0].size], [3, 8],
+      "\u2026and its dots size by the channels");
+  ok(__t.bxWeightsBox(c), "it is a weights box");
+  eql(__t.bxParamsOf(c), 3 * 8 * 9, "\u2026with kernel and all: " + __t.bxParamsOf(c));
+  // the form edits the kernel's own numbers
+  __t.bxForm("conv", null, c, "resize");
+  const wrap = getEl("bxmenu").children[0];
+  const fieldOf = (label) => wrap.children.find(l => l.textContent === label);
+  ok(fieldOf("kernel") && fieldOf("stride") && fieldOf("groups"),
+     "the form asks for the kernel, the stride and the groups");
+  fieldOf("kernel").children[0].value = "5";
+  fieldOf("stride").children[0].value = "1";
+  wrap.querySelectorAll(".chip").find(b => b.textContent === "save").click();
+  eql([c.k, c.stride], [5, 1], "\u2026and saving lands them");
+  eql(__t.bxParamsOf(c), 3 * 8 * 25, "the params follow the kernel: " + __t.bxParamsOf(c));
+  // the design carries it
+  const back = __t.bxJSONNodeFrom(__t.bxJSONNode(c));
+  eql([back.kind, back.din, back.dout, back.k, back.stride], ["conv", 3, 8, 5, 1],
+      "\u2026and the design's JSON");
+  __t.bxLeave();
+  __t.bxRemove(m.id);
+});
+
+check("the op's own fields: upsample and timestep are editable", () => {
+  const u = __t.bxAdd("op", 0, 0, {});
+  __t.bxForm("op", null, u, "operation");
+  const wrap = getEl("bxmenu").children[0];
+  const sel = wrap.querySelectorAll(".bxsel")[0];
+  const fieldOf = (label) => wrap.children.find(l => l.textContent === label);
+  sel.value = "upsample";
+  sel.dispatchEvent({ type: "change" });
+  ok(fieldOf("factor") && !fieldOf("factor").hidden, "an upsample asks its factor");
+  ok(fieldOf("mode") && !fieldOf("mode").hidden, "\u2026and its mode");
+  ok(fieldOf("width").hidden, "\u2026and not the timestep's width");
+  fieldOf("factor").children[0].value = "4";
+  fieldOf("mode").children[0].value = "bilinear";
+  wrap.querySelectorAll(".chip").find(b => b.textContent === "save").click();
+  eql([u.op, u.factor, u.mode], ["upsample", 4, "bilinear"],
+      "the values land on the node");
+  eql(__t.bxShape(u), "\u00d7 4 bilinear", "\u2026and the card says so: " + __t.bxShape(u));
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(u)).factor, 4, "\u2026and the design's JSON");
+  // the timestep wants its width instead
+  __t.bxForm("op", null, u, "operation");
+  const wrap2 = getEl("bxmenu").children[0];
+  const sel2 = wrap2.querySelectorAll(".bxsel")[0];
+  sel2.value = "timestep";
+  sel2.dispatchEvent({ type: "change" });
+  const wlab = wrap2.children.find(l => l.textContent === "width");
+  ok(wlab && !wlab.hidden, "a timestep asks its width");
+  wlab.children[0].value = "32";
+  wrap2.querySelectorAll(".chip").find(b => b.textContent === "save").click();
+  eql([u.op, u.width], ["timestep", 32], "\u2026and it lands");
+  eql(__t.bxShape(u), "d 32", "\u2026on the card: " + __t.bxShape(u));
+  eql(__t.bxJSONNodeFrom(__t.bxJSONNode(u)).width, 32, "\u2026and in the design");
+  __t.bxRemove(u.id);
+});
+
+check("the vision transformer: a whole trainable ViT from one card", () => {
+  const keep = __t.BX.nodes.length;
+  const vit = __t.bxAddTemplate("vit", 0, 0, "vit");
+  ok(!!vit && vit.kind === "custom" && vit.model === true, "a model box lands");
+  eql([__t.bxPortDefs(vit, "in").length, __t.bxPortDefs(vit, "out").length], [1, 1],
+      "one image in, one class out");
+  const kinds = vit.inner.nodes.map(n => n.kind);
+  for (const k of ["input", "output", "op", "layer", "norm", "act"]) {
+    ok(kinds.indexOf(k) >= 0, "\u2026out of the atomic boxes: " + kinds.join(","));
+  }
+  const named = (name) => vit.inner.nodes.filter(n => n.name === name)[0];
+  ok(/patch embed/.test(vit.inner.nodes.map(n => n.name).join(","))
+     && /q proj 1/.test(vit.inner.nodes.map(n => n.name).join(","))
+     && /softmax 2/.test(vit.inner.nodes.map(n => n.name).join(","))
+     && /mlp up 1/.test(vit.inner.nodes.map(n => n.name).join(","))
+     && named("head"), "\u2026patch embed, two attention+mlp blocks, a head");
+  eql(__t.bxOpName(named("cut the grid")), "reshape", "the grid is cut with a reshape");
+  eql(named("cut the grid").dims, "4x8x4x8x3", "\u2026into patch rows and columns");
+  eql([__t.bxOpName(named("patches")), named("patches").axes], ["permute", "0 2 1 3 4"],
+      "\u2026gathered in patch order");
+  eql(named("flatten").dims, "16x192", "\u2026and flattened: 16 patches of 192");
+  eql(named("patch embed").din, 192, "\u2026into the patch embedding");
+  eql([__t.bxOpName(named("mean pool")), named("mean pool").dim], ["mean", -2],
+      "\u2026and the patch row pools before the head");
+  ok(String(__t.bxShape(vit)).indexOf("model") === 0,
+     "the card calls it a model: " + __t.bxShape(vit));
+  ok(__t.bxParamsOf(vit) > 20000, "\u2026with its weights counted: " + __t.bxParamsOf(vit));
+  // it is a model a config can train
+  const cfg = __t.bxAdd("config", 600, 0, {});
+  ok(__t.bxConfigure(cfg.id, { model: vit.id }), "a train config can name it");
+  eql(cfg.model, vit.id, "\u2026and does");
+  __t.bxRemove(cfg.id);
+  __t.bxRemove(vit.id);
+  eql(__t.BX.nodes.length, keep, "the canvas is left as it was found");
 });
 
 check("the two signals land from the shelf: a loss box and a reward box", () => {
@@ -931,12 +1036,13 @@ check("the Palette menu: Input and Output up top, categories below", () => {
   menu.children.find(c => c.textContent === "Layers").click();
   const cards = menu.querySelectorAll(".bxpalitem");
   eql(cards.map(i => i.getAttribute("data-kind")),
-    ["input", "output", "embed", "layer", "norm", "act", "op", "script", "sample"],
+    ["input", "output", "embed", "layer", "conv", "norm", "act", "op", "script",
+     "sample"],
     "Layers expands below the two cards");
   ok(cards.slice(2).every(i => i.children[0] && i.children[0]._attrs &&
                               i.children[0]._attrs.viewBox),
     "…each drawn by the same card renderer");
-  ok(cards.slice(2, 5).every(i => String(i.className).split(/\s+/).includes("off")),
+  ok(cards.slice(2, 6).every(i => String(i.className).split(/\s+/).includes("off")),
     "…and the table-carrying ones are locked at the top level");
   // Text holds the tokenizer pair — the hf model comes in through Import
   menu.children.find(c => c.textContent === "Text").click();
@@ -2799,7 +2905,7 @@ check("a nested box takes nested JSON and never a canvas", () => {
   nheads().find(x => x.textContent === "Model").click();
   eql(nopen(), ["model box"], "Model is there too — a model nests in a model");
   nheads().find(x => x.textContent === "Layers").click();
-  eql(nopen().length, 7, "…and Layers hands out the same seven cards, any depth");
+  eql(nopen().length, 8, "…and Layers hands out the same eight cards, any depth");
   nheads().find(x => x.textContent === "the design").click();
   eql(nopen(), ["import a nested box …"],
     "the design has no canvas to save or load here");
@@ -3082,7 +3188,8 @@ check("the atomic boxes: norm stays a kind, the op atoms are all there", () => {
                          "load external weights …"], "…then its weights");
   __t.bxMenuClose();
   // the operation atoms a model needs
-  for (const op of ["matmul", "concat", "rope", "scale", "topk", "conv1d", "scan"]) {
+  for (const op of ["matmul", "concat", "rope", "scale", "topk", "conv1d", "scan",
+                    "upsample", "timestep", "mean"]) {
     ok(__t.BX_OPS.indexOf(op) >= 0, "the operation list has `" + op + "`");
   }
   const cc = __t.bxAdd("op", 0, 620, {});

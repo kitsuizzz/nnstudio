@@ -1884,6 +1884,152 @@ check("the training wires live on the input: the config, and ONE data dot",
       training_wires_on_the_input)
 
 
+def vision_primitives():
+    # a conv box: an image in ([H, W, C]) keeps its layout; a feature batch
+    # ([B, C, H, W]) stays channels-first — and the maths is torch's conv2d
+    import torch.nn.functional as Fn
+    c = canvas([
+        n("input", "img", dout=None),
+        n("conv", "c1", din=3, dout=8, k=3, stride=1),
+        n("output", "out", din=8),
+    ], [edge("img", "c1"), edge("c1", "out")])
+    g = T.compile_canvas(c)
+    assert g.boxes["c1"].w.requires_grad is False, "inference: no grads asked"
+    w = g.boxes["c1"].w.detach().clone()
+    assert list(w.shape) == [8, 3, 3, 3], list(w.shape)
+    px = torch.rand(6, 6, 3)                      # one image, channels last
+    y = g(feeds={"img": px})["c1"]
+    assert list(y.shape) == [6, 6, 8], list(y.shape)
+    want = Fn.conv2d(px.permute(2, 0, 1)[None], w, None, stride=1, padding=1)
+    assert torch.allclose(y.permute(2, 0, 1)[None], want, atol=1e-5), "the conv maths"
+    batch = torch.rand(2, 3, 6, 6)                # a feature batch
+    yb = g(feeds={"img": batch})["c1"]
+    assert list(yb.shape) == [2, 8, 6, 6], list(yb.shape)
+    assert torch.allclose(yb, Fn.conv2d(batch, w, None, stride=1, padding=1),
+                          atol=1e-5)
+    # stride and groups land too
+    c2 = canvas([
+        n("input", "img", dout=None),
+        n("conv", "c1", din=4, dout=4, k=2, stride=2, pad=0, groups=2),
+    ], [edge("img", "c1")])
+    g2 = T.compile_canvas(c2)
+    w2 = g2.boxes["c1"].w.detach().clone()
+    assert list(w2.shape) == [4, 2, 2, 2], list(w2.shape)
+    x2 = torch.rand(1, 4, 8, 8)
+    y2 = g2(feeds={"img": x2})["c1"]
+    assert list(y2.shape) == [1, 4, 4, 4], list(y2.shape)
+    assert torch.allclose(y2, Fn.conv2d(x2, w2, None, stride=2, padding=0, groups=2),
+                          atol=1e-5)
+    # a conv in a training graph asks for grads
+    gt = T.compile_canvas(c, train=True)
+    assert gt.boxes["c1"].w.requires_grad is True
+    # upsample: an image grows in place, a batch stays a batch
+    u = canvas([
+        n("input", "img", dout=None),
+        n("op", "up", op="upsample", factor=2, mode="nearest"),
+    ], [edge("img", "up")])
+    gu = T.compile_canvas(u)
+    px2 = torch.rand(4, 4, 3)
+    yu = gu(feeds={"img": px2})["up"]
+    assert list(yu.shape) == [8, 8, 3], list(yu.shape)
+    assert torch.allclose(yu[0, 0], px2[0, 0]) and torch.allclose(yu[7, 5], px2[3, 2])
+    ub = canvas([
+        n("input", "f", dout=None),
+        n("op", "up", op="upsample", factor=3, mode="bilinear"),
+    ], [edge("f", "up")])
+    yb2 = T.compile_canvas(ub)(feeds={"f": torch.rand(1, 2, 5, 5)})["up"]
+    assert list(yb2.shape) == [1, 2, 15, 15], list(yb2.shape)
+    yg = T.compile_canvas(ub)(feeds={"f": torch.rand(5, 5)})["up"]   # a lone map
+    assert list(yg.shape) == [15, 15], list(yg.shape)
+    # timestep: t -> sin/cos, a scalar makes a vector, a batch rows
+    tm = canvas([
+        n("input", "t", dout=None),
+        n("op", "emb", op="timestep", width=8),
+    ], [edge("t", "emb")])
+    gtm = T.compile_canvas(tm)
+    v0 = gtm(feeds={"t": torch.tensor(0.0)})["emb"]
+    assert list(v0.shape) == [8], list(v0.shape)
+    assert torch.allclose(v0[:4], torch.zeros(4), atol=1e-6), "sin(0) = 0"
+    assert torch.allclose(v0[4:], torch.ones(4), atol=1e-6), "cos(0) = 1"
+    vb = gtm(feeds={"t": torch.tensor([0.0, 5.0])})["emb"]
+    assert list(vb.shape) == [2, 8], list(vb.shape)
+    assert not torch.allclose(vb[0], vb[1]), "a step apart reads apart"
+
+
+check("vision primitives: conv2d, upsample, the timestep embedding",
+      vision_primitives)
+
+
+def a_vision_transformer_runs():
+    # the shape the template builds: patchify (reshape/permute), a patch embed,
+    # attention+mlp blocks, a head — an image in, class scores out, and the
+    # whole thing differentiable end to end
+    side, pt, d, mlp, classes = 8, 4, 16, 32, 3
+    rows = side // pt
+    n_pt = rows * rows
+    px = pt * pt * 3
+    nodes = [n("input", "pixels", dout=side * side * 3),
+             n("op", "cut", op="reshape", dims="%dx%dx%dx%dx3" % (rows, pt, rows, pt)),
+             n("op", "patches", op="permute", axes="0 2 1 3 4"),
+             n("op", "flat", op="reshape", dims="%dx%d" % (n_pt, px)),
+             n("layer", "patch", din=px, dout=d)]
+    edges = [edge("pixels", "cut"), edge("cut", "patches"), edge("patches", "flat"),
+             edge("flat", "patch")]
+    blobs = []
+    for b in (1, 2):
+        pre = "b%d" % b
+        blobs += [
+            n("norm", pre + "n1", norm="rms", eps=1e-6),
+            n("layer", pre + "q", din=d, dout=d), n("layer", pre + "k", din=d, dout=d),
+            n("layer", pre + "v", din=d, dout=d),
+            n("op", pre + "kt", op="transpose"),
+            n("op", pre + "sc", op="matmul"), n("act", pre + "sm", act="softmax"),
+            n("op", pre + "sv", op="matmul"), n("layer", pre + "op", din=d, dout=d),
+            n("op", pre + "res", op="add"),
+            n("norm", pre + "n2", norm="rms", eps=1e-6),
+            n("layer", pre + "up", din=d, dout=mlp), n("act", pre + "ga", act="gelu"),
+            n("layer", pre + "dn", din=mlp, dout=d),
+            n("op", pre + "res2", op="add"),
+        ]
+        nodes += blobs
+        blobs = []
+        frm = "patch" if b == 1 else "b1res2"
+        edges += [
+            edge(frm, pre + "n1"),
+            edge(pre + "n1", pre + "q"), edge(pre + "n1", pre + "k"),
+            edge(pre + "n1", pre + "v"),
+            edge(pre + "k", pre + "kt"),
+            edge(pre + "q", pre + "sc", 0, 0), edge(pre + "kt", pre + "sc", 0, 1),
+            edge(pre + "sc", pre + "sm"), edge(pre + "sm", pre + "sv", 0, 0),
+            edge(pre + "v", pre + "sv", 0, 1),
+            edge(pre + "sv", pre + "op"), edge(pre + "op", pre + "res", 0, 0),
+            edge(frm, pre + "res", 0, 1),
+            edge(pre + "res", pre + "n2"), edge(pre + "n2", pre + "up"),
+            edge(pre + "up", pre + "ga"), edge(pre + "ga", pre + "dn"),
+            edge(pre + "dn", pre + "res2", 0, 0), edge(pre + "res", pre + "res2", 0, 1),
+        ]
+    nodes += [n("op", "pool", op="mean", dim=-2),
+              n("norm", "headn", norm="rms", eps=1e-6),
+              n("layer", "head", din=d, dout=classes),
+              n("output", "classes", din=classes)]
+    edges += [edge("b2res2", "pool"), edge("pool", "headn"),
+              edge("headn", "head"), edge("head", "classes")]
+    c = canvas(nodes, edges)
+    g = T.compile_canvas(c, train=True)
+    px_img = torch.rand(side, side, 3)
+    out = g(feeds={"pixels": px_img})["classes"]
+    assert list(out.shape) == [classes], list(out.shape)
+    assert torch.isfinite(out).all()
+    loss = torch.nn.functional.cross_entropy(out[None], torch.tensor([1]))
+    loss.backward()
+    grads = [p for _, p in g.named_parameters() if p.requires_grad and p.grad is not None]
+    assert len(grads) > 10, "the gradient reaches every layer: %d" % len(grads)
+
+
+check("a vision transformer runs: patches in, class scores out, all differentiable",
+      a_vision_transformer_runs)
+
+
 def a_model_trains_through_its_node():
     # the new shape: a nested model node holds the architecture; the train
     # config names it, the data wires into the config, and the batch enters the

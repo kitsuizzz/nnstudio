@@ -588,6 +588,27 @@
 
   <div class="boxref">
     <div>
+      <div class="bname">conv</div>
+      <div class="bwires">1 in · 1 out</div>
+    </div>
+    <div class="bdet">
+      <p>A <b>2-D convolution</b>: the weight is a small kernel the picture is
+      swept with, so the same detector sees every place at once — the building
+      block of ViTs (as patch embedding), VAEs and UNets. An <b>image</b> in
+      (<code>[H × W × C]</code>) comes back the same way; a
+      <b>feature batch</b> (<code>[B × C × H × W]</code>) stays
+      channels-first. Weights are trainable, or bound from a file like any
+      other box's.</p>
+      <p class="bfields"><b>Fields:</b> <code>din</code>/<code>dout</code>
+      (channels), <code>k</code> (the kernel's side, 3 by default),
+      <code>stride</code>, <code>pad</code> (half the kernel when unset —
+      “same”), <code>groups</code>; the weight binding <code>t</code>
+      and <code>dtype</code>.</p>
+    </div>
+  </div>
+
+  <div class="boxref">
+    <div>
       <div class="bname">act</div>
       <div class="bwires">1 in · 1 out</div>
     </div>
@@ -696,7 +717,12 @@
       it is where trainable weights live; there is no palette card for a plain
       nested box — the model box nests inside itself just as well. The kind
       stays for the <b>Blocks</b> templates and for the designs that predate
-      models.</p>
+      models — including the <b>vision transformer</b> (Blocks): one card
+      lands a whole trainable ViT — the image is cut into patches
+      (<code>reshape</code> + <code>permute</code>), embedded, run through
+      attention + MLP blocks with residuals, pooled (<code>mean</code>) and read
+      out by a head. It is a model: give it a train config and class labels and
+      it trains.</p>
       <p class="bfields"><b>Fields:</b> its <code>inner</code> network; where its
       weights read from (<code>file</code>, <code>t</code>), and the source
       <code>repo</code> when it came from a huggingface canvas. A whole model
