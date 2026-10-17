@@ -4,20 +4,67 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>nnstudio — a dedicated app for training a neural network</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Fragment+Mono:ital@0;1&display=swap" rel="stylesheet">
 <style>
+  /* ============================================================
+     v2 · the Salon tokens (chat.kitsui's design language).
+     Dark is the canvas's home; html[data-theme="light"] flips the
+     whole page. Everything below reads these values.
+     ============================================================ */
   :root {
-    --bg: #141414;                          /* neutral dark grey */
-    --panel: rgba(255,255,255,.05);
-    --panel-brd: rgba(255,255,255,.12);
-    --ink: #f2f2f2;                         /* white */
-    --ink-dim: #a3a3a3;                     /* grey */
-    --ink-faint: #8a8a8a;
-    --accent: #f97316;                      /* orange */
-    --accent2: #e5e5e5;                     /* white-grey for data ink */
-    --warm: #fbbf24;                        /* amber, warnings only */
-    --blue: #e5e5e5;
-    --err: #f87171;
-    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --s-wall: #1a1a19;                      /* the wall */
+    --s-wall2: #222221;                     /* a raised surface */
+    --s-wall3: #2a2a29;                     /* wells, bars */
+    --s-text: #ebebe7;                      /* ink */
+    --s-label: #b0b0ab;                     /* a label */
+    --s-label2: #7a7a76;                    /* a quiet label */
+    --s-label3: #55554f;                    /* the faintest */
+    --s-hair: #2c2c2a;                      /* hairlines */
+    --s-hair2: #3a3a38;                     /* a visible edge */
+    --s-dot: #ff5a45;                       /* the one accent — state, never decoration */
+    --s-dot-soft: rgba(255,90,69,.22);
+    --s-danger: #ff7a66;
+    --s-ok: #8fc07f;
+    --s-grid: rgba(255,255,255,.045);       /* the canvas's lattice */
+    --s-grid2: rgba(255,255,255,.085);
+    --s-shadow: rgba(0,0,0,.45);
+    --font-label: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-work: "Newsreader", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --font-mono: "Fragment Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+    --bg: var(--s-wall);
+    --panel: var(--s-wall2);
+    --panel-brd: var(--s-hair2);
+    --ink: var(--s-text);
+    --ink-dim: var(--s-label);
+    --ink-faint: var(--s-label2);
+    --accent: var(--s-text);                /* hover/selected = ink; the dot is drawn by hand */
+    --accent2: var(--s-text);
+    --warm: var(--s-dot);
+    --blue: var(--s-label);
+    --err: var(--s-danger);
+    --mono: var(--font-mono);
+  }
+  html[data-theme="light"] {
+    --s-wall: #fafaf7;
+    --s-wall2: #f1f1ed;
+    --s-wall3: #e8e8e3;
+    --s-text: #161616;
+    --s-label: #4a4a47;
+    --s-label2: #8a8a86;
+    --s-label3: #b5b5b0;
+    --s-hair: #e3e3de;
+    --s-hair2: #cfcfc9;
+    --s-dot: #e5321b;
+    --s-dot-soft: rgba(229,50,27,.16);
+    --s-danger: #c8321c;
+    --s-ok: #3f7a3a;
+    --s-grid: rgba(0,0,0,.05);
+    --s-grid2: rgba(0,0,0,.09);
+    --s-shadow: rgba(0,0,0,.12);
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
@@ -1062,6 +1109,262 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
 .drect { transition: stroke .15s; }
 .bxtmi:hover { background: rgba(255,255,255,.07); }
 .chip, .bxtbtn, .mode { transition: color .15s, border-color .15s, background .15s, opacity .15s; }
+  /* ============================================================
+     v2 · the Salon skin over the canvas — chat.kitsui's theme and
+     feel (the reference mockups: ui/preview/salon-mock.html).
+     One rule: one accent — the red dot — and it means state
+     (selected · running · wrong), never decoration. Everything
+     else is ink, hairline and quiet.
+     ============================================================ */
+
+  /* ---- the page, the topbar ---- */
+  body { font: 14px/1.5 var(--font-label); background: var(--s-wall); color: var(--s-text); }
+  header { height: 40px; padding: 0 16px; gap: 14px; flex-wrap: nowrap;
+           align-items: center; border-bottom: 1px solid var(--s-hair); }
+  .logo { font-weight: 500; font-size: 13px; letter-spacing: .02em; text-shadow: none; }
+  .logo span { color: var(--s-dot); }
+  .sub { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+         white-space: nowrap; font-size: 12.5px; color: var(--s-label2); }
+  main { padding: 10px 14px 14px; }
+  .card { border-radius: 0; }
+  .bxuserbtn { border: 0; background: transparent; padding: 4px 2px; gap: 6px;
+               font: 500 11px/1.4 var(--font-mono); letter-spacing: .04em;
+               text-transform: uppercase; color: var(--s-label); }
+  .bxuserbtn:hover { color: var(--s-text); }
+  .bxuserbtn .bxuico { width: 13px; height: 13px; }
+  .bxuserbtn .bxucar { font-size: 9px; color: var(--s-label2); }
+  .tbx { cursor: pointer; font: 500 13px/1 var(--font-label); color: var(--s-label);
+         padding: 6px 4px; user-select: none; }
+  .tbx:hover { color: var(--s-text); }
+
+  /* ---- the chips and modes ---- */
+  .chip, .mode { border-radius: 0; }
+  .chip { font: 500 10px/1.4 var(--font-mono); letter-spacing: .05em;
+          text-transform: uppercase; color: var(--s-label); border: 1px solid var(--s-hair2);
+          background: transparent; padding: 5px 9px; }
+  .chip:hover, .chip.tiny:hover { color: var(--s-text); border-color: var(--s-text);
+                                  background: transparent; }
+  .chip.tiny { padding: 3px 7px; font-size: 10px; }
+  .chip.act { color: var(--s-text); border-color: var(--s-text); background: var(--s-wall2); }
+  .mode { font: 500 11px/1.4 var(--font-mono); letter-spacing: .04em; text-transform: uppercase;
+          color: var(--s-label); border: 1px solid var(--s-hair2); background: transparent;
+          padding: 5px 11px; }
+  .mode:hover { color: var(--s-text); border-color: var(--s-text); }
+  .mode.act { color: var(--s-text); border-color: var(--s-text); background: transparent; }
+
+  /* ---- the toolbar strip: a Salon head ---- */
+  .bxtools { height: 40px; gap: 22px; border: 0; background: transparent;
+             padding: 0 2px; margin: 0; }
+  .bxtbtn { border: 0; background: transparent; padding: 4px 0;
+            font: 500 11px/1.4 var(--font-mono); letter-spacing: .04em;
+            text-transform: uppercase; color: var(--s-label); }
+  .bxtbtn:hover { color: var(--s-text); border-color: transparent; }
+  .bxtbtn.off, .bxtbtn.off:hover { color: var(--s-label2); opacity: .55; }
+  .bxtdrop { top: 38px; left: 0; min-width: 220px; padding: 10px;
+             background: var(--s-wall); border: 1px solid var(--s-hair2);
+             box-shadow: 0 18px 40px var(--s-shadow); }
+  .bxtdrop-r { left: auto; right: 0; }
+  .bxtmi { padding: 6px 8px; border-radius: 0; font-size: 12.5px; color: var(--s-label); }
+  .bxtmi:hover { background: var(--s-wall2); color: var(--s-text); }
+  .bxtmi.dim, .bxtmi.off { color: var(--s-label2); }
+  .bxtcat { border-radius: 0; font: 500 10px/1.4 var(--font-mono); letter-spacing: .06em;
+            text-transform: uppercase; color: var(--s-label2); padding: 8px 8px 4px; }
+  .bxtcat:hover { background: transparent; color: var(--s-text); }
+  .bxtcards { gap: 8px; padding: 4px 2px 10px; }
+  .bxpalitem { border-radius: 0; }
+  .bxpalitem:hover { background: var(--s-wall2); }
+
+  /* ---- the project tabs: wall labels ---- */
+  .bxtabs { border-bottom: 1px solid var(--s-hair); }
+  .bxtabrail { gap: 0; align-items: stretch; }
+  .bxtab { padding: 0 13px; height: 31px; border-radius: 0; border: 0;
+           border-right: 1px solid var(--s-hair); font-size: 12.5px;
+           color: var(--s-label2); background: transparent; }
+  .bxtab:hover { color: var(--s-text); }
+  .bxtab.on { color: var(--s-text); background: transparent; }
+  .bxtab.on .nm::before { content: ""; display: inline-block; width: 5px; height: 5px;
+                          border-radius: 50%; background: var(--s-dot);
+                          margin-right: 7px; vertical-align: 2px; }
+  .bxtab .star { color: var(--s-dot); }
+  .bxtab .x { color: var(--s-label2); }
+  .bxtab .x:hover { color: var(--s-text); }
+  .bxtab.ai .nm { color: var(--s-dot); }
+  .bxtabadd { border: 0; background: transparent; color: var(--s-label2); font-weight: 500; }
+  .bxtabadd:hover { color: var(--s-text); border-color: transparent; }
+  .bxtabnote { font-size: 12px; color: var(--s-label2); padding-left: 12px; }
+
+  /* ---- the floating menu and its forms ---- */
+  .bxmenu { background: var(--s-wall); border: 1px solid var(--s-hair2); border-radius: 0;
+            padding: 8px; box-shadow: 0 18px 40px var(--s-shadow); }
+  .bxmenu .mi { padding: 6px 8px; border-radius: 0; font-size: 12.5px; color: var(--s-label); }
+  .bxmenu .mi:hover { background: var(--s-wall2); color: var(--s-text); }
+  .mhead { font: 500 10px/1.4 var(--font-mono); letter-spacing: .06em; color: var(--s-label2);
+           padding: 8px 8px 3px; }
+  .mhead:not(:first-child) { border-top: 1px solid var(--s-hair); margin-top: 5px; }
+  .mhead.drop { border-radius: 0; padding: 6px 8px; }
+  .mhead.drop:hover { background: var(--s-wall2); color: var(--s-text); }
+  .mhead.drop.on { color: var(--s-text); }
+  .bxmenu .bf { padding: 4px 2px 6px; gap: 8px; }
+  .bxmenu .bf label { font-size: 12.5px; color: var(--s-label2); }
+  .bxmenu .bf input, .bxmenu .bf select, .bxmenu .bf textarea,
+  .bxbin, .bxmat, .bxinp { background: var(--s-wall2); border: 1px solid var(--s-hair2);
+                           border-radius: 0; color: var(--s-text); padding: 5px 7px;
+                           font: 12px var(--font-label); }
+  .bxmenu .bf input:focus, .bxmenu .bf select:focus, .bxmenu .bf textarea:focus,
+  .bxbin:focus, .bxmat:focus { outline: none; border-color: var(--s-text); }
+  .bxmenu .bf input[type="number"], .bxmenu .bf input.wide {
+    font-family: var(--font-mono); font-size: 11.5px; }
+  .bxsel { background: var(--s-wall2); color: var(--s-text); border: 1px solid var(--s-hair2);
+           border-radius: 0; padding: 4px 6px; font: 11.5px var(--font-mono); }
+  .bxjson, .bxbcode { background: var(--s-wall2); border: 1px solid var(--s-hair2);
+                      border-radius: 0; color: var(--s-label); font: 11px/1.55 var(--font-mono); }
+  .panehint, .bxbhint { font-family: var(--font-label); font-size: 12px; color: var(--s-label2); }
+  .panehint.bad, .bxmenu .bf .warnbx { color: var(--s-danger); }
+  .warnbx { border-radius: 0; }
+  .wten { border-radius: 0; }
+  .wten:hover { background: var(--s-wall2); }
+  .wten.on { border-color: var(--s-text); background: var(--s-wall2); }
+  .bxbhint.runbad { color: var(--s-danger); }
+  .bxbhint.runok { color: var(--s-ok); }
+
+  /* ---- the estimate panel ---- */
+  .bxvram .vhead { font: 500 10px/1.4 var(--font-mono); letter-spacing: .06em;
+                   text-transform: uppercase; color: var(--s-label2); }
+  .bxvram .vrow { font: 11px/1.5 var(--font-mono); color: var(--s-label); }
+  .bxvram .vrow.w { color: var(--s-text); }
+  .bxvram .vrow.kv, .bxvram .vrow.tr, .bxvram .vrow.frz { color: var(--s-label2); }
+  .bxvram .vrow.tot { color: var(--s-text); font-weight: 500; }
+  .bxvram .vrow.sub, .bxvram .vrow.note { color: var(--s-label3); font-size: 10px; }
+  .bxvram .vrow.warn { color: var(--s-dot); }
+  .bxvram .vbar { height: 4px; border-radius: 0; background: var(--s-wall3); }
+  .bxvram .vbar .w { background: var(--s-text); }
+  .bxvram .vbar .kv { background: var(--s-label2); }
+  .bxvram .vbar .tr { background: var(--s-label3); }
+
+  /* ---- the panes: serif words, mono deeds ---- */
+  .bxlogpane { background: var(--s-wall); border: 1px solid var(--s-hair2); border-radius: 0; }
+  .bxphead { background: var(--s-wall2); border-bottom: 1px solid var(--s-hair); padding: 7px 10px; }
+  .bxptitle { font: 500 13px var(--font-label); color: var(--s-text); }
+  .bxchip { border: 1px solid var(--s-hair2); border-radius: 0;
+            font: 500 10px/1.4 var(--font-mono); letter-spacing: .05em;
+            text-transform: uppercase; color: var(--s-label2); padding: 2px 6px; }
+  .bxchip.running { border-color: var(--s-dot); color: var(--s-dot); }
+  .bxchip.paused { border-color: var(--s-label); color: var(--s-label); }
+  .bxchip.done { border-color: var(--s-ok); color: var(--s-ok); }
+  .bxchip.cancelled { border-color: var(--s-danger); color: var(--s-danger); }
+  .bxbbtn { border: 1px solid var(--s-hair2); border-radius: 0; padding: 3px 7px;
+            font: 500 10px/1.4 var(--font-mono); letter-spacing: .05em;
+            text-transform: uppercase; color: var(--s-label); }
+  .bxbbtn:hover { border-color: var(--s-text); color: var(--s-text); }
+  .bxpbody { font-family: var(--font-mono); font-size: 11.5px; }
+  .bxpsay { font-family: var(--font-work); font-size: 13.5px; color: var(--s-text); }
+  .bxpitem.note .bxpsay { color: var(--s-label2); }
+  .bxpdo { font: 11px/1.6 var(--font-mono); color: var(--s-label); }
+  .bxpstep { font: 10px/1.6 var(--font-mono); color: var(--s-label3); }
+  .bxperr { color: var(--s-danger); }
+  .bxpraw { background: var(--s-wall2); border-radius: 0; color: var(--s-label); }
+  .bxpform { border-top: 1px solid var(--s-hair); }
+  .bxpform .rf span { color: var(--s-label2); }
+  .bxprow { padding: 4px 0; }
+  .bxpbody .bxbhint { font-family: var(--font-label); }
+
+  /* ---- the AI agent tab: the talk surface ---- */
+  .bxtalk { background: var(--s-wall); }
+  .bxtalkin { background: var(--s-wall2); border: 1px solid var(--s-hair2); border-radius: 0;
+              color: var(--s-text); font: 12px/1.5 var(--font-mono); }
+  .bxtalkin:focus { border-color: var(--s-text); }
+  .bxtalkfoot { border-top: 1px solid var(--s-hair); background: var(--s-wall); }
+  .bxtwho { color: var(--s-label3); }
+  .bxtitem.you, .bxtitem.agent { border-left: 2px solid var(--s-hair2); }
+  .bxtsay { font-family: var(--font-work); font-size: 13.5px; }
+  .bxtitem.you .bxtsay { font-family: var(--font-label); font-size: 13px; color: var(--s-label); }
+  .bxtitem.agent .bxtwho { color: var(--s-dot); }
+
+  /* ---- the canvas: the lattice, the cards, the wires ---- */
+  .bxgrid .gminor { stroke: var(--s-grid); }
+  .bxgrid .gmajor { stroke: var(--s-grid2); }
+  .drect { fill: var(--s-wall2); stroke: var(--s-hair2); }
+  .dnode:hover .drect { stroke: var(--s-label); }
+  .dnode.sel .drect { stroke: var(--s-text); stroke-width: 1.5; }
+  .dnode.err .drect { stroke: var(--s-danger); stroke-dasharray: 5 4; }
+  .dnode.warn .drect { stroke: var(--s-dot); stroke-dasharray: 5 4; }
+  .dnode.err .drail { stroke: var(--s-danger); }
+  .dnode.warn .drail { stroke: var(--s-dot); }
+  .dnode.off { opacity: .42; }
+  .dnode.off .drect { stroke-dasharray: 3 4; }
+  .dnode.flow .drect { stroke: var(--s-dot); stroke-width: 1.5; }
+  .dnode.now .drect { stroke: var(--s-dot); stroke-width: 2.4; }
+  .dnode.runerr .drect { stroke: var(--s-danger); stroke-width: 2.2; }
+  .dnode.tsrc .drect { stroke: var(--s-ok); stroke-width: 2; }
+  .dnode.ttest .drect { stroke: var(--s-label); stroke-width: 2; }
+  .dnode.tscored .drect, .dnode.tpolicy .drect, .dnode.tscorer .drect {
+    stroke: var(--s-dot); stroke-width: 2; }
+  .dnode.audit .drect { stroke: var(--s-label2); stroke-dasharray: 2 3; }
+  .dtag.tsrc { fill: var(--s-ok); }
+  .dtag.ttest { fill: var(--s-label); }
+  .dtag.tscored, .dtag.tpolicy, .dtag.tscorer { fill: var(--s-dot); }
+  .dtype { fill: var(--s-label2); }
+  .dtype.layer { fill: var(--s-label); }
+  .dtype.custom, .dtype.model { fill: var(--s-text); }
+  .dtype.act, .dtype.op, .dtype.script { fill: var(--s-label2); }
+  .dlabel { fill: var(--s-text); }
+  .dshape { fill: var(--s-label2); }
+  .dshape.fn, .dshape.opfn { fill: var(--s-label); }
+  .dshape.unset { fill: var(--s-label3); }
+  .dstate { fill: var(--s-label2); }
+  .dstate.rev { fill: var(--s-label); }
+  .dstate.err { fill: var(--s-danger); }
+  .dwarn { fill: var(--s-danger); }
+  .dwarn2 { fill: var(--s-dot); }
+  .dfroz { stroke: var(--s-label2); }
+  .dplace { fill: var(--s-label2); }
+  .dplace.gpu { fill: var(--s-ok); }
+  .dplace.sys { fill: var(--s-label); opacity: .85; }
+  .dport { fill: var(--s-wall); stroke: var(--s-label); }
+  .dport.hit:hover { fill: var(--s-dot-soft); }
+  .dport.doff { stroke: var(--s-label3); }
+  .drail:hover { fill: var(--s-dot-soft); }
+  .seldot { fill: var(--s-dot); }
+  .dslot { stroke: var(--s-label2); }
+  .dnode.dropin .dslot { stroke: var(--s-dot); }
+  .dedge { stroke: var(--s-label); }
+  .dedge.unknown { stroke: var(--s-label3); }
+  .dedge.bad { stroke: var(--s-danger); stroke-dasharray: 5 4; }
+  .dedge.live, .dedge.hot { stroke: var(--s-text); }
+  .dedge.flow { stroke: var(--s-dot); stroke-width: 2; }
+  .dedge.sel { stroke: var(--s-text); stroke-width: 2.2; }
+  .dedge.off { stroke: var(--s-label3); }
+  .dedge.tgrad { stroke: var(--s-ok); }
+  .bxguide { stroke: var(--s-label3); stroke-dasharray: 2 4; opacity: .9; }
+  .bxmarquee { fill: var(--s-dot-soft); stroke: var(--s-dot); }
+  .dringbg { stroke: var(--s-hair2); }
+  .dring { stroke: var(--s-dot); }
+  .dringnum { fill: var(--s-label2); }
+  .dropzone { border: 1px dashed var(--s-hair2); border-radius: 0; }
+  .dropzone.over { border-color: var(--s-text); background: var(--s-wall2); color: var(--s-text); }
+  .dropzone .dz-pick { color: var(--s-text); }
+
+  /* ---- the boot veil, the toast, the hover card ---- */
+  .bxsplash { background: var(--s-wall); }
+  .bxspin { border: 2px solid var(--s-hair2); border-top-color: var(--s-dot); }
+  .bxsplashnote { font: 12px var(--font-label); color: var(--s-label2); }
+  .bxtoast { background: var(--s-wall); border: 1px solid var(--s-hair2); border-radius: 0;
+             font: 11.5px var(--font-mono); color: var(--s-text); }
+  .bxtip { background: var(--s-wall); border: 1px solid var(--s-hair2); border-radius: 0; }
+  .bxtip .who { color: var(--s-label3); font: 10px var(--font-mono); }
+  .bxtip .what { color: var(--s-text); font: 11.5px var(--font-mono); }
+  .bxtip .shp, .bxtip .row { color: var(--s-label); }
+  .bxtip .note { color: var(--s-label2); }
+
+  .chip, .bxtbtn, .mode, .bxtab, .bxbbtn, .bxtmi, .bxmenu .mi, .bxtcat {
+    transition: color .15s, border-color .15s, background .15s, opacity .15s;
+  }
+  /* a theme flip eases, the way chat.kitsui's does (the class lives on <html>
+     for one breath, set and cleared by bxThemeToggle) */
+  html.theme-flip, html.theme-flip * {
+    transition: background-color .6s ease, border-color .6s ease, color .6s ease,
+                fill .6s ease, stroke .6s ease, opacity .6s ease !important;
+  }
 </style>
 </head>
 <body>
@@ -1069,6 +1372,7 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
 <header>
   <div class="logo">nn<span>·</span>studio</div>
   <div class="sub">compose the network on the canvas, wire it, price it, then run it</div>
+  <span class="tbx" id="bxtTheme" title="light / dark">☾</span>
   <div class="bxuser" id="bxuser" hidden>
     <span class="bxuserbtn" id="bxtAccount" title="a guest: drawing and running are free, saving takes an account">
       <svg class="bxuico" viewBox="0 0 16 16" aria-hidden="true">
@@ -1123,6 +1427,12 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
 
 <script>
 const $ = id => document.getElementById(id);
+
+// v2 · the remembered theme lands before anything draws (Salon dark is home)
+try {
+  if (localStorage.getItem("nnstudio_theme") === "light")
+    document.documentElement.setAttribute("data-theme", "light");
+} catch (e) {}
 
 // Tiny element builder: mk("div", {class: "x", text: "hi", onclick: fn}, kid...)
 function mk(tag, props = {}, ...kids) {
@@ -7223,6 +7533,8 @@ function bxCard(n) {
                         slot ? bxClipFit(bxKindLabel(n.kind), slot.x - 12, 7)
                              : bxKindLabel(n.model ? "model" : n.kind),
                         "dtype " + (n.model ? "model" : n.kind)));
+  if (!preview && bxSelBox(n.id))            // the red dot: "you are here" (Salon)
+    g.appendChild(svg("circle", { cx: n.x + w - 8, cy: n.y + 8, r: 3, class: "seldot" }));
   let rightX = w - 9;                          // the corner marks stack right-to-left
   if (tint) {                                  // the training signal's mark
     const tag = TINT_TAG[tint] || "?";
@@ -9921,6 +10233,28 @@ function bxUsageWatch(on) {                    // the 5 s poll is fine when idle
     fetchBackend();                            // watch the memory move while it works
   }, 1500);
 }
+function bxThemeNow() {                        // "dark" (the canvas's home) or "light"
+  return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+}
+function bxThemeApply() {                      // the toggle shows the theme in use
+  const el = $("bxtTheme");
+  if (el) el.textContent = bxThemeNow() === "light" ? "\u2600" : "\u263e";
+}
+function bxThemeToggle() {
+  const next = bxThemeNow() === "light" ? "dark" : "light";
+  try { localStorage.setItem("nnstudio_theme", next); } catch (e) {}
+  const root = document.documentElement;
+  if (root && root.classList) {
+    root.classList.add("theme-flip");
+    if (typeof setTimeout === "function")
+      setTimeout(() => root.classList.remove("theme-flip"), 650);
+  }
+  if (next === "light") root.setAttribute("data-theme", "light");
+  else root.removeAttribute("data-theme");
+  bxThemeApply();
+  bxRender();                                  // the canvas redraws in the new ink
+  return next;
+}
 function bxtRefresh() {
   const up = !!BX.up;
   const talk = bxTalkOn();                     // the AI tab has no canvas beneath
@@ -9971,6 +10305,9 @@ function bxtInit() {
   bxtBackendLoad();                            // the remembered backend choice
   wire("bxtPalette", bxtPaletteToggle);
   wire("bxtabadd", bxtabToggle);
+  const th = $("bxtTheme");                    // the Salon theme, remembered
+  if (th && th.addEventListener) th.addEventListener("click", bxThemeToggle);
+  bxThemeApply();
   wire("bxtImport", bxtImportToggle);
   wire("bxtBackend", bxtBackendToggle);
   wire("bxtVram", bxtVramToggle);

@@ -38,6 +38,7 @@ function el(id) {
       if (k === "id") this.id = v;
     },
     getAttribute(k) { return this._attrs[k] != null ? this._attrs[k] : null; },
+    removeAttribute(k) { delete this._attrs[k]; },
     appendChild(c) { c._parent = this; this.children.push(c); return c; },
     removeChild(c) { this.children = this.children.filter(x => x !== c); return c; },
     remove() { if (this._parent) this._parent.removeChild(this); },
@@ -152,6 +153,7 @@ global.document = {
   createElementNS: (_ns, tag) => el("<" + tag + ">"),
   addEventListener() {},
   body: bodyEl,
+  documentElement: el("<html>"),
   get cookie() { return ""; },
   set cookie(_v) {},
 };
@@ -203,6 +205,7 @@ globalThis.__t = {
   bxWeightsForm, bxWeightsApply, bxWeightsExportForm, bxWeightScore, bxTensorDims,
   bxTensorDtype, bxApplyManifest,
   bxtDropsClose, bxtPaletteToggle, bxtImportToggle, bxtabToggle,
+  bxThemeNow, bxThemeToggle,
   bxTabsRender, bxTabNew, bxTabSave, bxTabSelect, bxTabOpenSaved, bxProject,
   bxTabClose, bxTabAnyDirty, bxTabLoad, bxSessionNow, bxSessionPush, bxSessionMatch,
   bxTabNewAI, bxTalkOn, bxTalkSend, bxTalkRender, bxTalkSync, bxTalkTask, bxTalkCurrent,
@@ -4891,6 +4894,27 @@ check("the order is toolbar, project tabs, canvas", () => {
      "the toolbar first, the tabs under it, the canvas last");
   ok(!/class="[^"]*\bup\b[^"]*" id="bxtabMenu"/.test(h),
      "\u2026and the + menu drops down from the strip");
+});
+
+check("the theme: Salon dark at home, light one click away, remembered", () => {
+  const h = fs.readFileSync(UI, "utf8");
+  ok(h.indexOf("Newsreader") >= 0 && h.indexOf("Instrument Sans") >= 0 &&
+     h.indexOf("Fragment Mono") >= 0, "the three Salon faces are linked");
+  ok(/--s-dot:\s*#ff5a45/.test(h) && /--bg: var\(--s-wall\)/.test(h),
+     "\u2026and the app's own tokens point at the Salon palette");
+  eql(__t.bxThemeNow(), "dark", "dark is home");
+  eql(__t.bxThemeToggle(), "light", "one click flips it");
+  eql(getEl("bxtTheme").textContent, "\u2600", "\u2026the toggle shows the sun");
+  ok(document.documentElement.getAttribute("data-theme") === "light",
+     "\u2026and the page wears the attribute the light tokens hang on");
+  eql(__t.bxThemeToggle(), "dark", "and back");
+  eql(getEl("bxtTheme").textContent, "\u263e", "\u2026the moon again");
+  ok(document.documentElement.getAttribute("data-theme") === null,
+     "\u2026the attribute off: dark needs no attribute");
+  const th = getEl("bxtTheme");
+  th.click();                                   // the real click, through the wiring
+  eql(__t.bxThemeNow(), "light", "the button itself toggles too");
+  th.click();
 });
 
 check("the + sits right beside the last tab, and its menu drops from it", () => {

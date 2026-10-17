@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nnstudio — the Salon skin (mockup)</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Fragment+Mono:ital@0;1&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="salon-mock.css">
+</head>
+<body>
+<div class="page-wrap">
+
+  <header class="page-head">
+    <h1>nnstudio — the Salon skin</h1>
+    <p>Two mockups of the canvas in chat.kitsui's design language: the merged shell
+    (topbar · rail · canvas view) and the canvas's own vocabulary. Static HTML —
+    nothing in the app is touched. Geometry mirrors the real canvas: 160×80 boxes
+    (rx 9), 18-wide rails, r 5 dots, cubic wires.</p>
+  </header>
+
+  <div class="caption"><span class="mark"></span><b>V1 · Salon dark</b>
+    <span>recommended for the canvas — chat.kitsui's own dark theme; the shell stays light</span></div>
+  <section class="frame" data-variant="dark"><div class="scene"></div></section>
+
+  <div class="caption"><span class="mark"></span><b>V2 · Salon light</b>
+    <span>the gallery reading — wall #fafaf7, ink boxes; chat.kitsui's default elsewhere</span></div>
+  <section class="frame" data-variant="light"><div class="scene"></div></section>
+
+  <div class="caption"><span class="mark"></span><b>The canvas's vocabulary · dark</b>
+    <span>box and wire states, as Salon would draw them</span></div>
+  <div class="board" data-variant="dark"></div>
+
+  <div class="caption"><span class="mark"></span><b>The canvas's vocabulary · light</b>
+    <span>the same states on the gallery wall</span></div>
+  <div class="board" data-variant="light"></div>
+
+  <div class="caption"><span class="mark"></span><b>Tokens &amp; type</b>
+    <span>what the skin borrows from chat.kitsui, verbatim</span></div>
+  <section class="frame" style="padding:28px 24px">
+    <div class="legend">
+      <div>
+        <h4 style="margin:0 0 10px;font:500 10px/1.4 var(--font-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--label-2)">salon · light</h4>
+        <div class="swatches">
+          <span class="swatch"><i style="background:#fafaf7"></i>wall #fafaf7</span>
+          <span class="swatch"><i style="background:#f1f1ed"></i>wall-2 #f1f1ed</span>
+          <span class="swatch"><i style="background:#161616"></i>text #161616</span>
+          <span class="swatch"><i style="background:#4a4a47"></i>label #4a4a47</span>
+          <span class="swatch"><i style="background:#e3e3de"></i>hairline #e3e3de</span>
+          <span class="swatch"><i style="background:#e5321b"></i>dot #e5321b</span>
+          <span class="swatch"><i style="background:#c8321c"></i>danger #c8321c</span>
+          <span class="swatch"><i style="background:#3f7a3a"></i>ok #3f7a3a</span>
+        </div>
+      </div>
+      <div>
+        <h4 style="margin:0 0 10px;font:500 10px/1.4 var(--font-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--label-2)">salon · dark</h4>
+        <div class="swatches">
+          <span class="swatch"><i style="background:#1a1a19"></i>wall #1a1a19</span>
+          <span class="swatch"><i style="background:#222221"></i>wall-2 #222221</span>
+          <span class="swatch"><i style="background:#ebebe7"></i>text #ebebe7</span>
+          <span class="swatch"><i style="background:#b0b0ab"></i>label #b0b0ab</span>
+          <span class="swatch"><i style="background:#2c2c2a"></i>hairline #2c2c2a</span>
+          <span class="swatch"><i style="background:#ff5a45"></i>dot #ff5a45</span>
+          <span class="swatch"><i style="background:#ff7a66"></i>danger #ff7a66</span>
+          <span class="swatch"><i style="background:#8fc07f"></i>ok #8fc07f</span>
+        </div>
+      </div>
+    </div>
+    <div class="type-specimens" style="margin-top:26px">
+      <span class="spec-sans">Palette · Import · Backend · VRAM<span class="spec-note">Instrument Sans — labels, chrome</span></span>
+      <span class="spec-work">The rope helper pairs (e, e + 36).<span class="spec-note">Newsreader — the agent's words, prose</span></span>
+      <span class="spec-mono">blk.0.attn_q.weight · 248320 × 5120 · f16<span class="spec-note">Fragment Mono — names, sizes, deeds</span></span>
+    </div>
+    <p style="margin:22px 0 0;color:var(--label-2);font-size:12.5px;max-width:68ch">
+      The rule the skin follows everywhere: <b style="font-weight:600;color:var(--label)">one accent</b> —
+      the red dot — and it means state (selection, progress, a running flow), never decoration.
+      Kind labels stay graphite; a box earns ink only when it is the subject.</p>
+  </section>
+
+</div>
+
+<!-- ============================================================
+     the scene: one merged shell + canvas, cloned per variant
+     ============================================================ -->
+<template id="scene-tpl">
+  <div class="topbar">
+    <span class="brand">chat.kitsui</span>
+    <span class="spacer"></span>
+    <span class="tb-item">Settings</span>
+    <span class="tb-item on">Guest ▾</span>
+    <span class="avatar">G</span>
+  </div>
+  <div class="shell">
+    <div class="rail">
+      <span class="ri">＋</span>
+      <span class="ri small">CH</span>
+      <span class="ri on">▦</span>
+      <span class="ri">◫</span>
+      <span class="spacer"></span>
+      <span class="ri">☾</span>
+    </div>
+    <div class="page">
+      <div class="head">
+        <h2>Qwen3.8-27B · canvas</h2>
+        <span class="tag dot">gpu · mps</span>
+        <span class="spacer"></span>
+        <span class="tools">
+          <span class="tool">Palette ▾</span>
+          <span class="tool">Import ▾</span>
+          <span class="tool">Backend ▾</span>
+          <span class="tool on">VRAM ▾</span>
+        </span>
+      </div>
+      <div class="tabs">
+        <span class="tab on">Qwen3.8-27B <span class="x">✕</span></span>
+        <span class="tab">New Project 2 <span class="x">✕</span></span>
+        <span class="tab add">＋</span>
+      </div>
+      <div class="canvas">
+        <svg viewBox="0 0 1240 520" preserveAspectRatio="xMidYMid meet">
+
+          <!-- wire: the folded second row sweeps back, red & dashed: a size mismatch -->
+          <path d="M 980 160 C 1190 160, 350 380, 560 380" class="wire bad"></path>
+          <!-- wires: the chain -->
+          <path d="M 200 160 C 240 160, 260 160, 300 160" class="wire"></path>
+          <path d="M 460 160 C 500 160, 520 160, 560 160" class="wire flow"></path>
+          <path d="M 720 160 C 760 160, 780 160, 820 160" class="wire"></path>
+          <path d="M 720 380 C 760 380, 780 380, 820 380" class="wire"></path>
+
+          <!-- tokens -->
+          <g class="bx">
+            <rect x="11" y="122" width="18" height="76" rx="7" class="railrect"></rect>
+            <rect x="20" y="120" width="160" height="80" rx="9" class="r"></rect>
+            <text x="29" y="135" class="dk k-io">input</text>
+            <text x="29" y="152" class="dnm">tokens</text>
+            <text x="29" y="189" class="dsh">1</text>
+            <circle cx="200" cy="160" r="5" class="dot-port"></circle>
+          </g>
+
+          <!-- token embedding: the selected box -->
+          <g class="bx sel">
+            <rect x="291" y="122" width="18" height="76" rx="7" class="railrect"></rect>
+            <rect x="460" y="122" width="18" height="76" rx="7" class="railrect"></rect>
+            <rect x="300" y="120" width="160" height="80" rx="9" class="r"></rect>
+            <text x="309" y="135" class="dk k-w">Embedding</text>
+            <text x="451" y="135" class="dtag">gpu</text>
+            <circle cx="452" cy="128" r="3" class="seldot"></circle>
+            <text x="309" y="152" class="dnm">token embedding</text>
+            <text x="309" y="189" class="dsh tell">248320 × 5120 · f16</text>
+            <circle cx="300" cy="160" r="5" class="dot-port"></circle>
+            <circle cx="460" cy="160" r="5" class="dot-port"></circle>
+          </g>
+
+          <!-- blk 0: the data is flowing into it -->
+          <g class="bx flowmark">
+            <rect x="551" y="122" width="18" height="76" rx="7" class="railrect"></rect>
+            <rect x="720" y="122" width="18" height="76" rx="7" class="railrect"></rect>
+            <rect x="560" y="120" width="160" height="80" rx="9" class="r"></rect>
+            <text x="569" y="135" class="dk k-model">model</text>
+            <text x="711" y="135" class="dtag">gpu</text>
+            <text x="569" y="152" class="dnm">blk 0 · attn mlp</text>
+            <text x="569" y="189" class="dsh tell">1 → 5120 · f16</text>
+            <circle cx="560" cy="160" r="5" class="dot-port"></circle>
+            <circle cx="720" cy="160" r="5" class="dot-port"></circle>
+          </g>
+
+          <!-- output norm: frozen -->
+          <g class="bx">
+            <rect x="811" y="122" width="18" height="76" rx="7" class="railrect"></rect>
+            <rect x="980" y="122" width="18" height="76" rx="7" class="railrect"></rect>
+            <rect x="820" y="120" width="160" height="80" rx="9" class="r"></rect>
+            <text x="829" y="135" class="dk k-t">Norm</text>
+            <g class="dfroz" stroke-linecap="round">
+              <line x1="956" y1="128" x2="968" y2="128"></line>
+              <line x1="958.8" y1="123.2" x2="965.2" y2="132.8"></line>
+              <line x1="958.8" y1="132.8" x2="965.2" y2="123.2"></line>
+            </g>
+            <text x="829" y="152" class="dnm">output norm</text>
+            <text x="829" y="189" class="dsh tell">5120 · f32</text>
+            <circle cx="820" cy="160" r="5" class="dot-port"></circle>
+            <circle cx="980" cy="160" r="5" class="dot-port"></circle>
+          </g>
+
+          <!-- lm head: the wire from the norm is a mismatch -->
+          <g class="bx err">
+            <rect x="551" y="342" width="18" height="76" rx="7" class="railrect"></rect>
+            <rect x="720" y="342" width="18" height="76" rx="7" class="railrect"></rect>
+            <rect x="560" y="340" width="160" height="80" rx="9" class="r"></rect>
+            <text x="569" y="355" class="dk k-w">Fully Connected</text>
+            <text x="711" y="355" class="dwarn">!</text>
+            <text x="569" y="372" class="dnm">lm head</text>
+            <text x="569" y="409" class="dsh tell">4096 → 248320 · f16</text>
+            <circle cx="560" cy="380" r="5" class="dot-port"></circle>
+            <circle cx="720" cy="380" r="5" class="dot-port"></circle>
+          </g>
+
+          <!-- logits -->
+          <g class="bx">
+            <rect x="811" y="342" width="18" height="76" rx="7" class="railrect"></rect>
+            <rect x="820" y="340" width="160" height="80" rx="9" class="r"></rect>
+            <text x="829" y="355" class="dk k-io">output</text>
+            <text x="829" y="372" class="dnm">logits</text>
+            <text x="829" y="409" class="dsh tell">248320</text>
+            <circle cx="820" cy="380" r="5" class="dot-port"></circle>
+          </g>
+
+          <!-- prep: deactivated -->
+          <g class="bx off">
+            <rect x="300" y="340" width="160" height="80" rx="9" class="r"></rect>
+            <text x="309" y="355" class="dk k-t">Script</text>
+            <text x="309" y="372" class="dnm">prep</text>
+            <text x="309" y="409" class="dsh">pre(x)</text>
+          </g>
+
+        </svg>
+
+        <!-- the right-click menu, as a card -->
+        <div class="card" style="left:474px;top:246px;width:236px">
+          <div class="card-sec">weights</div>
+          <div class="card-row">set the dtype <span class="k">f16</span></div>
+          <div class="card-row on"><span class="k dot"></span> load on the gpu — video memory</div>
+          <div class="card-row">load on the system — this machine's ram</div>
+          <div class="card-row">load external weights …</div>
+          <div class="card-sec">flow</div>
+          <div class="card-row tight">freeze this box</div>
+          <div class="card-row tight">remove this box</div>
+        </div>
+
+        <!-- the estimate, as a card -->
+        <div class="card" style="right:16px;top:14px;width:252px">
+          <div class="card-h">estimate <b>Qwen3.8-27B</b></div>
+          <div class="card-row">weights · f16 <span class="k">13.3 GB</span></div>
+          <div class="card-row">kv · 8k ctx <span class="k">0.9 GB</span></div>
+          <div class="card-bar"><i class="w" style="width:62%"></i><i class="kv" style="width:14%"></i></div>
+          <div class="card-row">to run <span class="k">14.7 GiB</span></div>
+          <div class="card-row">to train <span class="k dim">41.2 GiB</span></div>
+          <div class="card-note">activations and workspace are not counted · all layers on the gpu</div>
+        </div>
+
+        <!-- the agent, as a card -->
+        <div class="card ai-card" style="left:16px;bottom:16px">
+          <div class="card-h">
+            <span class="k dot"></span> reverse engineering agent
+            <span class="ai-chip">In-Progress</span>
+            <span class="ai-btn">stop</span>
+          </div>
+          <div class="ai-do">read · agent/nn_torch.py</div>
+          <div class="ai-words">The rope helper pairs (e, e + 36); I matched it against
+            the spec's stage list — the conformance gate went green.</div>
+          <div class="ai-step">step · 512 tokens · 41s</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- ============================================================
+     the states board: box and wire vocabulary
+     ============================================================ -->
+<template id="board-tpl">
+  <div class="cell">
+    <h4>box · normal</h4>
+    <svg viewBox="0 0 190 92" width="190" height="92">
+      <rect x="15" y="6" width="160" height="80" rx="9" class="r"></rect>
+      <text x="24" y="21" class="dk k-w">Fully Connected</text>
+      <text x="24" y="38" class="dnm">lm head</text>
+      <text x="24" y="75" class="dsh tell">4096 → 248320 · f16</text>
+    </svg>
+    <p>graphite hairline, the kind in mono, the size line at the foot</p>
+  </div>
+  <div class="cell">
+    <h4>box · selected</h4>
+    <svg viewBox="0 0 190 92" width="190" height="92">
+      <rect x="15" y="6" width="160" height="80" rx="9" class="r selr"></rect>
+      <text x="24" y="21" class="dk k-w">Embedding</text>
+      <text x="166" y="21" class="dtag">gpu</text>
+      <circle cx="167" cy="14" r="3" fill="var(--dot)"></circle>
+      <text x="24" y="38" class="dnm">token embedding</text>
+      <text x="24" y="75" class="dsh tell">248320 × 5120 · f16</text>
+    </svg>
+    <p>an ink border and the red dot — the only accent, and it means “you”</p>
+  </div>
+  <div class="cell">
+    <h4>box · in error</h4>
+    <svg viewBox="0 0 190 92" width="190" height="92">
+      <rect x="15" y="6" width="160" height="80" rx="9" class="r errr"></rect>
+      <text x="24" y="21" class="dk k-w">Fully Connected</text>
+      <text x="166" y="21" class="dwarn">!</text>
+      <text x="24" y="38" class="dnm">lm head</text>
+      <text x="24" y="75" class="dsh tell">4096 → 248320 · f16</text>
+    </svg>
+    <p>danger hairline, dashed, with the <b>!</b> and the reason on hover</p>
+  </div>
+  <div class="cell">
+    <h4>box · frozen</h4>
+    <svg viewBox="0 0 190 92" width="190" height="92">
+      <rect x="15" y="6" width="160" height="80" rx="9" class="r"></rect>
+      <text x="24" y="21" class="dk k-t">Norm</text>
+      <g class="dfroz" stroke-linecap="round" transform="translate(151,14)">
+        <line x1="-6" y1="0" x2="6" y2="0"></line>
+        <line x1="-3" y1="-5" x2="3" y2="5"></line>
+        <line x1="-3" y1="5" x2="3" y2="-5"></line>
+      </g>
+      <text x="24" y="38" class="dnm">output norm</text>
+      <text x="24" y="75" class="dsh tell">5120 · f32</text>
+    </svg>
+    <p>the snowflake: weights kept, out of the training step</p>
+  </div>
+  <div class="cell">
+    <h4>box · deactivated</h4>
+    <svg viewBox="0 0 190 92" width="190" height="92" opacity="0.42">
+      <rect x="15" y="6" width="160" height="80" rx="9" class="r offr"></rect>
+      <text x="24" y="21" class="dk k-t">Script</text>
+      <text x="24" y="38" class="dnm">prep</text>
+      <text x="24" y="75" class="dsh">pre(x)</text>
+    </svg>
+    <p>dim, dotted, its dots dead — nothing flows in, its weights left the model</p>
+  </div>
+
+  <div class="cell">
+    <h4>wire · unknown</h4>
+    <svg viewBox="0 0 220 70" width="220" height="70">
+      <circle cx="30" cy="35" r="5" class="dot-port"></circle>
+      <circle cx="190" cy="35" r="5" class="dot-port"></circle>
+      <path d="M 30 35 C 90 35, 130 35, 190 35" class="wire unknown"></path>
+    </svg>
+    <p>both ends still <b>?</b> — graphite, and it never turns red on a guess</p>
+  </div>
+  <div class="cell">
+    <h4>wire · ok</h4>
+    <svg viewBox="0 0 220 70" width="220" height="70">
+      <circle cx="30" cy="35" r="5" class="dot-port"></circle>
+      <circle cx="190" cy="35" r="5" class="dot-port"></circle>
+      <path d="M 30 35 C 90 35, 130 35, 190 35" class="wire"></path>
+    </svg>
+    <p>both sizes known and equal — a plain ink line</p>
+  </div>
+  <div class="cell">
+    <h4>wire · mismatch</h4>
+    <svg viewBox="0 0 220 70" width="220" height="70">
+      <circle cx="30" cy="35" r="5" class="dot-port"></circle>
+      <circle cx="190" cy="35" r="5" class="dot-port"></circle>
+      <path d="M 30 35 C 90 35, 130 35, 190 35" class="wire bad"></path>
+    </svg>
+    <p>known but different: danger, dashed — the connection is refused</p>
+  </div>
+  <div class="cell">
+    <h4>wire · the flow</h4>
+    <svg viewBox="0 0 220 70" width="220" height="70">
+      <circle cx="30" cy="35" r="5" class="dot-port"></circle>
+      <circle cx="190" cy="35" r="5" class="dot-port"></circle>
+      <path d="M 30 35 C 90 35, 130 35, 190 35" class="wire flow"></path>
+    </svg>
+    <p>mid-run: the red dot travels the wire as the data lands, box by box</p>
+  </div>
+  <div class="cell">
+    <h4>drag · the guide</h4>
+    <svg viewBox="0 0 220 70" width="220" height="70">
+      <rect x="10" y="6" width="60" height="58" rx="9" class="r" opacity="0.6"></rect>
+      <rect x="150" y="6" width="60" height="58" rx="9" class="r" opacity="0.6"></rect>
+      <line x1="110" y1="0" x2="110" y2="70" class="guide"></line>
+    </svg>
+    <p>edge- or middle-aligned while dragging: a faint dashed hairline</p>
+  </div>
+</template>
+
+<script>
+  const sceneTpl = document.getElementById("scene-tpl");
+  for (const s of document.querySelectorAll(".scene")) s.appendChild(sceneTpl.content.cloneNode(true));
+  const boardTpl = document.getElementById("board-tpl");
+  for (const b of document.querySelectorAll(".board")) b.appendChild(boardTpl.content.cloneNode(true));
+</script>
+</body>
+</html>
