@@ -48,13 +48,17 @@ values are derived from the token, in the browser, each under its own label:
 
 Designs are saved from the **project tabs** under the toolbar: `Ctrl/Cmd+S`
 saves the active one (a new project asks for its name first), the `+` at the
-strip's right opens **New Canvas** or your **Saved Canvas** list — each saved
+strip's right opens **New Canvas**, **AI agent** or your **Saved Canvas**
+list — each saved
 canvas opens as its own tab, and its `×` closes it (asking first when it
 holds unsaved changes; a reload or close with unsaved tabs asks too). The last
-tab wears no `×` — there is always one canvas open. The tabs you leave
+tab wears no `×` — there is always one tab open. **AI agent** opens a tab
+that is not a canvas: the reverse-engineering agent, spoken to (see
+**The AI agent tab** below). The canvas tabs you leave
 open come back on your next visit: the browser keeps the list, and a signed-in
 account gets it sealed and posted (`sesh_ct` in `users.db`) — so a reload, or
-another machine, lands where you left off.
+another machine, lands where you left off (the AI tab is a conversation, not
+a canvas, so it is not restored).
 
 Names and designs are sealed with AES-GCM *before* they are sent; `users.db`
 holds the tag, the sealed name, the sealed design, and the auth hash — no
@@ -146,6 +150,7 @@ code (git-ignored) is the default.
 | `tests/diffusers_unet_test.py` | the diffusers gate: tiny random UNet2DConditionModels — plain, SDXL's `text_time`, SDXL's whole block shape — through diffusers' eager path and through `nn_engine.diffusers_unet_canvas`: stage for stage, every tensor bound |
 | `tests/nn_users_test.py` | the account store, offline: sealed rows (not one plaintext name), the bot check's answers, the .env loader, design CRUD |
 | `tools/quant_bench.py` | what a design's weights cost per sweep: the native kernels timed on real blocks of a GGUF, summed per type |
+| `tools/chat_job.py` | the AI agent tab's runner: one conversational turn per `chat` task, the CLI session mirrored into the task's meta and carried into the next |
 | `tools/tls_local.sh` | the tiny local CA + server certificate (`.certs/`, git-ignored) for reaching the app over https from your own devices |
 | `tests/agent_test.py` | the live end-to-end: a real agent connects and a design runs (`--live`) |
 | `weights/` | where `export weights …` writes, and a place to drop pt / safetensors / gguf files for the pickers |
@@ -780,6 +785,18 @@ is a **spec**, and a spec is only accepted when it survives a numeric gate.
   every stage is green — the harness catches what reading alone can't (rope
   layout, QK-norm placement, GQA repeat order, mask dtype, v5's tied hidden
   state).
+- **The AI agent tab** is that agent, spoken to. The `+` beside the tabs opens
+  it: a conversation, not a canvas (the palette, Import and VRAM are off while
+  it is the screen; its `×` closes it like any tab). Say *"reverse engineer
+  org/name"* and the first turn's prompt points the agent at the same
+  `.opencode/commands/reverse-model.md` workflow; its words, tool calls and
+  step markers stream into the thread as they are written. Every message is
+  one `chat` task (`tools/chat_job.py`), and the **session** is what makes it a
+  conversation: the CLI's own session id is mirrored into the task's meta, and
+  the next turn runs with `--session <id>` — so *"why two norms there?"* lands
+  in the same context. There are no gates on a chat turn; the agent's own
+  tools land what they land (a spec in `specs/`, a row in `hf_arc`). Stop
+  halts the running turn; the thread survives switching tabs.
 - **At run time there is no transformers.** The canvas executes on our engine;
   the spec only shaped it. Families without a verified spec build the older
   role-based skeleton and are labelled `approximate` — a design always says

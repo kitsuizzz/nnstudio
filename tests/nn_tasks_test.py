@@ -98,7 +98,9 @@ check("a start reuses the settled attempt for the same ask",
 
 
 def a_dead_process_is_not_running():
+    import time
     t = nn_tasks.create("python", {"prompt": "x"})
+    assert nn_tasks.reconcile() == [], "a just-fired row is not killed mid-spawn"
     nn_tasks.update(t["id"], pid=os.getpid())       # this very process: alive
     assert nn_tasks.reconcile() == []
     nn_tasks.update(t["id"], pid=99999999)
@@ -106,6 +108,17 @@ def a_dead_process_is_not_running():
     got = nn_tasks.get(t["id"])
     assert got["status"] == "done" and got["outcome"] == "failed", got
     nn_tasks.delete(t["id"])
+    old = nn_tasks.create("python", {"prompt": "y"})   # no pid, and long stale
+    conn = nn_tasks.connect()
+    try:
+        with conn:
+            conn.execute("UPDATE agent_tasks SET updated = ? WHERE id = ?",
+                         (time.time() - 600, old["id"]))
+    finally:
+        conn.close()
+    assert nn_tasks.reconcile() == [old["id"]], \
+        "a stale pid-less row still lands (a reboot mid-task)"
+    nn_tasks.delete(old["id"])
 
 
 check("reconcile lands a task whose process is gone", a_dead_process_is_not_running)

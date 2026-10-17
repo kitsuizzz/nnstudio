@@ -48,7 +48,7 @@ import nn_arc
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 TASKS_DB = os.path.join(ROOT, "agents", "tasks.db")   # its own, git-ignored file
-TASK_TYPES = ("reverse", "python", "train")    # the agent types the app offers
+TASK_TYPES = ("reverse", "python", "train", "chat")   # what the app offers
 STATUSES = ("running", "paused", "cancelled", "done")
 _OUTCOMES = ("exact", "approximate", "failed")
 
@@ -242,8 +242,10 @@ def title(task):
     t = (task or {}).get("type") or "?"
     params = (task or {}).get("params") or {}
     label = {"reverse": "reverse engineer repo",
-             "python": "python agent"}.get(t, t)
-    who = params.get("repo") or params.get("source") or params.get("prompt") or ""
+             "python": "python agent",
+             "chat": "reverse engineer chat"}.get(t, t)
+    who = (params.get("repo") or params.get("source") or params.get("prompt")
+           or params.get("message") or "")
     return (label + " \u00b7 " + who).rstrip(" \u00b7")
 
 
@@ -286,6 +288,9 @@ def reconcile(path=None):
             except OSError:
                 alive = False
         if not alive:
+            if pid is None and time.time() - (t.get("updated") or 0) < 15:
+                continue                      # fired a breath ago: the wrapper is
+                                              # still starting — its pid lands next
             update(t["id"], path, status="done", outcome="failed",
                    finished=time.time(),
                    meta=dict(t.get("meta") or {},

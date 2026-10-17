@@ -424,6 +424,27 @@
   .bxpform .rf span { color: #9aa2aa; min-width: 80px; }
   .bxpfoot { padding: 4px 8px; border-top: 1px solid #262b30; color: #8a9199;
              white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* the AI agent tab: a conversation surface where the canvas would be */
+  .bxtalk { position: absolute; inset: 0; z-index: 5; display: flex;
+            justify-content: center; background: #14171a; }
+  .bxtalkwrap { display: flex; flex-direction: column; width: 100%;
+                max-width: 900px; min-height: 0; }
+  .bxtalkbody { display: block; }
+  .bxtitem { margin: 0 0 12px; }
+  .bxtwho { color: var(--ink-faint); font: 10px var(--mono); letter-spacing: .08em;
+            text-transform: uppercase; margin: 0 0 3px; }
+  .bxtitem.you { border-left: 2px solid #343a40; padding-left: 9px; }
+  .bxtitem.you .bxtwho { color: #9aa2aa; }
+  .bxtitem.agent { border-left: 2px solid #3f3423; padding-left: 9px; }
+  .bxtitem.agent .bxtwho { color: var(--warm); }
+  .bxtsay { color: #e6e9ec; white-space: pre-wrap; }
+  .bxtalkfoot { display: flex; gap: 8px; align-items: flex-end;
+                border-top: 1px solid #262b30; padding: 8px; background: #171b1f; }
+  .bxtalkin { flex: 1 1 auto; min-height: 44px; max-height: 160px; resize: vertical;
+              background: #0f1214; border: 1px solid #343a40; border-radius: 8px;
+              color: #e6e9ec; padding: 7px 9px; font: 12px/1.5 var(--mono); }
+  .bxtalkin:focus { outline: none; border-color: #fdba74; }
+  .bxtab.ai .nm { color: var(--warm); }
   .dnode.now .drect { stroke: #fef3c7; stroke-width: 2.6; }   /* where data is now */
   .dedge.flow { stroke: #fdba74; stroke-width: 2.2; stroke-dasharray: 5 9;
                 animation: bxflow .5s linear infinite; }
@@ -1087,6 +1108,7 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
     <div class="bxrow">
       <div class="bxwrap" id="bxwrap">
         <div class="flowsvg" id="bxcanvas"></div>
+        <div class="bxtalk" id="bxtalk" hidden></div>
         <div class="bxmenu" id="bxmenu" hidden></div>
         <div class="bxtip" id="bxtip" hidden></div>
         <div class="bxtoast" id="bxtoast" hidden></div>
@@ -7781,9 +7803,14 @@ function bxtToggle(id, btnId) {
   if (open) bxtPlace(id, btnId);               // the strip's left edge is not an address
   return open;
 }
-function bxtPaletteToggle() { return bxtToggle("bxtPalMenu", "bxtPalette"); }
-function bxtImportToggle() { return BX.up ? false : bxtToggle("bxtImportMenu", "bxtImport"); }
+function bxtPaletteToggle() {
+  return bxTalkOn() ? false : bxtToggle("bxtPalMenu", "bxtPalette");
+}
+function bxtImportToggle() {
+  return (BX.up || bxTalkOn()) ? false : bxtToggle("bxtImportMenu", "bxtImport");
+}
 function bxtVramToggle() {
+  if (bxTalkOn()) return false;                // no canvas: no estimate
   const open = bxtToggle("bxtVramMenu");
   if (open) bxRenderEstimate();                // the live vram line, fresh
   return open;
@@ -8563,6 +8590,7 @@ function bxTabDirty() {                        // a change the server has not se
 function bxTabStash() {                        // the screen's state → its tab
   const p = bxProject();
   if (!p) return null;
+  if (p.kind === "ai") return p;               // a conversation has no canvas to stash
   p.doc = bxExportCanvas() || p.doc;           // top level: the whole canvas
   p.view = { cx: BX.view.cx, cy: BX.view.cy, k: BX.view.k };
   p.undo = bxUndoStack;
@@ -8571,6 +8599,11 @@ function bxTabStash() {                        // the screen's state → its tab
   return p;
 }
 function bxTabLoad(p, doc) {                   // a tab → the screen
+  if (p && p.kind === "ai") {                  // a conversation, not a canvas
+    bxTalkEnter(p);
+    return true;
+  }
+  bxTalkLeave();
   const wasDirty = !!p.dirty;
   BX.up = null;                                // a canvas loads at the top level
   BX.stack = [];
@@ -8673,9 +8706,25 @@ function bxTabOpenSaved(name, doc) {           // a saved canvas → its own tab
   bxSessionPush();
   return p;
 }
+function bxTabNewAI() {                        // a conversation, its own tab
+  bxTabStash();
+  const p = { id: bxId(), kind: "ai", name: "AI agent", dirty: false, saved: false,
+              talk: { turns: [], draft: "" } };
+  (BX.projects = BX.projects || []).push(p);
+  BX.active = p.id;
+  bxTalkEnter(p);
+  bxTabsRender();
+  bxTabsSay("");
+  bxSessionPush();
+  return p;
+}
 function bxTabSave() {                         // Ctrl/Cmd+S, and the saved names
   const p = bxProject();
   if (!p) return false;
+  if (p.kind === "ai") {
+    bxTabsSay("this tab is a conversation, not a canvas \u2014 nothing to save");
+    return false;
+  }
   if (typeof fetch !== "function") { bxTabsSay("the app cannot reach the server to save"); return false; }
   if (!BXACCT.user) {
     bxTabsSay("saving takes an account \u2014 create one from the block at the top right");
@@ -8718,8 +8767,11 @@ function bxTabsRender() {                      // the strip, its stars, the note
   if (!rail) return;
   rail.innerHTML = "";
   for (const p of BX.projects || []) {
-    const t = mk("div", { class: "bxtab" + (p.id === BX.active ? " on" : ""),
-                          title: (p.saved ? "saved \u00b7 " : "not saved yet \u00b7 ") + p.name });
+    const t = mk("div", { class: "bxtab" + (p.id === BX.active ? " on" : "")
+                                 + (p.kind === "ai" ? " ai" : ""),
+                          title: p.kind === "ai"
+                            ? "the AI agent \u2014 a conversation, not a canvas"
+                            : (p.saved ? "saved \u00b7 " : "not saved yet \u00b7 ") + p.name });
     t.appendChild(mk("span", { class: "nm", text: p.name }));
     if (p.dirty)
       t.appendChild(mk("span", { class: "star", text: "*", title: "changes not saved" }));
@@ -8772,6 +8824,8 @@ function bxtabMenuBuild() {                    // the + : New Canvas, Saved Canv
   };
   if (BXTAB.view !== "saved") {
     item("New Canvas", "a fresh blank canvas \u2014 nothing saved yet", () => bxTabNew());
+    item("AI agent", "a conversation with the reverse-engineering agent \u2014 "
+                   + "its own tab, no canvas", () => bxTabNewAI());
     item("Saved Canvas \u2026", "open one of your saved canvases in its own tab",
          () => { BXTAB.view = "saved"; bxtabMenuBuild(); });
     return;
@@ -8828,6 +8882,193 @@ async function bxTabOpenSavedRow(tag, name, status) {
   } catch (e) {
     if (status) status.textContent = String((e && e.message) || e);
   }
+}
+
+// ---- the AI agent tab: a conversation, not a canvas -------------------------
+// The + opens it beside the canvases. Its surface is the reverse-engineering
+// agent, spoken to: every message is one `chat` task, the agent's stream folds
+// into the thread as it writes, and the CLI session the first turn creates is
+// carried into the next — so the conversation remembers. There is no canvas
+// under it: the palette, Import and VRAM are off while it is the active tab.
+function bxTalkOn() {
+  const p = bxProject();
+  return !!(p && p.kind === "ai");
+}
+function bxTalkBody(p) {
+  return (p.talk = p.talk || { turns: [], draft: "" });
+}
+function bxTalkTask() {                        // the thread's last agent turn
+  const p = bxProject();
+  if (!p || p.kind !== "ai") return null;
+  const turns = bxTalkBody(p).turns;
+  for (let i = turns.length - 1; i >= 0; i--)
+    if (turns[i].who === "agent" && turns[i].task) return bxTask(turns[i].task);
+  return null;
+}
+function bxTalkCurrent() {                     // …when it is the one running now
+  const t = bxTalkTask();
+  return t && (t.status === "running" || t.status === "paused") ? t : null;
+}
+function bxTalkEnter(p) {
+  BX.up = null;                                // no canvas on this tab at all
+  BX.stack = [];
+  bxSel = null;
+  bxRunErr = null;
+  BX.nodes = [];
+  BX.edges = [];
+  BX.weights = {};
+  BX.model = null;
+  BX.view = { cx: null, cy: null, k: 1 };
+  bxUndoStack = [];
+  bxRedoStack = [];
+  const talk = $("bxtalk"), host = $("bxcanvas");
+  if (host) host.hidden = true;                // the talk takes the canvas's place
+  if (talk) talk.hidden = false;
+  bxtDropsClose();
+  bxTalkRender(p);
+  bxRender();
+  bxTabsRender();
+  bxtRefresh();
+}
+function bxTalkLeave() {
+  const talk = $("bxtalk"), host = $("bxcanvas");
+  if (talk) talk.hidden = true;
+  if (host) host.hidden = false;
+  bxtRefresh();
+}
+function bxTalkSend(p) {                       // one message = one chat task
+  p = p || bxProject();
+  if (!p || p.kind !== "ai") return false;
+  const talk = bxTalkBody(p);
+  const text = String(talk.draft || "").trim();
+  if (!text) return false;
+  if (bxTalkCurrent()) return false;           // one turn at a time
+  const prev = bxTalkTask();                   // the session the last turn opened
+  const session = (prev && (prev.meta || {}).session) || null;
+  const params = { message: text };
+  if (session) params.session = String(session);
+  talk.draft = "";
+  talk.turns.push({ who: "you", text });
+  bxTalkRender(p);
+  if (typeof fetch !== "function") {
+    talk.turns.push({ who: "error", text: "the app cannot reach the server" });
+    return bxTalkRender(p), true;
+  }
+  bxTaskStart("chat", params, (task, why) => {
+    if (!task) {
+      talk.turns.push({ who: "error", text: why || "the turn could not start" });
+      bxTalkRender(p);
+      return;
+    }
+    talk.turns.push({ who: "agent", task: task.id });
+    bxAgentTick(true);                         // pull the stream from now on
+    bxTalkRender(p);
+  });
+  return true;
+}
+function bxTalkRender(p) {                     // the thread, the head, the composer
+  p = p || bxProject();
+  const host = $("bxtalk");
+  if (!host || !p || p.kind !== "ai" || host.hidden) return false;
+  const talk = bxTalkBody(p);
+  const old = host.querySelector ? host.querySelector(".bxtalkbody") : null;
+  const stick = !old || old.scrollTop + (old.clientHeight || 0) >=
+                       (old.scrollHeight || 0) - 40;
+  if (host.children) host.children.length = 0;
+  host.innerHTML = "";
+  const wrap = mk("div", { class: "bxtalkwrap" });
+  const cur = bxTalkCurrent();
+  const head = mk("div", { class: "bxphead" });
+  head.appendChild(mk("span", { class: "bxptitle", text: "reverse engineering agent" }));
+  head.appendChild(mk("span", { class: "bxchip " + (cur ? cur.status : "none"),
+                                text: cur ? bxTaskChip(cur)
+                                          : (talk.turns.length ? "" : "not started") }));
+  if (cur)
+    head.appendChild(mk("span", { class: "bxbbtn", text: "stop",
+                                  title: "stop this turn",
+                                  onclick: () => bxTaskCmd(cur.id, "cancel",
+                                                           { reason: "stopped by you" },
+                                                           () => bxTalkRender(p)) }));
+  head.appendChild(mk("span", { class: "bxbhint",
+                                text: "the whole conversation is one session \u2014 "
+                                    + "every message continues it" }));
+  wrap.appendChild(head);
+  const body = mk("div", { class: "bxpbody bxtalkbody" });
+  if (!talk.turns.length) {
+    body.appendChild(mk("div", { class: "bxbhint",
+      text: "say hello, or name a repo to reverse engineer \u2014 e.g. "
+          + "\u201creverse engineer Qwen/Qwen2.5-0.5B\u201d. The agent reads the "
+          + "family's source, inspects the repo's tensors and writes the spec; "
+          + "ask it why afterwards." }));
+  }
+  for (const turn of talk.turns) {
+    if (turn.who === "you") {
+      const row = mk("div", { class: "bxtitem you" });
+      row.appendChild(mk("div", { class: "bxtwho", text: "you" }));
+      row.appendChild(mk("div", { class: "bxtsay", text: turn.text }));
+      body.appendChild(row);
+      continue;
+    }
+    if (turn.who === "error") {
+      const row = mk("div", { class: "bxtitem agent" });
+      row.appendChild(mk("div", { class: "bxtwho", text: "app" }));
+      row.appendChild(mk("div", { class: "bxperr", text: turn.text }));
+      body.appendChild(row);
+      continue;
+    }
+    const t = bxTask(turn.task);
+    const row = mk("div", { class: "bxtitem agent" });
+    row.appendChild(mk("div", { class: "bxtwho",
+      text: "agent" + (t ? " \u00b7 " + bxTaskChip(t) : "") }));
+    const st = bxLogState(turn.task);
+    for (const it of st.items.slice(-400)) {
+      const line = mk("div", { class: "bxpitem " + it.kind });
+      line.appendChild(mk("span", { class: it.kind === "do" ? "bxpdo"
+                                    : it.kind === "step" ? "bxpstep"
+                                    : it.kind === "error" ? "bxperr" : "bxpsay",
+                                    text: it.text }));
+      row.appendChild(line);
+    }
+    const live = t && (t.status === "running" || t.status === "paused");
+    if (live && !st.items.length)
+      row.appendChild(mk("div", { class: "bxbhint", text: "working \u2026" }));
+    if (t && t.status === "done" && t.outcome === "failed") {
+      const why = (t.meta && (t.meta.detail || t.meta.error)) || "the turn failed";
+      row.appendChild(mk("div", { class: "bxperr", text: why }));
+    }
+    body.appendChild(row);
+  }
+  wrap.appendChild(body);
+  const foot = mk("div", { class: "bxtalkfoot" });
+  const inp = mk("textarea", { class: "bxtalkin", spellcheck: "false",
+                                placeholder: cur
+                                  ? "the agent is working \u2014 wait, or stop it above"
+                                  : "reverse engineer org/name \u2014 or ask anything \u2026",
+                                value: talk.draft || "" });
+  inp.addEventListener("input", () => { talk.draft = inp.value; });
+  inp.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey) {
+      if (ev.preventDefault) ev.preventDefault();
+      bxTalkSend(p);
+    }
+  });
+  foot.appendChild(inp);
+  const send = mk("span", { class: "chip tiny", text: "send",
+                            title: "Enter sends \u00b7 Shift+Enter makes a new line" });
+  if (cur && send.classList) send.classList.add("off");
+  send.addEventListener("click", () => bxTalkSend(p));
+  foot.appendChild(send);
+  wrap.appendChild(foot);
+  host.appendChild(wrap);
+  if (body.scrollTop != null)
+    body.scrollTop = stick ? (body.scrollHeight || 0) : (talk.scroll || 0);
+  if (body.addEventListener)
+    body.addEventListener("scroll", () => { talk.scroll = body.scrollTop; });
+  if (!cur && inp.focus) inp.focus();
+  return true;
+}
+function bxTalkSync() {                        // a log/list poll landed: repaint
+  if (bxTalkOn()) bxTalkRender(bxProject());
 }
 
 // ---- the Backend menu: two dropdowns, their instructions inside ------------
@@ -9682,16 +9923,27 @@ function bxUsageWatch(on) {                    // the 5 s poll is fine when idle
 }
 function bxtRefresh() {
   const up = !!BX.up;
+  const talk = bxTalkOn();                     // the AI tab has no canvas beneath
+  const off = up || talk;
   const imp = $("bxtImport");                  // a whole model loads at the top level
   if (imp) {
-    if (imp.classList) imp.classList.toggle("off", up);
-    imp.title = up ? "come back out to the top level first" : "bring a GGUF model in";
+    if (imp.classList) imp.classList.toggle("off", off);
+    imp.title = talk ? "the AI agent tab has no canvas \u2014 the + opens one"
+              : up ? "come back out to the top level first"
+              : "bring a GGUF model in";
   }
-  if (up) {                                    // no toolbar menu survives going inside
-    const m = $("bxtImportMenu");
-    if (m) m.hidden = true;
+  for (const id of ["bxtPalette", "bxtVram"]) {
+    const btn = $(id);
+    if (btn && btn.classList) btn.classList.toggle("off", talk);
+  }
+  if (off) {                                   // no toolbar menu survives either
+    for (const id of ["bxtPalMenu", "bxtImportMenu", "bxtVramMenu"]) {
+      const m = $(id);
+      if (m) m.hidden = true;
+    }
   }
   bxtRunRefresh();                             // Run follows the backend's state
+  if (bxTalkOn()) bxTalkSync();                // the AI tab repaints on every sync
 }
 function bxtInit() {
   const item = (text, title, fn) => {
@@ -10609,12 +10861,14 @@ function bxAgentTick(now) {                    // one log poll for every live bo
     const t = bxTask(n.task_id);
     if (!t) return bxTraining(n);               // unknown task: the box knows best
     return t.status === "running" || t.status === "paused";
-  });
+  }) || !!bxTalkCurrent();                     // the AI tab's running turn
   const pullLogs = () => {
     for (const n of BX.nodes || [])
       if (n.kind === "agent" && n.task_id) bxTaskLogFetch(n.task_id, bxAgentSync);
+    const talk = bxTalkCurrent();
+    if (talk && talk.id) bxTaskLogFetch(talk.id, bxTalkSync);
   };
-  const pullList = () => bxTasksFetch(bxAgentSync);
+  const pullList = () => bxTasksFetch(bxTalkOn() ? bxTalkSync : bxAgentSync);
   if (now) { pullList(); pullLogs(); }
   if (!BXTASKS.timer && any) {
     BXTASKS.timer = setInterval(pullLogs, 300);  // token by token, as it writes
@@ -11626,7 +11880,6 @@ const BX_PALETTE = () => [
   ["Training", [["training", "training box"], ["config", "train config box"],
                 ["loss", "loss box"], ["reward", "reward box"]]],
   ["Analysis", [["heatmap", "heatmap box"]]],
-  ["AI", [["agent", "agent box"]]],
 ];
 function bxPalCard(kind, label) {
   const item = mk("div", { class: "bxpalitem",

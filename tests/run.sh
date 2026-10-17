@@ -37,6 +37,9 @@ $PY tests/spec_conformance_test.py >/tmp/nnstudio_spec_conformance.log 2>&1 && o
 step "reverse job (stubbed agent)"
 $PY tests/reverse_job_test.py >/tmp/nnstudio_reverse_job.log 2>&1 && ok || { bad; tail -20 /tmp/nnstudio_reverse_job.log; }
 
+step "chat job (stubbed agent)"
+$PY tests/chat_job_test.py >/tmp/nnstudio_chat_job.log 2>&1 && ok || { bad; tail -20 /tmp/nnstudio_chat_job.log; }
+
 step "torch engine (the agent's)"
 $PY tests/nn_torch_test.py >/tmp/nnstudio_nn_torch.log 2>&1 && ok || { bad; tail -20 /tmp/nnstudio_nn_torch.log; }
 
@@ -76,7 +79,7 @@ PY
 [ $? -eq 0 ] && ok || bad
 
 step "py_compile"
-$PY -m py_compile nn_engine.py nn_server.py nn_arc.py nn_users.py tools/reverse_job.py tools/reverse_model.py tools/quant_bench.py tools/train_job.py tools/backend_check.py agent/nnstudio_agent.py agent/nn_torch.py agent/nn_quant.py && ok || bad
+$PY -m py_compile nn_engine.py nn_server.py nn_arc.py nn_users.py tools/reverse_job.py tools/reverse_model.py tools/quant_bench.py tools/train_job.py tools/chat_job.py tools/backend_check.py agent/nnstudio_agent.py agent/nn_torch.py agent/nn_quant.py && ok || bad
 
 if [ "${1:-}" = "--live" ]; then
   step "live app"

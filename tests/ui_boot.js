@@ -205,6 +205,7 @@ globalThis.__t = {
   bxtDropsClose, bxtPaletteToggle, bxtImportToggle, bxtabToggle,
   bxTabsRender, bxTabNew, bxTabSave, bxTabSelect, bxTabOpenSaved, bxProject,
   bxTabClose, bxTabAnyDirty, bxTabLoad, bxSessionNow, bxSessionPush, bxSessionMatch,
+  bxTabNewAI, bxTalkOn, bxTalkSend, bxTalkRender, bxTalkSync, bxTalkTask, bxTalkCurrent,
   bxSessionRead, bxSessionRestore, bxSeal, bxAccountOpenApply, bxSplash, BXSESSION,
   bxAccountSync,
   bxGGUFImport, bxGGUFImportApply, bxtVramToggle,
@@ -423,13 +424,13 @@ check("the right-click menus: three add items, or remove", () => {
   const openItems = () => menu.children.filter(c => c.className === "mi").map(c => c.textContent);
   eql(menu.children.map(c => c.textContent),
     ["Model", "Layers", "Blocks", "Vision", "Text", "Data", "Training",
-     "Analysis", "AI", "the design"],
+     "Analysis", "the design"],
     "the shelves are listed, all collapsed — the same ones the palette shows");
   ok(openItems().length === 0, "…with no items in sight");
   heads()[0].click();
   eql(menu.children.map(c => c.textContent),
     ["Model", "model box", "Layers", "Blocks", "Vision", "Text", "Data",
-     "Training", "Analysis", "AI", "the design"],
+     "Training", "Analysis", "the design"],
     "Model drops down into its box");
   eql(heads()[0].querySelectorAll(".chev")[0].textContent, "\u25be", "…and wears the open chevron");
   heads().find(c => c.textContent === "Layers").click();
@@ -1225,13 +1226,11 @@ check("the Palette menu: Input and Output up top, categories below", () => {
     ["input", "output"], "Input and Output are the first cards, not a category");
   eql(menu.children.filter(c => c.className === "bxtcat").map(c => c.textContent),
     ["Model", "Layers", "Blocks", "Vision", "Text", "Data", "Training",
-     "Analysis", "AI"],
-    "and only the shelves are listed below");
-  // the AI category holds the agent box
-  menu.children.find(c => c.textContent === "AI").click();
-  eql(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind")),
-    ["input", "output", "agent"], "AI holds the agent box");
-  menu.children.find(c => c.textContent === "AI").click();
+     "Analysis"],
+    "and only the shelves are listed below \u2014 the AI shelf lives in the + now");
+  // the agent box is no longer a card here: its home is the AI agent tab
+  ok(menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind"))
+       .indexOf("agent") < 0, "\u2026no agent card in the palette");
   // expand a category: its visual boxes appear, drawn by the card renderer
   menu.children.find(c => c.textContent === "Layers").click();
   const cards = menu.querySelectorAll(".bxpalitem");
@@ -1317,7 +1316,7 @@ check("no hf or custom card in the Palette \u2014 Import covers models, model co
   const cards = () => menu.querySelectorAll(".bxpalitem").map(i => i.getAttribute("data-kind"));
   let all = [];
   for (const name of ["Model", "Layers", "Blocks", "Vision", "Text", "Data",
-                      "Training", "Analysis", "AI"]) {
+                      "Training", "Analysis"]) {
     menu.children.find(c => c.textContent === name).click();
     all = all.concat(cards());
   }
@@ -1332,7 +1331,7 @@ check("no hf or custom card in the Palette \u2014 Import covers models, model co
     x => String(x.className).split(/\s+/).includes("drop"));
   let items = [];
   for (const name of ["Model", "Layers", "Blocks", "Vision", "Text", "Data",
-                      "Training", "Analysis", "AI"]) {
+                      "Training", "Analysis"]) {
     const h = nheads().find(x => x.textContent === name);
     if (!h) continue;
     h.click();
@@ -3159,7 +3158,7 @@ check("a nested box takes nested JSON and never a canvas", () => {
   const nopen = () => nmenu.children.filter(x => x.className === "mi").map(x => x.textContent);
   eql(nmenu.children.map(x => x.textContent),
     ["Model", "Layers", "Blocks", "Vision", "Text", "Data", "Training",
-     "Analysis", "AI", "the design"],
+     "Analysis", "the design"],
     "inside a nested box the shelves are all there, collapsed");
   nheads().find(x => x.textContent === "Model").click();
   eql(nopen(), ["model box"], "Model is there too — a model nests in a model");
@@ -4710,10 +4709,10 @@ check("the project tabs: named, starred, switched \u2014 and saved from the tab"
   const a = __t.bxAdd("input", 100, 80, { dout: 4 });
   ok(t1.dirty, "an edit stars the tab");
   eql(strip(), ["New Project 1*"], "\u2026and the star rides the name");
-  // the + : New Canvas and Saved Canvas
+  // the + : New Canvas, the AI agent, and Saved Canvas
   ok(__t.bxtabToggle() === true, "the + opens its menu");
   eql(getEl("bxtabMenu").children.map(c => c.textContent),
-    ["New Canvas", "Saved Canvas \u2026"], "two ways in");
+    ["New Canvas", "AI agent", "Saved Canvas \u2026"], "three ways in");
   getEl("bxtabMenu").children.find(c => c.textContent === "New Canvas").click();
   const t2 = __t.bxProject();
   eql([t2.name, t2.dirty], ["New Project 2", false], "a new blank tab, nothing unsaved");
@@ -4782,6 +4781,106 @@ check("the project tabs: named, starred, switched \u2014 and saved from the tab"
   ok(__t.bxProject() === t1b, "…the one canvas stays");
   delete global.confirm;
   eql(strip(), ["New Project 1*"], "the strip is tidy again");
+});
+
+checkAsync("the AI agent tab: a conversation, not a canvas", async () => {
+  const allText = (el) => {
+    let s = el.textContent || "";
+    for (const c of el.children || []) s += " " + allText(c);
+    return s;
+  };
+  const turn = () => new Promise(r => setImmediate(r));   // one event-loop turn
+  const flush = async () => { for (let i = 0; i < 8; i++) await turn(); };
+  const t0 = __t.bxProject();
+  const heldIds = (__t.BX.nodes || []).map(n => n.id);   // the canvas as it stands
+  const calls = [];
+  let made = 0;
+  const realFetch = global.fetch;
+  global.fetch = async (url, opts) => {
+    const u = String(url);
+    calls.push([u, opts && opts.body ? JSON.parse(opts.body) : null]);
+    const jr = (body) => ({ ok: true, status: 200, json: async () => body });
+    if (u === "/api/tasks" && opts && opts.method === "POST") {
+      const body = JSON.parse(opts.body);
+      made += 1;
+      return jr({ ok: true, task: { id: "chat-" + made, type: body.type,
+                                    params: body.params, status: "running", meta: {} } });
+    }
+    if (u === "/api/tasks")                        // the server echoes the app's own
+      return jr({ ok: true, tasks: Object.values(__t.BXTASKS.byId) });   // state
+    if (u.indexOf("/api/tasks/log") === 0)
+      return jr({ ok: true, pos: 10, items: [
+        { id: "p1", kind: "say", text: "reading the family's source" }] });
+    return jr({ ok: true });
+  };
+  try {
+    // the + offers it, and it lands as a tab of its own kind
+    const p = __t.bxTabNewAI();
+    eql([p.kind, p.name], ["ai", "AI agent"], "the AI agent tab exists");
+    ok(__t.BX.projects.indexOf(p) >= 0, "\u2026on the strip");
+    ok(__t.bxTalkOn(), "\u2026and it is the screen");
+    eql(getEl("bxtalk").hidden, false, "the talk surface shows");
+    eql(getEl("bxcanvas").hidden, true, "\u2026over the canvas");
+    ok(allText(getEl("bxtalk")).indexOf("reverse engineering agent") >= 0 &&
+       allText(getEl("bxtalk")).indexOf("reverse engineer Qwen") >= 0,
+       "the surface names the agent and invites a repo: " + allText(getEl("bxtalk")));
+    // the canvas tools are off while it is the screen
+    __t.bxtRefresh();
+    ok(String(getEl("bxtPalette").className).indexOf("off") >= 0 &&
+       String(getEl("bxtImport").className).indexOf("off") >= 0,
+       "palette and Import are off \u2014 no canvas here");
+    ok(__t.bxtPaletteToggle() === false && __t.bxtImportToggle() === false &&
+       __t.bxtVramToggle() === false, "\u2026and refuse to open");
+    // one message = one chat turn, posted with the conversation's shape
+    p.talk.draft = "reverse engineer org/tiny";
+    ok(__t.bxTalkSend(p) === true, "send posts the turn");
+    await flush();                               // the post's promise chain settles
+    eql(calls.filter(c => c[1]).map(c => [c[0], c[1].type, c[1].params]),
+      [["/api/tasks", "chat", { message: "reverse engineer org/tiny" }]],
+      "exactly one chat task, the message as asked");
+    eql(p.talk.turns.map(t => t.who), ["you", "agent"], "the thread gains both turns");
+    eql(p.talk.turns[1].task, "chat-1", "\u2026the second one bound to the task it made");
+    // the agent's stream folds in as it writes
+    __t.bxLogApply("chat-1", [{ id: "p1", kind: "say", text: "reading the family's source" }]);
+    __t.bxTalkRender(p);
+    ok(allText(getEl("bxtalk")).indexOf("reading the family's source") >= 0,
+       "the agent's words render in the thread");
+    ok(allText(getEl("bxtalk")).indexOf("In-Progress") >= 0, "\u2026with the turn's chip");
+    // the next turn carries the session the runner mirrors in
+    __t.BXTASKS.byId["chat-1"].status = "done";
+    __t.BXTASKS.byId["chat-1"].outcome = null;
+    __t.BXTASKS.byId["chat-1"].meta = { session: "ses_42" };
+    p.talk.draft = "why two norms?";
+    __t.bxTalkSend(p);
+    await flush();
+    eql(calls.filter(c => c[1]).map(c => c[1].params.session || null),
+      [null, "ses_42"], "the follow-up continues the session");
+    eql(p.talk.turns.map(t => t.who), ["you", "agent", "you", "agent"],
+       "\u2026as another turn of the thread");
+    // no canvas to save, and the note says so
+    __t.bxTabSave();
+    ok(String(getEl("bxtabnote").textContent).indexOf("conversation, not a canvas") >= 0,
+       "Ctrl+S explains itself: " + getEl("bxtabnote").textContent);
+    // switching back loads the canvas tab exactly as it was
+    __t.bxTabSelect(t0.id);
+    ok(!__t.bxTalkOn(), "the canvas tab is back");
+    eql(getEl("bxtalk").hidden, true, "\u2026talk hidden");
+    eql(getEl("bxcanvas").hidden, false, "\u2026canvas shown");
+    ok(heldIds.length === 0 ||
+       heldIds.some(id => (__t.BX.nodes || []).some(n => n.id === id)),
+       "\u2026with the canvas it had: " + (__t.BX.nodes || []).map(n => n.name).join(","));
+    // and back: the conversation is still there
+    __t.bxTabSelect(p.id);
+    ok(__t.bxTalkOn() &&
+       allText(getEl("bxtalk")).indexOf("why two norms?") >= 0,
+       "returning shows the whole thread again");
+    // closing the AI tab: the neighbour takes the screen, talk goes off
+    __t.bxTabClose(p.id);
+    ok(__t.bxProject() === t0 && !__t.bxTalkOn(), "closing it leaves the canvas");
+    eql(getEl("bxtalk").hidden, true, "\u2026talk hidden with it");
+  } finally {
+    global.fetch = realFetch;
+  }
 });
 
 check("the order is toolbar, project tabs, canvas", () => {

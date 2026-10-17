@@ -459,6 +459,36 @@ def _fire_agent(task):
     return True, None
 
 
+def _fire_chat(task):
+    """One conversational turn: the message, the agent in its session,
+    streamed. The session comes from the previous turn's meta (the runner
+    mirrors it in), so follow-ups remember the conversation."""
+    p = task.get("params") or {}
+    msg = str(p.get("message") or "").strip()
+    if not msg:
+        nn_tasks.update(task["id"], status="done", outcome="failed",
+                        finished=time.time(),
+                        meta=dict(task.get("meta") or {},
+                                  error="the turn has no message"))
+        return False, "the turn has no message"
+    log = task.get("log") or nn_tasks.log_file(task["id"])
+    cmd = [sys.executable, os.path.join(HERE, "tools", "chat_job.py"),
+           "--task", task["id"], "--message", msg]
+    if p.get("session"):
+        cmd += ["--session", str(p["session"])]
+    if p.get("repo"):
+        cmd += ["--repo", str(p["repo"])]
+    try:
+        _spawn_detached(cmd, log, "chat-" + task["id"])
+    except OSError as e:
+        nn_tasks.update(task["id"], status="done", outcome="failed",
+                        finished=time.time(),
+                        meta=dict(task.get("meta") or {},
+                                  error="could not start the job: %s" % e))
+        return False, "could not start the job: %s" % e
+    return True, None
+
+
 def _fire_train(task):
     """The training driver: a design on disk in, checkpointed steps out."""
     p = task.get("params") or {}
@@ -507,6 +537,8 @@ def _fire_task(task):
         return _fire_reverse(task)
     if t == "python":
         return _fire_agent(task)
+    if t == "chat":
+        return _fire_chat(task)
     if t == "train":
         return _fire_train(task)
     return False, "unknown task type: %s" % t
@@ -1264,33 +1296,44 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "a repo id is required"}, 400)
                 return
             params = dict(params, repo=repo)
-        try:
-            joined = nn_tasks.find_active(t, params)   # one active ask per repo
-        except Exception as e:  # noqa: BLE001
-            self._json({"ok": False, "error": str(e)}, 500)
-            return
-        if joined:
-            self._json({"ok": True, "task": joined, "joined": True})
-            return
-        prior = nn_tasks.find_finished(t, params)   # an earlier attempt: retry it
-        if prior:
-            meta = dict(prior.get("meta") or {})
-            meta.pop("error", None)
-            meta.pop("reason", None)
-            task = nn_tasks.update(prior["id"], status="running", outcome=None,
-                                   phase="queued", finished=None, pid=None,
-                                   agent_pid=None, todo=[], meta=meta)
-            try:                                     # the stream starts over clean
-                open(task["log"], "w", encoding="utf-8").close()
-            except OSError:
-                pass
-            ok, why = _fire_task(task)
-            if not ok:
-                self._json({"ok": False, "error": why,
-                            "task": nn_tasks.get(task["id"])}, 400)
+        if t == "chat":
+            msg = str(params.get("message") or "").strip()
+            if not msg:
+                self._json({"ok": False, "error": "a message is required"}, 400)
                 return
-            self._json({"ok": True, "task": nn_tasks.get(task["id"]), "joined": True})
-            return
+            params = dict(params, message=msg)
+            if params.get("repo"):
+                params["repo"] = nn_arc.canonical(str(params["repo"]).strip())
+        # a conversation's turns are history: never joined, never
+        # reused — a chat turn goes straight to a fresh row
+        if t != "chat":
+            try:
+                joined = nn_tasks.find_active(t, params)   # one active ask per repo
+            except Exception as e:  # noqa: BLE001
+                self._json({"ok": False, "error": str(e)}, 500)
+                return
+            if joined:
+                self._json({"ok": True, "task": joined, "joined": True})
+                return
+            prior = nn_tasks.find_finished(t, params)   # an earlier attempt: retry it
+            if prior:
+                meta = dict(prior.get("meta") or {})
+                meta.pop("error", None)
+                meta.pop("reason", None)
+                task = nn_tasks.update(prior["id"], status="running", outcome=None,
+                                       phase="queued", finished=None, pid=None,
+                                       agent_pid=None, todo=[], meta=meta)
+                try:                                     # the stream starts over clean
+                    open(task["log"], "w", encoding="utf-8").close()
+                except OSError:
+                    pass
+                ok, why = _fire_task(task)
+                if not ok:
+                    self._json({"ok": False, "error": why,
+                                "task": nn_tasks.get(task["id"])}, 400)
+                    return
+                self._json({"ok": True, "task": nn_tasks.get(task["id"]), "joined": True})
+                return
         try:
             task = nn_tasks.create(t, params)
         except ValueError as e:
