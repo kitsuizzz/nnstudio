@@ -113,14 +113,6 @@ img {
   background: var(--wall);
 }
 
-.topbar-mark {
-  font-weight: 500;
-  font-size: 13px;
-  letter-spacing: 0.02em;
-  color: var(--text);
-  white-space: nowrap;
-}
-
 /* The one app's two halves: Chat is this page, Studio is the canvas at /. */
 
 .topbar-nav {
@@ -156,6 +148,14 @@ img {
 .topbar-nav-link:hover {
   color: var(--text);
 }
+
+/* brand:css */
+.brand-lockup { display: block; height: 20px; width: 114.1px; overflow: visible; color: var(--text); }
+.brand-wire { fill: none; stroke: currentColor; stroke-width: 3.2; stroke-linecap: round; }
+.brand-ring { fill: none; stroke: currentColor; stroke-width: 2.4; }
+.brand-node, .brand-word { fill: currentColor; }
+.brand-dot { fill: var(--dot); }
+/* /brand:css */
 
 /* The visitor's account, right-aligned in the top bar */
 

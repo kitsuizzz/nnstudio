@@ -63,3 +63,6 @@ studio/frontend/node_modules/
 studio/frontend/tsconfig.tsbuildinfo
 studio/backend/.venv/
 studio/backend/__pycache__/
+
+# the logo's font cache (brand/tools/make_brand.py fetches them once)
+brand/tools/cache/

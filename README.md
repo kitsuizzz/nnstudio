@@ -1,4 +1,8 @@
-# nnstudio
+# Studio Kitsui
+
+![Studio Kitsui](brand/previews/lockup-light.png)
+
+The app is **Studio Kitsui**: *Studio* (the canvas) and *Chat* (AI Studio), one app on one origin. The repository and its Python packages keep the name *nnstudio*. The logo lives in [brand/](brand/README.md).
 
 A dedicated app for designing a neural network — **one canvas** with twelve
 kinds of boxes, built straight from a GGUF file (or by hand), wired live,

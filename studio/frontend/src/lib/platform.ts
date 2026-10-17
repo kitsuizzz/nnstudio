@@ -12,7 +12,7 @@
 
 import type { LlmConfig, LlmProvider, ReasoningEffort } from "../types";
 
-export const PLATFORM_NAME = "chat.kitsui";
+export const PLATFORM_NAME = "Studio Kitsui";
 export const PLATFORM_BASE_URL =
   (import.meta.env.VITE_PLATFORM_BASE_URL as string | undefined)?.trim() ||
   // The gateway under the app's own mount: /v1, or /dev/v1 at /dev/.

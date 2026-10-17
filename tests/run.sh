@@ -40,6 +40,9 @@ $PY tests/reverse_job_test.py >/tmp/nnstudio_reverse_job.log 2>&1 && ok || { bad
 step "chat job (stubbed agent)"
 $PY tests/chat_job_test.py >/tmp/nnstudio_chat_job.log 2>&1 && ok || { bad; tail -20 /tmp/nnstudio_chat_job.log; }
 
+step "brand (the logo, in both UIs)"
+$PY tests/brand_test.py >/tmp/nnstudio_brand.log 2>&1 && ok || { bad; tail -15 /tmp/nnstudio_brand.log; }
+
 step "torch engine (the agent's)"
 $PY tests/nn_torch_test.py >/tmp/nnstudio_nn_torch.log 2>&1 && ok || { bad; tail -20 /tmp/nnstudio_nn_torch.log; }
 

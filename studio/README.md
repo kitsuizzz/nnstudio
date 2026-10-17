@@ -47,3 +47,7 @@ The upstream suites live with the upstream project (`backend/tests`, and the
 Playwright `shot-*.mjs` gates under `frontend/tmp`). nnstudio's own suite
 checks the merge itself: the SPA is served at `/chat` and the gateway answers
 through the proxy (`tests/run.sh --live`).
+
+## The brand
+
+The Chat half's logo, favicon and top-bar lockup are generated from the app's logo kit in `brand/`. After a change to the mark, run `.venv/bin/python brand/tools/make_brand.py`, then rebuild this app (`VITE_BASE_PATH=chat npm run build`). See [brand/README.md](../brand/README.md).

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDownIcon, SettingsIcon, UserIcon } from "./Icon";
+import BrandLockup from "./BrandLockup";
 import type { AccountUser } from "../types";
 
 export type AccountState = "loading" | "guest" | "user";
@@ -55,7 +56,7 @@ export default function TopBar({ account, accountState, onSignIn, onSignUp, onSi
 
   return (
     <header className="topbar" ref={rootRef}>
-      <span className="topbar-mark">chat.kitsui</span>
+      <BrandLockup />
       <nav className="topbar-nav" aria-label="the app">
         <span className="topbar-nav-on">Chat</span>
         <a className="topbar-nav-link" href="/">Studio</a>
