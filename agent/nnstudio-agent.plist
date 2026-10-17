@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  nnstudio's agent as a macOS LaunchAgent — the counterpart of
+  nnstudio-agent.service on Linux: the backend stays up across crashes and
+  logins. Edit the two paths for your repo location, then:
+
+      cp agent/nnstudio-agent.plist ~/Library/LaunchAgents/
+      launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/nnstudio-agent.plist
+      tail -f /tmp/nnstudio-agent.log                  # its log
+
+  Stop it with `launchctl bootout gui/$(id -u)/nnstudio-agent`.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>nnstudio-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/you/nnstudio/.venv/bin/python</string>
+    <string>/Users/you/nnstudio/agent/nnstudio_agent.py</string>
+    <string>--app</string>
+    <string>127.0.0.1:8125</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/you/nnstudio</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/nnstudio-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/nnstudio-agent.log</string>
+</dict>
+</plist>

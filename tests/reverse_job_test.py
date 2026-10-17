@@ -20,6 +20,11 @@ import nn_arc  # noqa: E402
 PY = sys.executable
 JOB = os.path.join(ROOT, "tools", "reverse_job.py")
 
+# The stub agent that stands in for opencode: it exits at once. `true` is
+# not in /bin on every platform (macOS keeps it in /usr/bin) — this python
+# is wherever PY is.
+TRUE = PY + " -c pass"
+
 # An OpenCode `run --format json` event shape: a shell tool call, a step, and
 # the model's own words. The wrapper turns these into the box's progress line.
 # With STUB_REPO set it also walks the checklist, like the real agent does.
@@ -123,7 +128,7 @@ def write_stub(d, name, body):
 
 def run_job(source, state_dir, family=None, env=None):
     e = dict(os.environ)
-    e["NNSTUDIO_REVERSE_AGENT"] = "/bin/true"      # a stub agent: exits at once
+    e["NNSTUDIO_REVERSE_AGENT"] = TRUE            # a stub agent: exits at once
     e["NNSTUDIO_ARC_DB"] = os.path.join(state_dir, "hf_arc.db")
     e["NNSTUDIO_TASKS_DB"] = os.path.join(state_dir, "tasks.db")
     if env:
@@ -316,7 +321,7 @@ with tempfile.TemporaryDirectory() as d2:
     stream = os.path.join(d2, "stream.log")
     nn_tasks.update(task["id"], log=stream)
     e = dict(os.environ)
-    e["NNSTUDIO_REVERSE_AGENT"] = "/bin/true"     # a stub agent: exits at once
+    e["NNSTUDIO_REVERSE_AGENT"] = TRUE            # a stub agent: exits at once
     e["NNSTUDIO_ARC_DB"] = db
     e["NNSTUDIO_TASKS_DB"] = tdb
     p = subprocess.run([PY, JOB, "llama", "--family", "llama", "--state-dir", d2,

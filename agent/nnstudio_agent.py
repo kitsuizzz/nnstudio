@@ -9,8 +9,9 @@ execute on this machine. The app dispatches; this runs.
 
     python nnstudio_agent.py --app 127.0.0.1:8125 [--name my-pc]
 
-Requires: python3, torch (CUDA build recommended), numpy. `gguf` is optional —
-only designs bound to real GGUF files need it.
+Requires: python3, torch (the CUDA build to use an NVIDIA gpu; on Apple
+Silicon the plain wheel runs designs on the metal gpu — mps), numpy. `gguf`
+is optional — only designs bound to real GGUF files need it.
 
 The protocol is newline-delimited JSON over one TCP socket, both directions:
 
@@ -26,6 +27,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import socket
@@ -35,17 +37,25 @@ import threading
 import time
 import traceback
 
+# Metal: an op PyTorch has not ported to mps yet runs on the cpu instead of
+# failing the run (the tensor round-trips). Set before torch is imported
+# anywhere in this process, or the first read of it comes too late.
+if sys.platform == "darwin":
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 VERSION = 1
 _DEVICE = None
-_CUDA_WHY = None          # why the GPU is not used, when a probe caught it
+_CUDA_WHY = None          # why the cuda gpu is not used, when a probe caught it
+_MPS_WHY = None           # ... and the Apple one
 
 
 def _device():
-    """cuda when torch can really put a tensor on the GPU — probed once with a
-    real allocation, because that first allocation is where a broken
-    driver/NVML shows up. A machine that fails the probe stays on the cpu, and
-    the reason is carried to the app."""
-    global _DEVICE, _CUDA_WHY
+    """cuda or mps when torch can really put a tensor on that gpu — probed
+    once with a real allocation, because that first allocation is where a
+    broken driver/NVML (or a broken Metal path) shows up. A machine that
+    fails both probes stays on the cpu, and the reasons are carried to the
+    app."""
+    global _DEVICE, _CUDA_WHY, _MPS_WHY
     if _DEVICE is None:
         _DEVICE = "cpu"
         try:
@@ -59,6 +69,19 @@ def _device():
                 _CUDA_WHY = "torch cannot see a cuda device"
         except Exception as e:  # noqa: BLE001 — the reason travels to the app
             _CUDA_WHY = _run_error_text(e)[:300]
+        if _DEVICE == "cpu":
+            try:
+                import torch
+                mps = getattr(torch.backends, "mps", None)
+                if mps is not None and mps.is_available():
+                    big = torch.zeros(1 << 20, dtype=torch.float32, device="mps")
+                    torch.mps.synchronize()    # the metal queue's real touch
+                    del big
+                    _DEVICE = "mps"
+                elif mps is not None and mps.is_built():
+                    _MPS_WHY = "torch cannot see an apple gpu (mps)"
+            except Exception as e:  # noqa: BLE001
+                _MPS_WHY = str(e)[:300]
     return _DEVICE
 
 
@@ -82,6 +105,23 @@ def _nvml_ok():
     return False
 
 
+def _sysctl(name):
+    """One sysctl value on macOS, or None anywhere else."""
+    try:
+        q = subprocess.run(["sysctl", "-n", name], capture_output=True,
+                           text=True, timeout=5)
+        if q.returncode == 0 and q.stdout.strip():
+            return q.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def _apple_chip():
+    """The Apple Silicon chip's name — which is the gpu's name too on mps."""
+    return _sysctl("machdep.cpu.brand_string") or platform.processor() or None
+
+
 def _cpu_model():
     try:
         with open("/proc/cpuinfo") as f:
@@ -89,7 +129,7 @@ def _cpu_model():
                 if line.lower().startswith("model name"):
                     return line.split(":", 1)[1].strip()
     except OSError:
-        pass
+        return _apple_chip()                    # macOS has no /proc
     return platform.processor() or None
 
 
@@ -101,7 +141,11 @@ def _ram_gb():
                     return round(int(line.split()[1]) / 2 ** 20, 1)
     except (OSError, ValueError, IndexError):
         pass
-    return None
+    total = _sysctl("hw.memsize")               # macOS
+    try:
+        return round(int(total) / 2 ** 30, 1) if total else None
+    except ValueError:
+        return None
 
 
 def _nvidia():
@@ -179,14 +223,44 @@ def specs():
         s["rocm"] = getattr(torch.version, "hip", None)
         mps = getattr(torch.backends, "mps", None)
         s["mps"] = bool(mps and mps.is_available())
+        s["mps_error"] = _MPS_WHY
         if s["cuda"]:
             s["gpu"] = torch.cuda.get_device_name(0)
             free, total = torch.cuda.mem_get_info(0)
             s["vram_gb"] = round(total / 2 ** 30, 1)
             s["vram_free_gb"] = round(free / 2 ** 30, 1)
+        elif s["device"] == "mps":
+            # the apple gpu: the chip is the gpu, and its memory is unified —
+            # the numbers are the working set torch recommends for metal, and
+            # what this process already holds of it
+            s["gpu"] = (_apple_chip() or "Apple gpu") + " \u00b7 metal"
+            total = int(torch.mps.recommended_max_memory())
+            used = int(torch.mps.driver_allocated_memory())
+            s["vram_gb"] = round(total / 2 ** 30, 1)
+            s["vram_free_gb"] = round(max(0, total - used) / 2 ** 30, 1)
     except Exception as e:  # noqa: BLE001 — the app shows the machine anyway
         s["torch_error"] = str(e)[:160]
     return s
+
+
+def _vm_stat_available():
+    """macOS: free + inactive + speculative pages. Linux's MemAvailable has
+    no twin here, and 'Pages free' alone is the wrong number — macOS parks
+    most of ram in the file cache; this is the reading closest to usable."""
+    try:
+        q = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5)
+        if q.returncode != 0:
+            return None
+        m = re.search(r"page size of (\d+) bytes", q.stdout)
+        page = int(m.group(1)) if m else 4096
+        pages = 0
+        for key in ("Pages free", "Pages inactive", "Pages speculative"):
+            hit = re.search(re.escape(key) + r":\s+(\d+)", q.stdout)
+            if hit:
+                pages += int(hit.group(1))
+        return pages * page if pages else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
 
 
 def usage():
@@ -196,14 +270,19 @@ def usage():
          "vram_used_gb": None, "vram_total_gb": None, "vram_pct": None}
     try:
         total = avail = None
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemTotal:"):
-                    total = int(line.split()[1]) * 1024
-                elif line.startswith("MemAvailable:"):
-                    avail = int(line.split()[1]) * 1024
+        try:
+            with open("/proc/meminfo") as f:     # linux
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        total = int(line.split()[1]) * 1024
+                    elif line.startswith("MemAvailable:"):
+                        avail = int(line.split()[1]) * 1024
+        except OSError:
+            ms = _sysctl("hw.memsize")           # macOS
+            total = int(ms) if ms else None
+            avail = _vm_stat_available()
         if total and avail is not None:
-            used = total - avail
+            used = max(0, total - avail)
             u["ram_total_gb"] = round(total / 2 ** 30, 1)
             u["ram_used_gb"] = round(used / 2 ** 30, 1)
             u["ram_pct"] = round(100.0 * used / total)
@@ -211,12 +290,23 @@ def usage():
         pass
     try:
         import torch
-        if _device() == "cuda":                  # never touch cuda when the probe
-            free, total = torch.cuda.mem_get_info(0)   # said no
+        device = _device()  # never touch cuda when the probe said no
+        if device == "cuda":
+            free, total = torch.cuda.mem_get_info(0)
             used = total - free
             u["vram_total_gb"] = round(total / 2 ** 30, 1)
             u["vram_used_gb"] = round(used / 2 ** 30, 1)
             u["vram_pct"] = round(100.0 * used / total)
+        elif device == "mps":
+            # unified memory: torch's recommended metal working set against
+            # what this process holds of it (other apps' gpu use is not
+            # visible here)
+            total = int(torch.mps.recommended_max_memory())
+            used = int(torch.mps.driver_allocated_memory())
+            if total:
+                u["vram_total_gb"] = round(total / 2 ** 30, 1)
+                u["vram_used_gb"] = round(used / 2 ** 30, 1)
+                u["vram_pct"] = round(100.0 * used / total)
     except Exception:  # noqa: BLE001 — a machine without torch still reports RAM
         pass
     return u
@@ -242,11 +332,23 @@ def _run_error_text(e):
     return t
 
 
-def _mark_cuda_broken(e):
-    """The probed cuda path failed: stay on the cpu from now on, and carry the
+def _is_mps_failure(e):
+    """A metal path that cannot run the design (the working set is full, or
+    an op with no metal port slipped past the fallback): worth retrying on
+    the cpu."""
+    low = str(e).lower()
+    return ("mps backend out of memory" in low
+            or "not currently supported on the mps backend" in low)
+
+
+def _mark_gpu_broken(e, device):
+    """The probed gpu path failed: stay on the cpu from now on, and carry the
     reason to the app."""
-    global _DEVICE, _CUDA_WHY
-    _CUDA_WHY = _run_error_text(e)[:300]
+    global _DEVICE, _CUDA_WHY, _MPS_WHY
+    if device == "mps":
+        _MPS_WHY = str(e)[:300]
+    else:
+        _CUDA_WHY = _run_error_text(e)[:300]
     _DEVICE = "cpu"
 
 
@@ -295,7 +397,7 @@ def _ram_available():
                     return int(line.split()[1]) * 1024
     except (OSError, ValueError, IndexError):
         pass
-    return None
+    return _vm_stat_available()                 # macOS
 
 
 def _fit_or_error(canvas, device):
@@ -313,6 +415,19 @@ def _fit_or_error(canvas, device):
             import torch
             if torch.cuda.is_available():
                 free, _total = torch.cuda.mem_get_info(0)
+        except Exception:  # noqa: BLE001
+            free = None
+        if free is not None and est["gpu_bytes"] > free * 0.92:
+            return ("its weights need %.1f GB on the gpu, but only %.1f GB is free "
+                    "\u2014 raise the cpu offload bar in Run \u25be and press "
+                    "load weights" % (est["gpu_bytes"] / gb, free / gb))
+    if device == "mps" and est["gpu_bytes"]:
+        free = None
+        try:
+            import torch
+            if _device() == "mps":               # the metal working set
+                free = int(torch.mps.recommended_max_memory())
+                free -= int(torch.mps.driver_allocated_memory())
         except Exception:  # noqa: BLE001
             free = None
         if free is not None and est["gpu_bytes"] > free * 0.92:
@@ -402,15 +517,23 @@ def serve_session(sock, name, log):
 
     loaded = {"key": None, "graph": None}        # the design kept warm on disk/GPU
 
-    def free_loaded():
-        loaded["key"] = None
-        loaded["graph"] = None
+    def _gpu_caches_empty():
+        """The probed gpu's pools let go of their pages — cuda and metal both.
+        Never touched when the probe said no."""
         try:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            mps = getattr(torch.backends, "mps", None)
+            if mps is not None and mps.is_available():
+                torch.mps.empty_cache()
         except Exception:  # noqa: BLE001
             pass
+
+    def free_loaded():
+        loaded["key"] = None
+        loaded["graph"] = None
+        _gpu_caches_empty()
 
     try:
         requeued = []                            # a run retried on the cpu
@@ -665,13 +788,14 @@ def serve_session(sock, name, log):
                     send({"type": "result", "id": rid, "ok": True, "result": result})
                     failed = False
                 except Exception as e:  # noqa: BLE001 — the app shows the reason
-                    if (device == "cuda" and not msg.get("_cpu_retry")
-                            and _is_cuda_assert(e)):
-                        log("run %s: the cuda path failed — retrying on the cpu (%s)"
-                            % (rid or "?", e))
+                    if (device in ("cuda", "mps") and not msg.get("_cpu_retry")
+                            and (_is_mps_failure(e) if device == "mps"
+                                 else _is_cuda_assert(e))):
+                        log("run %s: the %s path failed — retrying on the cpu (%s)"
+                            % (rid or "?", device, e))
                         _release(e)              # the frames held the graph
-                        _mark_cuda_broken(e)     # later runs go straight to the cpu
-                        free_loaded()            # drop the cuda graph before the cpu one
+                        _mark_gpu_broken(e, device)  # later runs go to the cpu
+                        free_loaded()            # drop the gpu graph before the cpu one
                         requeued.append(dict(msg, _cpu_retry=True))
                         continue
                     _release(e)                  # the frames held the graph
@@ -682,12 +806,7 @@ def serve_session(sock, name, log):
                           "box": getattr(e, "box", None) or None,
                           "nid": getattr(e, "nid", None) or None})
                 if failed:                     # hand the freed pages back now
-                    try:
-                        import torch
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                    except Exception:  # noqa: BLE001
-                        pass
+                    _gpu_caches_empty()
                 continue
     finally:
         stop.set()

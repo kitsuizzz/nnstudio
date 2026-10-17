@@ -105,14 +105,20 @@ def gpu_ok():
         return False
 
 
+def has_kernel(qname, k=None):
+    """Whether a native kernel exists for this type — and, when a K is
+    given, whether its columns divide the block. The machine's own gpu is
+    not asked: `estimate_node(native=True)` reads this, so the same design
+    prices the same on every machine."""
+    name = _canon(qname)
+    if name is None:
+        return False
+    return k is None or int(k) % _KERNELS[name][0] == 0
+
+
 def can(qname, k=None):
     """Can this gguf quant type run natively here — optionally for K columns?"""
-    name = _canon(qname)
-    if name is None or not gpu_ok():
-        return False
-    if k is not None and int(k) % _KERNELS[name][0]:
-        return False
-    return True
+    return gpu_ok() and has_kernel(qname, k)
 
 
 def native_gguf_tensor(hit):
@@ -186,6 +192,19 @@ def cpu_flags():
     return flags
 
 
+def _apple_chip_name():
+    """The Apple Silicon chip's name — the gpu's name too on mps."""
+    try:
+        import subprocess as sp
+        q = sp.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                   capture_output=True, text=True, timeout=5)
+        if q.returncode == 0 and q.stdout.strip():
+            return q.stdout.strip()
+    except Exception:  # noqa: BLE001 — not a mac, or no sysctl
+        pass
+    return None
+
+
 def platform_info():
     """Platform / accelerator summary for the agent's capability manifest."""
     info = {"platform": platform.system(), "arch": platform.machine(),
@@ -209,6 +228,8 @@ def platform_info():
                 pass
         mps = getattr(torch.backends, "mps", None)
         info["mps"] = bool(mps and mps.is_available())
+        if info["mps"] and not info["gpu"]:
+            info["gpu"] = _apple_chip_name() or "apple gpu (metal)"
     except Exception:  # noqa: BLE001
         pass
     return info

@@ -7,11 +7,23 @@ machine you choose — ideally the one with the GPU.
 
 On the computer that should run the design:
 
-    pip install torch numpy        # the CUDA build of torch to use the GPU
+    pip install torch numpy        # the CUDA build of torch to use an NVIDIA gpu;
+                                   # on Apple Silicon the plain wheel uses the metal gpu
     pip install gguf               # optional — only for designs bound to real GGUF files
     pip install tokenizers         # optional — only for huggingface tokenizer repos
     pip install transformers       # optional — only for huggingface model boxes
     python nnstudio_agent.py --app <the-app>:8125
+
+On Apple Silicon the agent picks the **metal gpu** (`mps`) automatically:
+`place: gpu` (and the cpu-offload bar) land layers on it, `place: system`
+keeps them in plain RAM — the memory is unified, but the placement and its
+budgets are the same. A GGUF layer cannot run natively there —
+metal has no Triton — so it dequantizes to f16 at load, exactly as it does on
+a CPU-only machine; the memory numbers the app shows are the metal working
+set torch recommends. An op with no metal port falls back to the cpu for that
+one call (`PYTORCH_ENABLE_MPS_FALLBACK`, set by the agent), and a run the
+metal working set cannot hold is retried on the cpu once, so a design always
+runs — with the reason carried to the app's Spec.
 
 The app listens for agents on port **8125** (change it with
 `nn_server.py --control-port`). The agent **dials the app, sends this
@@ -31,6 +43,12 @@ on its own if it ever crashes:
     systemctl --user daemon-reload
     systemctl --user enable --now nnstudio-agent
     journalctl --user -u nnstudio-agent -f                    # its log
+
+On macOS the same thing is a LaunchAgent:
+
+    cp agent/nnstudio-agent.plist ~/Library/LaunchAgents/     # edit the paths inside
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/nnstudio-agent.plist
+    tail -f /tmp/nnstudio-agent.log                           # its log
 
 Once it is connected, the app's **Backend → Local** says connected, and the
 app's **Run** menu shows this machine: its specs (CPU, cores, RAM, GPU, VRAM,

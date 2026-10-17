@@ -481,6 +481,25 @@ def export_weights(canvas, path, fmt="safetensors"):
 
 
 # ---------------------------------------------------------------- caches
+def _host_trim():
+    """Ask the host allocator to give freed pages back: glibc's malloc_trim
+    on linux (that is what makes the RSS really drop there), and libmalloc's
+    pressure relief on macOS — best effort: macOS generally keeps freed
+    malloc pages resident and reclaims them itself under pressure (the
+    metal pool is emptied separately, and that does register)."""
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)   # glibc
+    except Exception:  # noqa: BLE001 — not glibc
+        pass
+    try:
+        import ctypes
+        # NULL zone = every zone; goal 0 = release all it can
+        ctypes.CDLL("/usr/lib/libSystem.B.dylib").malloc_zone_pressure_relief(None, 0)
+    except Exception:  # noqa: BLE001 — not macOS
+        pass
+
+
 def offload():
     """Let go of every model the engine is holding — cached GGUF readers,
     loaded tokenizers — then collect and hand the pages back. The next use
@@ -492,17 +511,16 @@ def offload():
     with _HF_LOCK:
         _HF_MODELS.clear()                        # whole transformer models too
     gc.collect()
-    try:
-        import ctypes
-        ctypes.CDLL("libc.so.6").malloc_trim(0)   # glibc: give freed arenas back
-    except Exception:  # noqa: BLE001 — not glibc, not fatal
-        pass
+    _host_trim()                                  # glibc / libmalloc: pages back
     try:
         import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             if hasattr(torch.cuda, "ipc_collect"):
                 torch.cuda.ipc_collect()
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            torch.mps.empty_cache()               # metal: hand its pool back too
     except Exception:  # noqa: BLE001 — a machine without torch still frees the caches
         pass
     return True
@@ -783,6 +801,48 @@ def box_dtype(node, fallback=torch.float32):
     return fallback
 
 
+_MPS_BF16 = None
+
+
+def _mps_bf16_ok():
+    """Whether this macOS/torch can really hold a bf16 tensor on the metal
+    gpu (macOS 14+). Probed once with a real tensor."""
+    global _MPS_BF16
+    if _MPS_BF16 is None:
+        try:
+            t = torch.zeros(1, dtype=torch.bfloat16, device="mps")
+            _MPS_BF16 = True
+            del t
+        except Exception:  # noqa: BLE001 — an old macOS says no
+            _MPS_BF16 = False
+    return _MPS_BF16
+
+
+def _sync_mps():
+    """Metal runs asynchronously: a sweep's wall time is only real once the
+    queue drains. A cheap call where there is no metal (or no work queued)."""
+    try:
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            torch.mps.synchronize()
+    except Exception:  # noqa: BLE001 — a missing metal changes only the clock
+        pass
+
+
+def _storage_dtype(dtype, device):
+    """The dtype a weight actually lives in on `device`. Apple's mps has no
+    float64 and (before macOS 14) no bfloat16 — the closest storage wins
+    instead of refusing the design, because the maths runs in f32 either
+    way. Every other device keeps the declared dtype."""
+    if dtype is None or "mps" not in str(device or ""):
+        return dtype
+    if dtype == torch.float64:
+        return torch.float32
+    if dtype == torch.bfloat16 and not _mps_bf16_ok():
+        return torch.float16
+    return dtype
+
+
 _DTYPE_BYTES = {"f64": 8, "f32": 4, "f16": 2, "bf16": 2,
                 "f8_e4m3": 1, "f8_e5m2": 1,
                 "i64": 8, "i32": 4, "i16": 2, "i8": 1, "u8": 1, "bool": 1}
@@ -812,7 +872,7 @@ def estimate_node(node, native=False):
     stored = int(node.get("wbytes") or 0)
     keep = ((k != "embed" and name in _DTYPE_BYTES)
             or (native and nn_quant is not None
-                and nn_quant.can(node.get("dtype"))))
+                and nn_quant.has_kernel(node.get("dtype"))))
     if stored and keep:
         # bound and stored as-is: the file's own bytes are the footprint
         return params, stored
@@ -907,7 +967,7 @@ class Box(nn.Module):
         self.extras = nn.ParameterList()        # sibling tensors (dt_bias, …)
         self.last = None
         gen = torch.Generator(device="cpu").manual_seed(_seed_for(seed, node.get("id") or self.name))
-        dtype = box_dtype(node, dtype)          # its weights, its own dtype
+        dtype = _storage_dtype(box_dtype(node, dtype), want)  # its weights, its own dtype
         grad = param_grad(dtype, self.frozen, train)   # ints/bools (and inference) never ask
 
         if self.kind == "layer":
@@ -1690,7 +1750,7 @@ class WeightStore:
             return hit
         t = self.raw(path, tensor)
         if dtype is not None:
-            t = t.to(dtype)
+            t = t.to(_storage_dtype(dtype, device or "cpu"))
         t = t.to(device or "cpu")
         if shape:
             t = t.reshape(shape)
@@ -2196,7 +2256,7 @@ class Graph(nn.Module):
                 else:
                     rep["params"] += n
                 rep["bytes"] += b
-                if str(p.device).startswith("cuda"):
+                if p.device.type in ("cuda", "mps"):
                     rep["on_gpu_bytes"] += b
                 else:
                     rep["on_system_bytes"] += b
@@ -2808,6 +2868,7 @@ def run_graph(graph, canvas, feeds, generate=0, temperature=0.8,
         run can report the execution apart from the transport and the load."""
         t = time.perf_counter()
         vals = graph(feeds=feed_map, on_node=on_node)
+        _sync_mps()                    # metal is async: drain before the clock
         timing["sweeps"] += 1
         timing["sweep_ms"] += (time.perf_counter() - t) * 1000.0
         return vals

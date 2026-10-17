@@ -40,12 +40,21 @@ def _gb(b):
 
 
 def rss_mb(pid):
-    """The agent process's resident memory, straight from the kernel."""
-    with open("/proc/%d/status" % pid) as fh:
-        for line in fh:
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) / 1024.0
-    return None
+    """The agent process's resident memory, straight from the kernel —
+    /proc on linux, ps on macOS."""
+    try:
+        with open("/proc/%d/status" % pid) as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024.0
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+        return float(out) / 1024.0 if out else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
 
 
 def agent_gpu_mb(pid):
@@ -110,7 +119,7 @@ def main():
         s = a["specs"]
         assert a["name"], "the agent reports its name"
         assert s.get("cores") and s.get("ram_gb"), "cores and ram are reported"
-        assert s.get("device") in ("cpu", "cuda"), "a device is reported"
+        assert s.get("device") in ("cpu", "cuda", "mps"), "a device is reported"
         assert s.get("torch"), "torch is installed (agent needs it): %r" % s.get("torch_error")
         print("  agent: %s — %s · %s · %s" %
               (a["name"], s.get("cpu"), s.get("gpu") or "no gpu", s["device"]))
@@ -161,9 +170,32 @@ def main():
         assert status == 200 and res.get("ok"), res
         assert res.get("before") and res.get("after") and res.get("backend"), res
         freed = rss_mb(proc.pid)
-        assert held is not None and freed is not None and held - freed > 150, \
-            "offload hands the weights' pages back: %.0f \u2192 %.0f MB" % (held or 0, freed or 0)
-        print("  offloaded %s \u2014 rss %.0f \u2192 %.0f MB" % (_gb(held_bytes), held, freed))
+        if sys.platform == "darwin":
+            # macOS keeps freed pages resident until the kernel is under
+            # pressure — libmalloc's regions and the metal driver's alike — so
+            # ps rss is a linux signal, not the proof here. The metal ledger
+            # is: a gpu-placed load lights it up, and offload empties it.
+            gpu_big = json.loads(json.dumps(big))
+            gpu_big["nodes"][1].pop("place")
+            status, res = call("/api/load", {"canvas": gpu_big})
+            assert status == 200 and res.get("ok"), res
+
+            def vram():
+                a = (call("/api/backend")[1]["local"].get("agent") or {})
+                return ((a.get("usage") or {}).get("vram_used_gb") or 0)
+
+            wait_for(lambda: vram() > 0.1, "the metal working set to fill", seconds=30)
+            print("  the metal working set is lit: %.1f GB" % vram())
+            status, res = call("/api/offload", {})
+            assert status == 200 and res.get("ok"), res
+            wait_for(lambda: vram() <= 0.1, "the metal working set to empty", seconds=30)
+            print("  offloaded %s \u2014 the metal working set is empty again "
+                  "(macOS keeps the pages until pressure; rss %.0f MB)"
+                  % (_gb(held_bytes), freed or 0))
+        else:
+            assert held is not None and freed is not None and held - freed > 150, \
+                "offload hands the weights' pages back: %.0f \u2192 %.0f MB" % (held or 0, freed or 0)
+            print("  offloaded %s \u2014 rss %.0f \u2192 %.0f MB" % (_gb(held_bytes), held, freed))
         status, res = call("/api/run", {"canvas": LOAD_CANVAS, "feeds": {"i1": [1, 2, 3, 4]}})
         assert status == 200 and res.get("ok") and res.get("loaded") is False, res
         print("  the next run had to rebuild it (loaded=%s)" % res.get("loaded"))

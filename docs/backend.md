@@ -78,7 +78,7 @@ instead — the browser shows the full picture.
 | --- | --- | --- |
 | NVIDIA CUDA | yes (`triton/cuda`) | any CUDA PyTorch wheel; the driver is the only system piece |
 | AMD ROCm | yes (`triton/rocm`) | PyTorch ROCm wheels (ROCm 6+) include Triton |
-| Apple MPS | no | GGUF loads by dequantizing at load (works; more memory) |
+| Apple MPS (Metal) | no (Triton is CUDA/ROCm-only) | the agent probes the metal gpu and uses it (`device: mps`); GGUF layers dequantize at load (works; more memory). `place: gpu` = the metal working set, `place: system` = plain RAM; the memory is unified either way. Ops metal lacks fall back to the cpu (`PYTORCH_ENABLE_MPS_FALLBACK`, set by the agent); f64 storage becomes f32 (metal has no float64; bf16 needs macOS 14+), and a design the working set cannot hold is retried on the cpu once, with the reason in Spec |
 | CPU (Linux/Windows) | no | same fallback; CPU matmul in f32 |
 
 ## Optional providers (user-installed)
@@ -122,3 +122,11 @@ nothing and changes nothing.
 - A frozen box on the GPU still loads f16: the tensor's type has no kernel
   yet (see the table), or the box is trainable (not `frozen`), or its
   `place` is `system`.
+- On Apple Silicon: `mps` appears in Spec when the metal gpu is in use; the
+  Spec's `gpu` line shows the chip and its recommended working set, and the
+  live `vram now` is what the backend itself holds of it — other apps' gpu
+  use is not visible through torch, and the memory is unified with RAM, so
+  the `ram now` line matters too. A run the working set cannot hold fails
+  once and is retried on the cpu automatically; the next run goes straight
+  there (`mps: ...` says why). Raise the cpu offload bar or use *load all on
+  system* to keep a big design on plain RAM from the start.

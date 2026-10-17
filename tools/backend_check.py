@@ -56,7 +56,10 @@ def main():
 
     print("\nhints:")
     if not caps.get("available"):
-        if not caps.get("triton"):
+        if info.get("mps"):
+            print("  · the apple gpu (metal) has no triton kernels here: GGUF")
+            print("    layers dequantize to f16 at load — correct, just heavier.")
+        elif not caps.get("triton"):
             print("  · use a PyTorch wheel that bundles Triton (official CUDA/ROCm")
             print("    wheels do) — the f16 fallback works meanwhile.")
         else:

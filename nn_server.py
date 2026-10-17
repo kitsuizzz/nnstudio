@@ -136,8 +136,35 @@ _GPU_LOCK = threading.Lock()
 GPU_TTL = 2.0
 
 
+def _apple_gpu():
+    """(chip name, unified memory in MiB) on an Apple Silicon mac — the gpu
+    there is the chip's own metal device, so this is what a badge can
+    honestly report; (None, None) anywhere else."""
+    if sys.platform != "darwin":
+        return None, None
+
+    def sysctl(name):
+        try:
+            q = subprocess.run(["sysctl", "-n", name], capture_output=True,
+                               text=True, timeout=5)
+            return q.stdout.strip() if q.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    chip = sysctl("machdep.cpu.brand_string")
+    if not chip.startswith("Apple"):
+        return None, None
+    try:
+        mib = int(sysctl("hw.memsize")) // 2 ** 20
+    except ValueError:
+        mib = None
+    return chip + " \u00b7 metal", mib
+
+
 def gpu_info():
-    """The badge's numbers: name, memory, utilization, temperature."""
+    """The badge's numbers: name, memory, utilization, temperature —
+    straight from nvidia-smi, or the Apple chip's metal device when there
+    is none."""
     now = time.time()
     with _GPU_LOCK:
         if _GPU["data"] is not None and now - _GPU["time"] < GPU_TTL:
@@ -165,6 +192,13 @@ def gpu_info():
                     "temp_c": num(5)}
     except (OSError, subprocess.SubprocessError):
         pass
+    if not info["cuda"]:
+        name, total = _apple_gpu()
+        if name:
+            info["name"] = name
+            info["apple"] = True
+            info["unified"] = True            # its memory is the system's
+            info["total_mib"] = total
     with _GPU_LOCK:
         _GPU["time"] = now
         _GPU["data"] = info

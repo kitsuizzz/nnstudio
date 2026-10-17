@@ -5499,8 +5499,8 @@ function bxTrainSpec(pane) {                  // Spec: the machine, its usage, a
   });
   lrow.appendChild(off);
   pane.appendChild(lrow);
-  const cuda = (a.specs || {}).device === "cuda";
-  const split = bxWeightSplit(cuda);           // where the layers sit, in bytes
+  const accel = ["cuda", "mps"].indexOf((a.specs || {}).device) >= 0;
+  const split = bxWeightSplit(accel);          // where the layers sit, in bytes
   const total = split.gpu + split.system;
   let wtext = "no weights yet";
   if (total > 0) {
@@ -8867,7 +8867,8 @@ function bxtBackendRender() {
         text: "python nnstudio_agent.py --app " + host + ":8125" }));
       pane.appendChild(mk("div", { class: "bxbhint",
         text: "2 \u00b7 it reports the machine here and the server config lights up. needs "
-            + "python3 and torch \u2014 the CUDA build for the GPU." }));
+            + "python3 and torch \u2014 the CUDA build on an NVIDIA card, plain torch "
+            + "on Apple Silicon (the metal gpu, mps)." }));
       pane.appendChild(mk("div", { class: "bxbhint", text: "waiting for an agent\u2026" }));
     }
     bxtBackendUse(pane, "local", "use this computer");
@@ -8919,20 +8920,25 @@ function bxSpecRows(pane, s) {                 // what the agent says it is
   if (!s) return;
   const nq = s.native_quant || {};
   const prov = Object.keys(nq.providers || {}).filter(k => nq.providers[k]);
+  const dev = s.device || "cpu";
   const rows = [["cpu", [s.cpu, s.cores ? s.cores + " cores" : null]
                    .filter(Boolean).join(" \u00b7 ")],
                 ["ram", s.ram_gb ? s.ram_gb + " GB" : null],
                 ["gpu", s.gpu ? s.gpu + (s.vram_gb ? " \u00b7 " + s.vram_gb + " GB" : "")
                               : "none found"],
-                ["torch", s.torch ? s.torch + (s.cuda ? " \u00b7 cuda" : " \u00b7 cpu")
+                ["torch", s.torch ? s.torch + (s.cuda ? " \u00b7 cuda"
+                                   : dev === "mps" ? " \u00b7 mps" : " \u00b7 cpu")
                                   : (s.torch_error ? "not installed" : null)],
                 ["cuda", s.cuda ? "ready"
                                 : (s.cuda_error ? String(s.cuda_error).slice(0, 120)
-                                                : "not available")],
-                ["quant kernels", nq.available
-                   ? (nq.kernels || []).join(", ") + " \u00b7 " + (nq.backend || "native")
-                   : "f16 dequant at load \u00b7 docs/backend.md"],
-                ["os", s.os]];
+                                                : "not available")]];
+  if (s.mps) rows.push(
+    ["mps", dev === "mps" ? "ready \u00b7 the apple gpu runs the design"
+         : (s.mps_error ? String(s.mps_error).slice(0, 120) : "available")]);
+  rows.push(["quant kernels", nq.available
+               ? (nq.kernels || []).join(", ") + " \u00b7 " + (nq.backend || "native")
+               : "f16 dequant at load \u00b7 docs/backend.md"],
+            ["os", s.os]);
   if (prov.length) rows.push(["quant providers", prov.join(", ")]);
   for (const [k, v] of rows) if (v) bxSpecRow(pane, k, v);
 }

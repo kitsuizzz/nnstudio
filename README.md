@@ -166,10 +166,14 @@ in the browser):
       python nnstudio_agent.py --app <this-app>:8125
 
   On this machine it runs as the `nnstudio-agent` user service
-  (`agent/nnstudio-agent.service`, `Restart=always`) so the backend stays up
+  (`agent/nnstudio-agent.service`, `Restart=always`; on macOS
+  `agent/nnstudio-agent.plist` is the same thing as a LaunchAgent) so the
+  backend stays up
   across crashes and logins; see `agent/README.md` to install it elsewhere.
 
-  The agent needs `python3`, `torch` (the CUDA build to use the GPU) and
+  The agent needs `python3`, `torch` (the CUDA build to use an NVIDIA gpu; on
+  Apple Silicon the plain wheel runs designs on the metal gpu — the agent
+  probes it once and reports `device: mps`) and
   `numpy`; `gguf` is optional (only designs bound to real GGUF files need it,
   and the file must sit at the same path on that machine). As soon as it
   connects, the section says **connected** and the **server config's door** —
@@ -180,7 +184,9 @@ in the browser):
   and a Triton kernel (bundled with torch, no new dependency) fuses the
   dequant into the matmul — `Q8_0`, `Q4_K`, `Q5_K`, `Q6_K`, `Q2_K`, `Q3_K`,
   `IQ4_XS`, `IQ4_NL`, `IQ3_S`, `IQ3_XXS`, `IQ2_S` and `IQ2_XS` today; `F32`
-  and anything else dequantizes at load as before. The K-family kernels run
+  and anything else dequantizes at load as before (metal has no Triton, so on
+  an Apple gpu every quantized layer takes this path). The K-family kernels
+  run
   near half the card's bandwidth; the IQ-family ones are several times
   slower — `tools/quant_bench.py <file>` times a file block by block and
   prices one forward pass, which is usually where a slow decode lives.
@@ -218,9 +224,12 @@ says so. Open it and it is the one place that shows:
   **re-loading the same design is instant** — the warm graph is handed back
   (`already warm`). Next to the buttons, **offload** lets the backend let go
   of every model and cache it is holding (the warm graph, GGUF readers,
-  tokenizers, CUDA pools — the pages go back to the OS), so a machine that
-  filled up is clean again; the next run simply rebuilds. Under them sits the
-  one number that matters: the design's **weight bytes and where the layers
+  tokenizers, GPU pools — the pages go back to the OS), so a machine that
+  filled up is clean again; the next run simply rebuilds. (On Apple Silicon
+  the metal pool empties the same way; plain system pages are reclaimed by
+  macOS itself, on pressure, rather than handed back at the call.) Under them
+  sits the one number that matters: the design's **weight bytes and where the
+  layers
   sit** — `13.3 GB · all on the gpu`, `… · all on the cpu`, or `… · mixed
   (13.0 GB gpu · 300 MB cpu)` — so the GPU / CPU / split state a run would use
   is a glance

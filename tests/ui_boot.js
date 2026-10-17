@@ -1635,6 +1635,15 @@ check("the server config carries the machine; the input carries the run", () => 
      "…with current ram usage");
   ok(specs.indexOf("6.1 / 32.0 GB") >= 0 && specs.indexOf("19%") >= 0,
      "…and current vram usage");
+  // an apple-silicon backend: mps is the machine's gpu — the spec says so
+  const cudaSpecs = __t.BXRUN.local.agent.specs;
+  __t.BXRUN.local.agent.specs = { name: "mac", os: "macOS-26", cpu: "Apple M3 Pro",
+      cores: 12, ram_gb: 18, gpu: "Apple M3 Pro \u00b7 metal", vram_gb: 12,
+      device: "mps", mps: true, torch: "2.14.1" };
+  const mpsSpecs = specsIn(fill());
+  ok(mpsSpecs.indexOf("mps") >= 0 && mpsSpecs.indexOf("metal") >= 0,
+     "an apple gpu shows up as mps (metal): " + mpsSpecs);
+  __t.BXRUN.local.agent.specs = cudaSpecs;
   ok(bchips().indexOf("load weights") >= 0 && bchips().indexOf("load all on") < 0,
      "…one load button — the ratio bar decides where it goes");
   ok(bchips().indexOf("offload") >= 0, "…and the offload button that frees the backend");

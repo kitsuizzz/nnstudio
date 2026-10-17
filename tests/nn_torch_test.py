@@ -292,7 +292,9 @@ def text_pipeline_generates():
     lands on the last forward."""
     import nn_tokenizers as nn_hf
     repo = "unsloth/Qwen3.8-27B-NVFP4"
-    if not os.path.isfile(nn_hf.tokenizer_path(repo, download=False)):
+    try:                                 # offline unless the tokenizer is cached
+        nn_hf.tokenizer_path(repo, download=False)
+    except FileNotFoundError:
         print("  skip text generation (no cached tokenizer for %s)" % repo)
         return
     c = canvas([
@@ -1314,6 +1316,62 @@ def placement_splits_devices():
 
 
 check("placement splits a graph across gpu and cpu mid-forward", placement_splits_devices)
+
+
+def placement_splits_devices_mps():
+    mps = getattr(torch.backends, "mps", None)
+    if not (mps is not None and mps.is_available()):
+        print("  skip placement across gpu/cpu on mps (no apple gpu here)")
+        return
+    c = canvas([
+        n("input", "i", dout=4),
+        n("layer", "gpu_l", din=4, dout=3),
+        n("layer", "sys_l", din=3, dout=2, place="system"),
+        n("output", "o", din=2),
+    ], [edge("i", "gpu_l"), edge("gpu_l", "sys_l"), edge("sys_l", "o")])
+    g = T.compile_canvas(c, device="mps")
+    assert g.boxes["gpu_l"].w.device.type == "mps", g.boxes["gpu_l"].w.device
+    assert g.boxes["sys_l"].w.device.type == "cpu", g.boxes["sys_l"].w.device
+    res = T.run_graph(g, c, {"i": [1, 2, 3, 4]})
+    assert res["values"]["o"]["shape"] == [2], res["values"]["o"]
+    assert res["values"]["o"]["mean"] == res["values"]["o"]["mean"], "no NaN"
+    rep = g.weight_report()
+    assert rep["on_gpu_bytes"] == 4 * 3 * 4, rep           # gpu_l: 12 params, f32
+    assert rep["on_system_bytes"] == 3 * 2 * 4, rep        # sys_l: 6 params, f32
+    assert rep["bytes"] == rep["on_gpu_bytes"] + rep["on_system_bytes"]
+    # the metal queue is async: the sweep clock syncs, so it times the real pass
+    assert res["timing"]["input_to_output_ms"] >= 0, res["timing"]
+
+
+check("placement splits a graph across the metal gpu and cpu (mps)",
+      placement_splits_devices_mps)
+
+
+def mps_storage_has_no_float64():
+    mps = getattr(torch.backends, "mps", None)
+    if not (mps is not None and mps.is_available()):
+        print("  skip mps storage dtypes (no apple gpu here)")
+        return
+    # an f64 design on the metal gpu: stored f32 (mps has no float64) — the
+    # maths is f32 anyway, so the run is the same, and nothing refuses
+    c = canvas([
+        n("input", "i", dout=4),
+        n("layer", "l", din=4, dout=3, dtype="f64"),
+        n("output", "o", din=3),
+    ], [edge("i", "l"), edge("l", "o")])
+    g = T.compile_canvas(c, device="mps")
+    assert g.boxes["l"].w.dtype == torch.float32, g.boxes["l"].w.dtype
+    res = T.run_graph(g, c, {"i": [1, 2, 3, 4]})
+    assert res["values"]["o"]["shape"] == [3], res["values"]["o"]
+    # the estimate reads an mps device as the gpu side, like cuda
+    est = T.estimate_canvas(c, "mps")
+    assert est["gpu_bytes"] > 0 and est["system_bytes"] == 0, est
+    est_cpu = T.estimate_canvas(c, "cpu")
+    assert est_cpu["system_bytes"] > 0 and est_cpu["gpu_bytes"] == 0, est_cpu
+
+
+check("an mps gpu stores f32 (no float64 on metal), and prices as the gpu",
+      mps_storage_has_no_float64)
 
 
 def storage_dtypes_compile_and_run():

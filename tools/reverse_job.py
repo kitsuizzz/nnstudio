@@ -43,7 +43,8 @@ When the box that asked for the job is deleted, the app posts
 
     python tools/reverse_job.py <repo-or-family> [--family f] [--timeout 1800]
 
-Set NNSTUDIO_REVERSE_AGENT to swap the agent command (tests use `/bin/true`).
+Set NNSTUDIO_REVERSE_AGENT to swap the agent command (tests use a stub that
+exits at once).
 """
 import argparse
 import json
