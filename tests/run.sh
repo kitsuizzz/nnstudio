@@ -87,6 +87,18 @@ if [ "${1:-}" = "--live" ]; then
   M=$(curl -s -m 10 localhost:8124/api/models | head -c 80)
   case "$G$M" in *'"cuda"'*'"models"'*) ok;; *) bad;; esac
 
+  step "live chat half (the SPA)"
+  C=$(curl -s -m 10 localhost:8124/chat | head -c 40)
+  case "$C" in *"<html"*) ok;; *) bad;; esac
+
+  step "live chat gateway (through the proxy)"
+  if curl -s -m 5 http://127.0.0.1:8000/healthz | grep -q '"ok":true'; then
+    P=$(curl -s -m 10 localhost:8124/chat/v1/models | head -c 40)
+    case "$P" in *'"data"'*) ok;; *) bad;; esac
+  else
+    echo "ok  (the gateway at :8000 is down — the SPA still serves)"
+  fi
+
   step "live agent + run"
   $PY tests/agent_test.py >/tmp/nnstudio_agent_live.log 2>&1 && ok || { bad; tail -20 /tmp/nnstudio_agent_live.log; }
 fi

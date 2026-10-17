@@ -56,3 +56,10 @@ users.db*
 *.db-shm
 *.sqlite
 *.sqlite3
+
+# the Chat half's build (studio/README.md: VITE_BASE_PATH=chat npm run build)
+studio/frontend/dist/
+studio/frontend/node_modules/
+studio/frontend/tsconfig.tsbuildinfo
+studio/backend/.venv/
+studio/backend/__pycache__/

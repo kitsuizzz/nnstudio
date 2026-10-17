@@ -55,6 +55,23 @@ AGENT_DIR = os.path.join(HERE, "agent")
 WEIGHTS_DIR = os.path.join(HERE, "weights")
 WEIGHT_EXTS = (".gguf", ".safetensors", ".pt", ".pth", ".bin")
 
+# The Studio half (chat.kitsui): its built SPA lives under studio/frontend/dist
+# and is served at /chat; the chat gateway is proxied, streamed, at /chat/v1
+# and /chat/auth. NNSTUDIO_STUDIO_WEB / NNSTUDIO_STUDIO_GATEWAY move those.
+STUDIO_WEB = os.path.abspath(os.environ.get("NNSTUDIO_STUDIO_WEB")
+                             or os.path.join(HERE, "studio", "frontend", "dist"))
+STUDIO_GATEWAY = (os.environ.get("NNSTUDIO_STUDIO_GATEWAY")
+                  or "http://127.0.0.1:8000").rstrip("/")
+STUDIO_MIME = {
+    ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+    ".json": "application/json", ".map": "application/json",
+    ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+    ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2",
+    ".ttf": "font/ttf", ".otf": "font/otf", ".txt": "text/plain; charset=utf-8",
+}
+
 
 def json_safe(obj):
     """What the browser receives: a NaN/±inf float becomes null. They are not
@@ -723,8 +740,99 @@ class Handler(BaseHTTPRequestHandler):
         return {"ok": True, "user": user, "site_key": site, "test_keys": test,
                 "max_bytes": nn_users.BLOB_MAX}
 
+    # ---- the Studio half: chat.kitsui's app, served and proxied -------------
+    def _studio(self, path):
+        """True when the path belongs to the chat app: its built files under
+        /chat, the gateway under /chat/v1 and /chat/auth (streamed through)."""
+        if path in ("/chat", "/chat/"):
+            self._studio_file(os.path.join(STUDIO_WEB, "index.html"))
+            return True
+        if path.startswith("/chat/v1/") or path.startswith("/chat/auth/"):
+            self._studio_proxy(path[len("/chat"):])
+            return True
+        if path.startswith("/chat/"):
+            rel = urllib.parse.unquote(path[len("/chat/"):])
+            full = os.path.normpath(os.path.join(STUDIO_WEB, rel))
+            if full != STUDIO_WEB and not full.startswith(STUDIO_WEB + os.sep):
+                self._json({"ok": False, "error": "no such file"}, 404)
+                return True
+            if os.path.isfile(full):
+                self._studio_file(full)
+            else:
+                self._studio_file(os.path.join(STUDIO_WEB, "index.html"))
+            return True
+        return False
+
+    def _studio_file(self, full):
+        mime = STUDIO_MIME.get(os.path.splitext(full)[1].lower(),
+                               "application/octet-stream")
+        try:
+            with open(full, "rb") as f:
+                body = f.read()
+        except OSError as e:
+            self._json({"ok": False, "error": str(e)}, 404)
+            return
+        self._send(200, body, mime)
+
+    def _studio_proxy(self, upstream_path):
+        """The chat gateway, behind the app: status and headers relayed, the
+        body **streamed** — an SSE reply must never be buffered whole."""
+        import http.client
+        q = urlparse(self.path).query
+        target = upstream_path + (("?" + q) if q else "")
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        body = self.rfile.read(n) if n > 0 else None
+        headers = {}
+        for k, v in self.headers.items():
+            low = k.lower()
+            if low in ("host", "connection", "content-length", "transfer-encoding",
+                       "accept-encoding"):          # hop-by-hop; the gateway re-does them
+                continue
+            headers[k] = v
+        headers.setdefault("X-Forwarded-For",
+                           self.client_address[0] if self.client_address else "127.0.0.1")
+        parts = urllib.parse.urlsplit(STUDIO_GATEWAY)
+        conn = None
+        try:
+            conn = http.client.HTTPConnection(parts.hostname or "127.0.0.1",
+                                              parts.port or 80, timeout=900)
+            conn.request(self.command, target, body=body, headers=headers)
+            resp = conn.getresponse()
+            self.send_response(resp.status)
+            for k, v in resp.getheaders():
+                if k.lower() in ("connection", "transfer-encoding", "content-length",
+                                 "keep-alive"):
+                    continue                        # the length is the stream's
+                self.send_header(k, v)
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except Exception as e:  # noqa: BLE001 — the app shows the message
+            try:
+                self._json({"ok": False,
+                            "error": "the chat gateway is not reachable: %s" % e}, 502)
+            except Exception:  # noqa: BLE001 — headers may be out already
+                pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
     def do_GET(self):
         path = urlparse(self.path).path
+        if self._studio(path):
+            return
         if path in ("/", "/index.html"):
             try:
                 with open(UI, "rb") as f:
@@ -996,8 +1104,22 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json({"ok": True, "csv": csv_text, "blobs": saved})
 
+    def do_PUT(self):
+        path = urlparse(self.path).path
+        if self._studio(path):
+            return
+        self._json({"ok": False, "error": "not found"}, 404)
+
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        if self._studio(path):
+            return
+        self._json({"ok": False, "error": "not found"}, 404)
+
     def do_POST(self):
         path = urlparse(self.path).path
+        if self._studio(path):
+            return
         length = int(self.headers.get("Content-Length") or 0)
         if path == "/api/blob":
             self._blob_post(length)

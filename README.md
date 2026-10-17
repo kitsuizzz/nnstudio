@@ -7,6 +7,22 @@ a backend of your own** — a small agent you start on the machine that holds
 the GPU, which dials the app and stays connected (see **Backend** and
 **Run** below).
 
+## Chat and Studio — the app's two halves
+
+The top bar carries the switch. **Studio** is the canvas, at `/` — everything
+this README describes. **Chat** is AI Studio (chat.kitsui) at `/chat`: the
+conversation app with agents, providers, web tools and the studio builder.
+
+They are one app on one origin: nnstudio's server serves the Chat half's
+built SPA and streams its gateway through (`/chat/v1`, `/chat/auth`), so a
+single `./run.sh` is the whole thing. The Chat half is vendored under
+`studio/` — sources, the one `Chat | Studio` navigation patch, and the build
+recipe (`VITE_BASE_PATH=chat`) live in [studio/README.md](studio/README.md);
+its gateway (FastAPI + MariaDB + SearXNG, upstream's `docker-compose.yml`)
+runs on `127.0.0.1:8000`, and `NNSTUDIO_STUDIO_GATEWAY` points elsewhere. With
+the gateway down, `/chat` still serves and the chat falls back to its BYOK
+provider form — by upstream design.
+
 ## Running the app
 
     ./run.sh                 # http://localhost:8124
@@ -151,6 +167,7 @@ code (git-ignored) is the default.
 | `tests/nn_users_test.py` | the account store, offline: sealed rows (not one plaintext name), the bot check's answers, the .env loader, design CRUD |
 | `tools/quant_bench.py` | what a design's weights cost per sweep: the native kernels timed on real blocks of a GGUF, summed per type |
 | `tools/chat_job.py` | the AI agent tab's runner: one conversational turn per `chat` task, the CLI session mirrored into the task's meta and carried into the next |
+| `studio/` | the Chat half, vendored: AI Studio's React SPA (`frontend/dist` served at `/chat`) and its FastAPI gateway (proxied, streamed, at `/chat/v1` + `/chat/auth`) — see `studio/README.md` |
 | `tools/tls_local.sh` | the tiny local CA + server certificate (`.certs/`, git-ignored) for reaching the app over https from your own devices |
 | `tests/agent_test.py` | the live end-to-end: a real agent connects and a design runs (`--live`) |
 | `weights/` | where `export weights …` writes, and a place to drop pt / safetensors / gguf files for the pickers |

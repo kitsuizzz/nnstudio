@@ -1136,6 +1136,16 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
   .tbx { cursor: pointer; font: 500 13px/1 var(--font-label); color: var(--s-label);
          padding: 6px 4px; user-select: none; }
   .tbx:hover { color: var(--s-text); }
+  /* the app's two halves: Studio is this page, Chat is the AI Studio at /chat */
+  .bxtopnav { display: flex; align-items: center; gap: 16px; margin-left: 14px; }
+  .bxtopnav .tv { font: 500 11px/1.4 var(--font-mono); letter-spacing: .05em;
+                  text-transform: uppercase; color: var(--s-label2);
+                  text-decoration: none; }
+  .bxtopnav .tv:hover { color: var(--s-text); }
+  .bxtopnav .tv.on { color: var(--s-text); }
+  .bxtopnav .tv.on::before { content: ""; display: inline-block; width: 5px; height: 5px;
+                             border-radius: 50%; background: var(--s-dot);
+                             margin-right: 6px; vertical-align: 1px; }
 
   /* ---- the chips and modes ---- */
   .chip, .mode { border-radius: 0; }
@@ -1402,6 +1412,10 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
 
 <header>
   <div class="logo">nn<span>·</span>studio</div>
+  <nav class="bxtopnav">
+    <a class="tv on" href="/">Studio</a>
+    <a class="tv" href="/chat">Chat</a>
+  </nav>
   <div class="sub">compose the network on the canvas, wire it, price it, then run it</div>
   <div class="bxuser" id="bxuser" hidden>
     <span class="bxuserbtn" id="bxtAccount" title="a guest: drawing and running are free, saving takes an account">
