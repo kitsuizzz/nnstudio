@@ -2169,7 +2169,10 @@ class Graph(nn.Module):
                                                    # same as the dataset box's do
             elif box.kind == "input":
                 if nid not in feeds:
-                    self._fail(nid, "no value was given for this input — "
+                    text_in = box.node.get("input_mode") == "text"
+                    self._fail(nid, "no text was given for this input — "
+                                    "type it in Run \u25be" if text_in else
+                                    "no value was given for this input — "
                                     "type its matrix on the box")
                 v = feeds[nid]
                 if torch.is_tensor(v):

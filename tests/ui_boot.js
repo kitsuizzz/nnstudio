@@ -746,6 +746,9 @@ check("the two signals land from the shelf: a loss box and a reward box", () => 
 });
 
 check("the HF import: one repo, a model box lands with its pipeline inside", () => {
+  const keep = JSON.stringify(__t.bxExportCanvas());   // the canvas, as it was found
+  (__t.BX.nodes || []).slice().forEach(n => __t.bxRemove(n.id));
+  __t.bxSeedBlank();                           // the blank skeleton, to crop
   const before = __t.BX.nodes.length;
   __t.bxForm("hf", null, null, "loadhf");
   const wrap = getEl("bxmenu").children[0];
@@ -753,16 +756,51 @@ check("the HF import: one repo, a model box lands with its pipeline inside", () 
   ok(!!repo, "the form asks for the repo");
   repo.value = "Qwen/Qwen2.5-0.5B";
   wrap.querySelectorAll(".chip").find(c => c.textContent === "load").click();
-  eql(__t.BX.nodes.length, before + 1, "one box lands");
-  const m = __t.BX.nodes[__t.BX.nodes.length - 1];
-  eql([m.kind, m.model], ["custom", true], "\u2026a model box");
+  eql(__t.BX.nodes.length, before + 1, "one box lands (the skeleton crops away)");
+  const m = __t.BX.nodes.find(x => x.kind === "custom" && x.model);
+  ok(!!m, "\u2026a model box");
   eql((m.inner.nodes || []).map(n => n.kind), ["input", "hf", "output"],
      "\u2026with the text pipeline inside");
   eql(m.inner.nodes[1].repo, "Qwen/Qwen2.5-0.5B", "\u2026bound to the repo");
   eql(__t.bxBoundary(m, "in").length, 1, "one port in");
   eql(__t.bxShape(m), "text \u2192 text \u00b7 f16",
       "\u2026and the card reads text \u2192 text \u00b7 f16: " + __t.bxShape(m));
-  __t.bxRemove(m.id);
+  // the design runs as it lands: the prompt in, the answer out
+  const src = __t.BX.nodes.find(x => x.kind === "input");
+  const sink = __t.BX.nodes.find(x => x.kind === "output");
+  eql([src && src.input_mode, src && src.name], ["text", "prompt"],
+      "a text input landed with it (the Run menu asks for it)");
+  ok(__t.BX.edges.some(e => e.from === src.id && e.to === m.id && !e.toPort),
+     "\u2026wired into the box");
+  ok(__t.BX.edges.some(e => e.from === m.id && e.to === sink.id && !e.fromPort),
+     "\u2026and the answer wired out");
+  ok(__t.bxErrorSet({ nodes: __t.BX.nodes, edges: __t.BX.edges }).size === 0,
+     "no box is in error");
+  __t.bxImportJSON(keep);                      // put the canvas back
+});
+
+check("Import \u25be \u2192 Hugging Face model \u2026: the form shows itself", () => {
+  // the door the toolbar owns: no right-click menu is up to carry the form —
+  // it must unhide #bxmenu on its own (it used to build it hidden: "does nothing")
+  const before = __t.BX.nodes.length;
+  __t.bxtDropsClose();                         // a clean strip
+  getEl("bxtImport").click();                  // the Import dropdown opens
+  const hf = getEl("bxtImportMenu").children
+    .find(c => c.textContent.indexOf("Hugging Face") >= 0);
+  ok(!!hf, "the Import menu offers the HF model");
+  hf.click();
+  eql(getEl("bxmenu").hidden, false,
+      "the form is visible, not built into a hidden menu");
+  const wrap = getEl("bxmenu").children[0];
+  const repo = wrap.querySelectorAll(".wide")[0];
+  ok(!!repo, "the form asks for the repo");
+  repo.value = "Qwen/Qwen2.5-0.5B";
+  wrap.querySelectorAll(".chip").find(c => c.textContent === "load").click();
+  eql(__t.BX.nodes.length, before + 1, "one box lands from the menu's own door");
+  const m = __t.BX.nodes[__t.BX.nodes.length - 1];
+  eql([m.kind, m.model], ["custom", true], "\u2026a model box");
+  eql(m.inner.nodes[1].repo, "Qwen/Qwen2.5-0.5B", "\u2026bound to the repo");
+  __t.bxUndoStep();                            // leave the canvas as it was found
 });
 
 check("the canvas menu: load a tokenizer lands the pair, one repo for both", () => {

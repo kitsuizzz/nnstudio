@@ -2481,6 +2481,24 @@ function bxAddHFModel(x, y, v) {              // a huggingface model: a model bo
             { id: o, kind: "output", name: "next text", x: 320, y: 0 }],
     edges: [{ from: i, to: h, fromPort: 0, toPort: 0 },
             { from: h, to: o, fromPort: 0, toPort: 0 }] };
+  // a box that stands on its own — or rests on the blank skeleton — gets its
+  // boundaries with it, so the import runs as it lands: a prompt the Run menu
+  // asks for, wired into the box, and its answer wired out. Dropped into a
+  // bigger design, only the box lands — its dots are yours to wire.
+  const bare = !BX.edges.some(e => e.from === n.id || e.to === n.id);
+  const crop = (m) => m !== n && (m.kind === "input" || m.kind === "output") &&
+    (bare || (BX.edges.some(e => e.from === m.id || e.to === m.id) &&
+              BX.edges.every(e => (e.from !== m.id && e.to !== m.id) ||
+                                  (e.from === m.id && e.to === n.id) ||
+                                  (e.to === m.id && e.from === n.id))));
+  if (BX.nodes.every(m => m === n || crop(m))) {
+    BX.nodes.filter(m => m !== n).forEach(m => bxRemove(m.id));
+    const src = bxAdd("input", n.x - 280, n.y,
+                      { name: "prompt", input_mode: "text" });
+    bxConnect(src.id, n.id, 0, 0);
+    const sink = bxAdd("output", n.x + 280, n.y, { name: "next text" });
+    bxConnect(n.id, sink.id, 0, 0);
+  }
   bxSettleSizes();
   bxSelectBoxes([n.id]);
   bxRender();
@@ -6720,6 +6738,13 @@ function bxPortType(n, dir, i) {               // what a dot is built to carry
   }
   if (dir === "out" && n.kind === "op" && bxOpName(n) === "reshape" && n.dims)
     return { kind: "matrix", shape: "[? \u00d7 " + bxDimsShow(n.dims) + "]" };
+  if (n.kind === "custom") {                   // its dots are its boundary boxes:
+    const b = bxBoundary(n, dir)[i || 0];      // in is the inner input's own dot,
+    if (!b) return { kind: "matrix", shape: null };      // out is what its wire
+    if (dir === "out")                                   // inside feeds the output
+      return bxOutputExpect(b, (n.inner || {}).edges) || { kind: "any", shape: null };
+    return bxPortType(b, "out", 0);
+  }
   const p = bxPortDefs(n, dir)[i || 0];        // the declared width, as a shape
   const size = p && p.size != null ? p.size : null;
   if (size == null) return { kind: "matrix", shape: null };
@@ -7424,6 +7449,17 @@ function bxMenuClose() {
   if (m) { m.hidden = true; m.innerHTML = ""; }
 }
 function bxMenuAt_(x, y) { bxMenuAt = { x, y }; }
+function bxMenuShow() {                        // a form opened with no menu under it
+  const m = $("bxmenu");                       // (the Import door, a chip): show it
+  if (!m) return;                              // up front, like the gguf import
+  m.hidden = false;
+  const w = $("bxwrap");
+  const r = (w && w.getBoundingClientRect) ? w.getBoundingClientRect()
+                                           : { width: 900, height: 500 };
+  bxMenuAt_(Math.max(6, ((r.width || 900) - (m.offsetWidth || 340)) / 2),
+            Math.max(6, ((r.height || 500) - (m.offsetHeight || 180)) / 2));
+  bxMenuPlace();
+}
 function bxMenu(ev) {
   ev.preventDefault();
   bxTipHide();
@@ -10923,7 +10959,8 @@ function bxWeightsForm(boxId) {
   row.appendChild(goBind);
   wrap.appendChild(row);
   m.appendChild(wrap);
-  bxMenuPlace();
+  if (m.hidden) bxMenuShow();                  // the add form's chip: same door
+  else bxMenuPlace();
 
   let picked = null;
   const mark = () => {
@@ -11522,7 +11559,8 @@ function bxForm(kind, ev, node, mode) {
   row.appendChild(go);
   wrap.appendChild(row);
   m.appendChild(wrap);
-  bxMenuPlace();
+  if (m.hidden) bxMenuShow();                  // the Import door: no menu carries it
+  else bxMenuPlace();
 }
 // ---- the Palette menu (top bar): categories, expanding into their cards ---
 // Only the categories are listed; clicking one opens its visual boxes (the
