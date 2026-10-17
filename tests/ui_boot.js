@@ -209,6 +209,7 @@ globalThis.__t = {
   bxTabsRender, bxTabNew, bxTabSave, bxTabSelect, bxTabOpenSaved, bxProject,
   bxTabClose, bxTabAnyDirty, bxTabLoad, bxSessionNow, bxSessionPush, bxSessionMatch,
   bxTabNewAI, bxTalkOn, bxTalkSend, bxTalkRender, bxTalkSync, bxTalkTask, bxTalkCurrent,
+  bxHeadRefresh,
   bxSessionRead, bxSessionRestore, bxSeal, bxAccountOpenApply, bxSplash, BXSESSION,
   bxAccountSync,
   bxGGUFImport, bxGGUFImportApply, bxtVramToggle,
@@ -4915,6 +4916,35 @@ check("the theme: Salon dark at home, light one click away, remembered", () => {
   th.click();                                   // the real click, through the wiring
   eql(__t.bxThemeNow(), "light", "the button itself toggles too");
   th.click();
+});
+
+check("the shell: the rail, the head \u2014 the mockup's composition", () => {
+  const h = fs.readFileSync(UI, "utf8");
+  const iMain = h.indexOf("<main>"), iRail = h.indexOf('id="bxrail"'),
+        iView = h.indexOf('id="view-training"');
+  ok(iMain >= 0 && iRail > iMain && iView > iRail, "the rail sits beside the canvas");
+  const rail = getEl("bxrail");
+  ok(!!rail, "the rail exists");
+  eql(["bxrNew", "bxrCanvas", "bxrAgent", "bxtTheme"].map(id => !!getEl(id)),
+    [true, true, true, true], "\u2026new canvas, the canvas, the agent, the theme");
+  // the head wears the canvas's name and its device
+  eql(getEl("bxtTitle").textContent, __t.bxProject().name, "the head names the tab");
+  __t.BXRUN.local = { connected: true, agent: { name: "mac", specs: { device: "mps" } } };
+  __t.bxHeadRefresh();
+  eql([getEl("bxtTag").textContent, getEl("bxtTag").hidden], ["gpu \u00b7 mps", false],
+    "\u2026and the device tag lights with the backend");
+  __t.BXRUN.local = { connected: false, agent: null };
+  __t.bxHeadRefresh();
+  eql(getEl("bxtTag").hidden, true, "\u2026and goes when none is connected");
+  // the rail's + opens a canvas, the rail's agent opens the talk tab
+  const before = __t.BX.projects.length;
+  getEl("bxrNew").click();
+  eql(__t.BX.projects.length, before + 1, "the rail's + lands a new canvas");
+  __t.bxTabClose(__t.BX.projects[__t.BX.projects.length - 1].id);
+  getEl("bxrAgent").click();
+  ok(__t.bxTalkOn(), "the rail's agent opens the conversation");
+  getEl("bxrCanvas").click();                   // \u2026and the canvas comes back
+  ok(!__t.bxTalkOn(), "the rail's canvas brings the canvas back: " + __t.bxProject().name);
 });
 
 check("the + sits right beside the last tab, and its menu drops from it", () => {

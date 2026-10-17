@@ -1356,6 +1356,37 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
   .bxtip .shp, .bxtip .row { color: var(--s-label); }
   .bxtip .note { color: var(--s-label2); }
 
+  /* ---- the shell: the rail, the head — the mockup's composition ---- */
+  main { padding: 0; gap: 0; }
+  .bxrail { flex: none; width: 56px; border-right: 1px solid var(--s-hair);
+            display: flex; flex-direction: column; align-items: center;
+            gap: 20px; padding: 16px 0; background: var(--s-wall); }
+  .bxrail .ri { position: relative; width: 30px; height: 30px; display: grid;
+                place-items: center; font-size: 14px; color: var(--s-label2);
+                cursor: pointer; user-select: none; border: 0; background: transparent; }
+  .bxrail .ri:hover { color: var(--s-text); }
+  .bxrail .ri.on { color: var(--s-text); }
+  .bxrail .ri.on::after { content: ""; position: absolute; bottom: -9px; width: 4px;
+                          height: 4px; border-radius: 50%; background: var(--s-dot); }
+  .bxrail .bxrspace { flex: 1 1 auto; }
+  .view { padding: 10px 14px 14px; }
+  .bxtools { height: 48px; gap: 12px; margin: 0 0 6px; align-items: center; }
+  .bxheadtitle { font: 500 15px/1.3 var(--font-label); color: var(--s-text);
+                 letter-spacing: .01em; max-width: 46vw; overflow: hidden;
+                 text-overflow: ellipsis; white-space: nowrap; }
+  .bxheadtag { font: 500 10px/1.4 var(--font-mono); letter-spacing: .05em;
+               text-transform: uppercase; color: var(--s-label2);
+               border: 1px solid var(--s-hair2); padding: 2px 6px; white-space: nowrap; }
+  .bxheadtag::before { content: ""; display: inline-block; width: 5px; height: 5px;
+                       border-radius: 50%; background: var(--s-dot);
+                       margin-right: 6px; vertical-align: 1px; }
+  .bxtspace { flex: 1 1 auto; }
+  /* the topbar's right: the account, an uppercase item with a circled icon */
+  .sub { display: none; }
+  .bxuserbtn .bxuico { width: 22px; height: 22px; padding: 4px; border-radius: 50%;
+                       border: 1px solid var(--s-hair2); }
+  .bxuserbtn .bxucar { margin-left: 2px; }
+
   .chip, .bxtbtn, .mode, .bxtab, .bxbbtn, .bxtmi, .bxmenu .mi, .bxtcat {
     transition: color .15s, border-color .15s, background .15s, opacity .15s;
   }
@@ -1372,7 +1403,6 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
 <header>
   <div class="logo">nn<span>·</span>studio</div>
   <div class="sub">compose the network on the canvas, wire it, price it, then run it</div>
-  <span class="tbx" id="bxtTheme" title="light / dark">☾</span>
   <div class="bxuser" id="bxuser" hidden>
     <span class="bxuserbtn" id="bxtAccount" title="a guest: drawing and running are free, saving takes an account">
       <svg class="bxuico" viewBox="0 0 16 16" aria-hidden="true">
@@ -1387,8 +1417,18 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
 </header>
 
 <main>
+  <aside class="bxrail" id="bxrail">
+    <span class="ri" id="bxrNew" title="a new canvas">＋</span>
+    <span class="ri on" id="bxrCanvas" title="the canvas — fit the design">▦</span>
+    <span class="ri" id="bxrAgent" title="the AI agent — a conversation, not a canvas">◧</span>
+    <span class="bxrspace"></span>
+    <span class="ri" id="bxtTheme" title="light / dark">☾</span>
+  </aside>
   <section id="view-training" class="view">
     <div class="bxtools" id="bxtools">
+      <span class="bxheadtitle" id="bxtTitle">nnstudio</span>
+      <span class="bxheadtag" id="bxtTag" hidden></span>
+      <span class="bxtspace"></span>
       <span class="bxtbtn" id="bxtDocs" title="the handbook: what this is, how to use the boxes"
             onclick="window.open('/docs', '_blank')">Docs</span>
       <span class="bxtbtn" id="bxtPalette" title="add a box to the canvas">Palette ▾</span>
@@ -1397,7 +1437,6 @@ header { max-width: none; margin: 0; padding: 18px 16px 14px;
       <div class="bxtdrop" id="bxtImportMenu" hidden></div>
       <span class="bxtbtn" id="bxtBackend" title="where the heavy work runs">Backend ▾</span>
       <div class="bxtdrop" id="bxtBackendMenu" hidden></div>
-      <span class="bxtspace"></span>
       <span class="bxtbtn" id="bxtVram" title="the VRAM estimate">VRAM ▾</span>
       <div class="bxtdrop bxtdrop-r" id="bxtVramMenu" hidden>
         <div class="bxvram" id="bxvram"></div>
@@ -9100,6 +9139,7 @@ function bxTabsRender() {                      // the strip, its stars, the note
   }
   const note = $("bxtabnote");
   if (note) note.textContent = BXTAB.msg || "";
+  bxHeadRefresh();                             // the head wears the active tab's name
 }
 // a page that would take unsaved projects with it asks first (the browser's
 // own guard, on reload or close)
@@ -10236,6 +10276,18 @@ function bxUsageWatch(on) {                    // the 5 s poll is fine when idle
 function bxThemeNow() {                        // "dark" (the canvas's home) or "light"
   return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
 }
+function bxHeadRefresh() {                     // the head: the canvas's name, its device
+  const t = $("bxtTitle"), tag = $("bxtTag");
+  const p = typeof bxProject === "function" ? bxProject() : null;
+  if (t) t.textContent = (p && p.name) || "nnstudio";
+  if (tag) {
+    const a = BXRUN.local && BXRUN.local.agent;
+    const d = a && a.specs && a.specs.device;
+    tag.textContent = d === "mps" ? "gpu \u00b7 mps" : d === "cuda" ? "gpu \u00b7 cuda"
+                    : d === "cpu" ? "cpu" : "no backend";
+    tag.hidden = !a;
+  }
+}
 function bxThemeApply() {                      // the toggle shows the theme in use
   const el = $("bxtTheme");
   if (el) el.textContent = bxThemeNow() === "light" ? "\u2600" : "\u263e";
@@ -10277,6 +10329,7 @@ function bxtRefresh() {
     }
   }
   bxtRunRefresh();                             // Run follows the backend's state
+  bxHeadRefresh();                             // the head: the canvas's name and device
   if (bxTalkOn()) bxTalkSync();                // the AI tab repaints on every sync
 }
 function bxtInit() {
@@ -10308,6 +10361,22 @@ function bxtInit() {
   const th = $("bxtTheme");                    // the Salon theme, remembered
   if (th && th.addEventListener) th.addEventListener("click", bxThemeToggle);
   bxThemeApply();
+  const rnew = $("bxrNew"), rcanvas = $("bxrCanvas"), ragent = $("bxrAgent");
+  if (rnew && rnew.addEventListener)
+    rnew.addEventListener("click", () => { bxtDropsClose(); bxTabNew(); });
+  if (ragent && ragent.addEventListener)
+    ragent.addEventListener("click", () => { bxtDropsClose(); bxTabNewAI(); });
+  if (rcanvas && rcanvas.addEventListener)
+    rcanvas.addEventListener("click", () => {   // the rail's canvas: fit, or back to it
+      const p = bxProject();
+      if (bxTalkOn() || (p && p.kind === "ai")) {
+        const last = (BX.projects || []).filter(x => x.kind !== "ai").pop();
+        if (last) bxTabSelect(last.id);
+        return;
+      }
+      bxFit();
+    });
+  bxHeadRefresh();
   wire("bxtImport", bxtImportToggle);
   wire("bxtBackend", bxtBackendToggle);
   wire("bxtVram", bxtVramToggle);
